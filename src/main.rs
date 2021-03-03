@@ -40,6 +40,47 @@ enum StartupMessage {
     Startup { params: HashMap<String, String> },
 }
 
+enum BackendMessage {
+    AuthenticationOk,
+    ReadyForQuery,
+}
+
+enum CharTag {
+    Authentication,
+    ReadyForQuery,
+    EmptyQueryResponse,
+}
+
+impl CharTag {
+    pub fn as_u8(&self) -> u8 {
+        match self {
+            CharTag::Authentication => b'R',
+            CharTag::ReadyForQuery => b'Z',
+            CharTag::EmptyQueryResponse => b'I',
+        }
+    }
+}
+
+impl BackendMessage {
+    pub fn as_vec(&self) -> Vec<u8> {
+        match self {
+            BackendMessage::AuthenticationOk => {
+                vec![CharTag::Authentication.as_u8(), 0, 0, 0, 8, 0, 0, 0, 0]
+            }
+            BackendMessage::ReadyForQuery => {
+                vec![
+                    CharTag::ReadyForQuery.as_u8(),
+                    0,
+                    0,
+                    0,
+                    5,
+                    CharTag::EmptyQueryResponse.as_u8(),
+                ]
+            }
+        }
+    }
+}
+
 fn read_startup_message(stream: &mut TcpStream) -> Result<StartupMessage> {
     // Init handshake
 
@@ -88,8 +129,6 @@ fn read_startup_message(stream: &mut TcpStream) -> Result<StartupMessage> {
         }
     };
 
-    println!("{:?}", message);
-
     Ok(message)
 }
 
@@ -97,8 +136,11 @@ fn handle_connection(mut stream: TcpStream) -> Result<(), anyhow::Error> {
     println!("Connection established!");
 
     let startup_message = read_startup_message(&mut stream);
-
     println!("{:?}", startup_message);
 
-    Ok(())
+    // Skip auth for now
+    stream.write(&BackendMessage::AuthenticationOk.as_vec()[..])?;
+    stream.write(&BackendMessage::ReadyForQuery.as_vec()[..])?;
+
+    loop {}
 }
