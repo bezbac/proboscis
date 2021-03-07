@@ -142,5 +142,35 @@ fn handle_connection(mut stream: TcpStream) -> Result<(), anyhow::Error> {
     stream.write(&BackendMessage::AuthenticationOk.as_vec()[..])?;
     stream.write(&BackendMessage::ReadyForQuery.as_vec()[..])?;
 
-    loop {}
+    loop {
+        let mut bytes = vec![0; 1];
+        stream.read(&mut bytes)?;
+
+        match bytes[0] {
+            b'Q' => {
+                // Query
+
+                // Read the length of the following string as an i32
+                let mut bytes = vec![0; 4];
+                bytes = stream.read_exact(&mut bytes).map(|_| bytes)?;
+
+                // TODO: Why do I need the - 4 or 5?
+                let string_len = usize::try_from(NetworkEndian::read_u32(&bytes))? - 5;
+
+                // Read the query to a string
+                let mut bytes = vec![0; string_len];
+                bytes = stream.read_exact(&mut bytes).map(|_| bytes)?;
+
+                let query_string = std::str::from_utf8(&bytes[..])?;
+
+                println!("{:?}", query_string);
+
+                // Next message
+                // Row Description
+            }
+            _ => unimplemented!(),
+        }
+    }
+
+    Ok(())
 }
