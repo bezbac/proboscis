@@ -1,3 +1,10 @@
+# Testing
+## End-to-end tests
+```
+docker-compose up
+cargo test --features e2e
+```
+
 # Useful commands cheat sheet
 
 ```

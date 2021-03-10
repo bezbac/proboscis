@@ -7,3 +7,12 @@ edition = "2018"
 anyhow = "1.0"
 byteorder = "1.4.2"
 bytes = "1"
+postgres = { version = "0.19", optional = true }
+
+[features]
+e2e = ["postgres"]
+
+[[bin]]
+bench = false
+path = "src/bin.rs"
+name = "probosics"

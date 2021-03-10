@@ -8,6 +8,7 @@ services:
       POSTGRES_PASSWORD: password
       PGDATA: /data/postgres
     volumes:
+      - ./resources/e2e-migrations:/docker-entrypoint-initdb.d
       - postgres-data:/data/postgres
     ports:
       - "5432:5432"

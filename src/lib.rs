@@ -6,25 +6,25 @@ use std::convert::TryFrom;
 use std::io::prelude::*;
 use std::net::{TcpListener, TcpStream};
 
-struct Config {
-    host: String,
-    port: String,
+pub struct App {
+    target: String,
 }
 
-fn main() {
-    let config: Config = Config {
-        host: "0.0.0.0".to_string(),
-        port: "5430".to_string(),
-    };
+impl App {
+    pub fn listen(&self, address: &str) {
+        let listener = TcpListener::bind(&address).unwrap();
+        println!("Server running on {}!", &address);
 
-    let address = format!("{}:{}", config.host, config.port);
+        for stream in listener.incoming() {
+            let stream = stream.unwrap();
+            handle_connection(stream);
+        }
+    }
+}
 
-    let listener = TcpListener::bind(&address).unwrap();
-    println!("Server running on {}!", &address);
-
-    for stream in listener.incoming() {
-        let stream = stream.unwrap();
-        handle_connection(stream);
+pub fn new(target_addr: &str) -> App {
+    App {
+        target: target_addr.to_string(),
     }
 }
 
@@ -168,7 +168,7 @@ fn handle_connection(mut stream: TcpStream) -> Result<(), anyhow::Error> {
                 // Next message
                 // Row Description
             }
-            _ => unimplemented!(),
+            _ => unimplemented!("Recieved byte {:?}", bytes[0]),
         }
     }
 
