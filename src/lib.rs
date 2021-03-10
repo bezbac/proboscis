@@ -163,6 +163,10 @@ fn handle_connection(mut stream: TcpStream) -> Result<(), anyhow::Error> {
 
                 let query_string = std::str::from_utf8(&bytes[..])?;
 
+                // Read another byte (should be a zero)
+                let mut bytes = vec![0; 1];
+                stream.read_exact(&mut bytes)?;
+
                 println!("{:?}", query_string);
 
                 // Next message
