@@ -15,4 +15,4 @@ e2e = ["postgres"]
 [[bin]]
 bench = false
 path = "src/bin.rs"
-name = "probosics"
+name = "proboscis"
