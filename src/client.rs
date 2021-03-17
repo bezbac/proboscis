@@ -1,4 +1,4 @@
-use crate::protocol::BackendMessage;
+use crate::protocol::{send_and_handle_startup, BackendMessage};
 use anyhow::Result;
 use std::net::TcpStream;
 
@@ -12,7 +12,11 @@ impl ProxyClient {
     }
 
     pub fn connect(&self) -> Result<ProxyConnection> {
-        let stream = TcpStream::connect(&self.target_addr)?;
+        let mut stream = TcpStream::connect(&self.target_addr)?;
+        println!("Proxy connection established");
+
+        send_and_handle_startup(&mut stream);
+
         Ok(ProxyConnection { stream })
     }
 }
