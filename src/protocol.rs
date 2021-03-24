@@ -102,44 +102,40 @@ impl StartupMessage {
 }
 
 #[derive(Debug)]
-pub enum AuthenticationRequest {
-    MD5Password,
-}
-
-impl AuthenticationRequest {
-    pub fn new(method: u32, additional_bytes: Vec<u8>) -> Result<AuthenticationRequest> {
-        if method == 5 {
-            return Ok(AuthenticationRequest::MD5Password);
-        }
-
-        unimplemented!();
-    }
-}
-
-#[derive(Debug)]
-pub enum BackendMessage {
-    AuthenticationRequest(AuthenticationRequest),
+pub enum Message {
+    AuthenticationRequestMD5Password,
     AuthenticationOk,
     ReadyForQuery,
     SimpleQuery(String),
 }
 
-impl BackendMessage {
+impl Message {
     pub fn as_vec(&self) -> Vec<u8> {
         match self {
-            BackendMessage::AuthenticationOk => {
-                vec![CharTag::Authentication.into(), 0, 0, 0, 8, 0, 0, 0, 0]
-            }
-            BackendMessage::ReadyForQuery => {
-                vec![
-                    CharTag::ReadyForQuery.into(),
-                    0,
-                    0,
-                    0,
-                    5,
-                    CharTag::EmptyQueryResponse.into(),
-                ]
-            }
+            Self::AuthenticationOk => vec![CharTag::Authentication.into(), 0, 0, 0, 8, 0, 0, 0, 0],
+            Self::ReadyForQuery => vec![
+                CharTag::ReadyForQuery.into(),
+                0,
+                0,
+                0,
+                5,
+                CharTag::EmptyQueryResponse.into(),
+            ],
+            Self::AuthenticationRequestMD5Password => vec![
+                CharTag::Authentication.into(),
+                0,
+                0,
+                0,
+                12,
+                0,
+                0,
+                0,
+                5,
+                1,
+                1,
+                1,
+                1,
+            ],
             _ => unimplemented!(),
         }
     }
@@ -151,6 +147,8 @@ impl BackendMessage {
 
     pub fn read<T: Read>(stream: &mut T) -> Result<Self> {
         let tag = CharTag::read(stream)?;
+
+        println!("{:?}", tag);
 
         match tag {
             CharTag::Query => {
@@ -176,23 +174,24 @@ impl BackendMessage {
                 bytes = stream.read_exact(&mut bytes).map(|_| bytes)?;
                 let message_len = u32::try_from(NetworkEndian::read_u32(&bytes))?;
 
-                let mut bytes = vec![0; 4];
+                let mut bytes = vec![0 as u8; message_len as usize - 5];
                 bytes = stream.read_exact(&mut bytes).map(|_| bytes)?;
+
+                if bytes.len() == 0 {
+                    return Ok(Self::AuthenticationOk);
+                }
+
+                println!("{:?}", bytes);
+
                 let method = u32::try_from(NetworkEndian::read_u32(&bytes))?;
 
-                let additional_bytes = match message_len > 9 {
-                    true => {
-                        let mut b = vec![0; message_len as usize - 9];
-                        stream.read_exact(&mut b).map(|_| bytes)?;
-                        b
-                    }
-                    false => vec![],
-                };
+                println!("{:?}", method);
 
-                Ok(Self::AuthenticationRequest(AuthenticationRequest::new(
-                    method,
-                    additional_bytes,
-                )?))
+                if method == 5 {
+                    return Ok(Self::AuthenticationRequestMD5Password);
+                }
+
+                unimplemented!();
             }
             _ => unimplemented!("Recieved tag {:?}", tag),
         }

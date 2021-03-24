@@ -4,7 +4,7 @@ use std::net::{TcpListener, TcpStream};
 
 mod protocol;
 
-use protocol::{BackendMessage, StartupMessage};
+use protocol::{Message, StartupMessage};
 
 pub struct App {
     target_addr: String,
@@ -53,19 +53,19 @@ fn handle_connection(mut stream: TcpStream, target_addr: String) -> Result<(), a
     backend_params.insert("client_encoding".to_string(), "UTF8".to_string());
 
     StartupMessage::write(&mut backend_stream, backend_params)?;
-    let response = BackendMessage::read(&mut backend_stream)?;
+    let response = Message::read(&mut backend_stream)?;
 
     println!("{:?}", response);
 
     // Skip auth for now
-    BackendMessage::AuthenticationOk.write(&mut stream)?;
-    BackendMessage::ReadyForQuery.write(&mut stream)?;
+    Message::AuthenticationOk.write(&mut stream)?;
+    Message::ReadyForQuery.write(&mut stream)?;
 
     loop {
-        let request = BackendMessage::read(&mut stream)?;
+        let request = Message::read(&mut stream)?;
 
         match request {
-            BackendMessage::SimpleQuery(query_string) => {
+            Message::SimpleQuery(query_string) => {
                 println!("{:?}", query_string);
 
                 // TODO: Execute simple query
