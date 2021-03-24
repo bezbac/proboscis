@@ -1,8 +1,5 @@
 use anyhow::Result;
-use byteorder::{ByteOrder, NetworkEndian};
 use std::collections::HashMap;
-use std::convert::TryFrom;
-use std::io::prelude::*;
 use std::net::{TcpListener, TcpStream};
 
 mod protocol;
@@ -56,42 +53,19 @@ fn handle_connection(mut stream: TcpStream, target_addr: String) -> Result<(), a
     backend_params.insert("client_encoding".to_string(), "UTF8".to_string());
 
     StartupMessage::write(&mut backend_stream, backend_params)?;
+    let response = BackendMessage::read(&mut backend_stream)?;
 
-    // TODO: Read auth response from server
-    let mut bytes = vec![0; 1];
-    backend_stream.read(&mut bytes)?;
-
-    println!("{:?}", bytes);
+    println!("{:?}", response);
 
     // Skip auth for now
-    stream.write(&BackendMessage::AuthenticationOk.as_vec()[..])?;
-    stream.write(&BackendMessage::ReadyForQuery.as_vec()[..])?;
+    BackendMessage::AuthenticationOk.write(&mut stream)?;
+    BackendMessage::ReadyForQuery.write(&mut stream)?;
 
     loop {
-        let mut bytes = vec![0; 1];
-        stream.read(&mut bytes)?;
+        let request = BackendMessage::read(&mut stream)?;
 
-        match bytes[0] {
-            b'Q' => {
-                // Query
-
-                // Read the length of the following string as an i32
-                let mut bytes = vec![0; 4];
-                bytes = stream.read_exact(&mut bytes).map(|_| bytes)?;
-
-                // TODO: Why do I need the - 4 or 5?
-                let string_len = usize::try_from(NetworkEndian::read_u32(&bytes))? - 5;
-
-                // Read the query to a string
-                let mut bytes = vec![0; string_len];
-                bytes = stream.read_exact(&mut bytes).map(|_| bytes)?;
-
-                let query_string = std::str::from_utf8(&bytes[..])?;
-
-                // Read another byte (should be a zero)
-                let mut bytes = vec![0; 1];
-                stream.read_exact(&mut bytes)?;
-
+        match request {
+            BackendMessage::SimpleQuery(query_string) => {
                 println!("{:?}", query_string);
 
                 // TODO: Execute simple query
@@ -99,7 +73,7 @@ fn handle_connection(mut stream: TcpStream, target_addr: String) -> Result<(), a
                 // Next message
                 // Row Description
             }
-            _ => unimplemented!("Recieved byte {:?}", bytes[0]),
+            _ => unimplemented!(),
         }
     }
 }
