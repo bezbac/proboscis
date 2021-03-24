@@ -19,27 +19,32 @@ pub enum StartupMessage {
 }
 
 impl StartupMessage {
-    pub fn write<T: Write>(buf: &mut T, parameters: HashMap<String, String>) -> Result<()> {
-        let mut writer = vec![];
+    pub fn write<T: Write>(self, buf: &mut T) -> Result<()> {
+        match self {
+            Self::Startup { params } => {
+                let mut writer = vec![];
 
-        writer.write_i32::<BigEndian>(CODE_STARTUP_POSTGRESQLV3)?;
+                writer.write_i32::<BigEndian>(CODE_STARTUP_POSTGRESQLV3)?;
 
-        for (key, value) in parameters {
-            writer.write(key.as_bytes())?;
-            writer.write_i8(0)?; // Delimiter
+                for (key, value) in params {
+                    writer.write(key.as_bytes())?;
+                    writer.write_i8(0)?; // Delimiter
 
-            writer.write(value.as_bytes())?;
-            writer.write_i8(0)?; // Delimiter
+                    writer.write(value.as_bytes())?;
+                    writer.write_i8(0)?; // Delimiter
+                }
+
+                writer.write_i8(0)?; // Delimiter
+
+                let len_of_message: u32 = writer.len() as u32 + 4; // Add 4 bytes for the u32 containing the total message length
+
+                buf.write_u32::<BigEndian>(len_of_message)?;
+                buf.write(&mut writer[..])?;
+
+                Ok(())
+            }
+            _ => unimplemented!(),
         }
-
-        writer.write_i8(0)?; // Delimiter
-
-        let len_of_message: u32 = writer.len() as u32 + 4; // Add 4 bytes for the u32 containing the total message length
-
-        buf.write_u32::<BigEndian>(len_of_message)?;
-        buf.write(&mut writer[..])?;
-
-        Ok(())
     }
 
     pub fn read<T: Read>(stream: &mut T) -> Result<Self> {
@@ -148,7 +153,7 @@ impl Message {
     pub fn read<T: Read>(stream: &mut T) -> Result<Self> {
         let tag = CharTag::read(stream)?;
 
-        println!("{:?}", tag);
+        println!("Encountered Tag: {:?}", tag);
 
         match tag {
             CharTag::Query => {
@@ -181,11 +186,7 @@ impl Message {
                     return Ok(Self::AuthenticationOk);
                 }
 
-                println!("{:?}", bytes);
-
                 let method = u32::try_from(NetworkEndian::read_u32(&bytes))?;
-
-                println!("{:?}", method);
 
                 if method == 5 {
                     return Ok(Self::AuthenticationRequestMD5Password);
@@ -246,7 +247,11 @@ mod tests {
     #[test]
     fn startup_message_without_parameters() {
         let mut buf = vec![];
-        StartupMessage::write(&mut buf, HashMap::new()).unwrap();
+        StartupMessage::Startup {
+            params: HashMap::new(),
+        }
+        .write(&mut buf)
+        .unwrap();
         StartupMessage::read(&mut buf.as_slice()).unwrap();
     }
 
@@ -258,7 +263,11 @@ mod tests {
         params.insert("Test Key 3".to_string(), "Test Value 3".to_string());
 
         let mut buf = vec![];
-        StartupMessage::write(&mut buf, params.clone()).unwrap();
+        StartupMessage::Startup {
+            params: params.clone(),
+        }
+        .write(&mut buf)
+        .unwrap();
         let parsed = StartupMessage::read(&mut buf.as_slice()).unwrap();
 
         assert_eq!(parsed, StartupMessage::Startup { params })
