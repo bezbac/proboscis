@@ -1,10 +1,11 @@
 #[cfg(feature = "e2e")]
 use postgres::{Client, Error, NoTls, SimpleQueryMessage, SimpleQueryRow};
-use std::thread;
 
 #[test]
 #[cfg(feature = "e2e")]
 fn test_end_to_end() -> Result<(), Error> {
+    use std::thread;
+
     thread::spawn(|| {
         // Launch proxy
         let app = proboscis::new("0.0.0.0:5432");

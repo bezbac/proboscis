@@ -1,14 +1,13 @@
 use anyhow::Result;
 use byteorder::{ByteOrder, NetworkEndian};
+use std::collections::HashMap;
 use std::convert::TryFrom;
 use std::io::prelude::*;
 use std::net::{TcpListener, TcpStream};
 
-mod client;
 mod protocol;
 
-use client::ProxyClient;
-use protocol::BackendMessage;
+use protocol::{BackendMessage, StartupMessage};
 
 pub struct App {
     target_addr: String,
@@ -16,14 +15,12 @@ pub struct App {
 
 impl App {
     pub fn listen(&self, address: &str) -> Result<()> {
-        let mut proxy_client = ProxyClient::new(self.target_addr.clone());
-
         let listener = TcpListener::bind(&address).unwrap();
         println!("Server running on {}!", &address);
 
         for stream in listener.incoming() {
             let stream = stream.unwrap();
-            handle_connection(stream, &mut proxy_client);
+            handle_connection(stream, self.target_addr.clone())?;
         }
 
         Ok(())
@@ -36,20 +33,39 @@ pub fn new(target_addr: &str) -> App {
     }
 }
 
-fn handle_connection(
-    mut stream: TcpStream,
-    target_client: &mut ProxyClient,
-) -> Result<(), anyhow::Error> {
+fn handle_connection(mut stream: TcpStream, target_addr: String) -> Result<(), anyhow::Error> {
     println!("Connection established!");
 
-    let startup_message = protocol::read_startup_message(&mut stream);
+    let startup_message = StartupMessage::read(&mut stream)?;
     println!("{:?}", startup_message);
+
+    let frontend_params = match startup_message {
+        StartupMessage::Startup { params } => params,
+        _ => return Err(anyhow::anyhow!("Didn't recieve startup message")),
+    };
+
+    let mut backend_stream = TcpStream::connect(&target_addr)?;
+    let mut backend_params: HashMap<String, String> = HashMap::new();
+    backend_params.insert(
+        "user".to_string(),
+        frontend_params
+            .get("user")
+            .expect("Missing user parameter")
+            .clone(),
+    );
+    backend_params.insert("client_encoding".to_string(), "UTF8".to_string());
+
+    StartupMessage::write(&mut backend_stream, backend_params)?;
+
+    // TODO: Read auth response from server
+    let mut bytes = vec![0; 1];
+    backend_stream.read(&mut bytes)?;
+
+    println!("{:?}", bytes);
 
     // Skip auth for now
     stream.write(&BackendMessage::AuthenticationOk.as_vec()[..])?;
     stream.write(&BackendMessage::ReadyForQuery.as_vec()[..])?;
-
-    let proxy_connection = target_client.connect()?;
 
     loop {
         let mut bytes = vec![0; 1];
@@ -78,7 +94,7 @@ fn handle_connection(
 
                 println!("{:?}", query_string);
 
-                let response_messages = proxy_connection.simple_query(query_string)?;
+                // TODO: Execute simple query
 
                 // Next message
                 // Row Description
@@ -86,6 +102,4 @@ fn handle_connection(
             _ => unimplemented!("Recieved byte {:?}", bytes[0]),
         }
     }
-
-    Ok(())
 }

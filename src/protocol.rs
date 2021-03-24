@@ -4,7 +4,6 @@ use bytes::{Buf, BytesMut};
 use std::collections::HashMap;
 use std::convert::TryFrom;
 use std::io::prelude::*;
-use std::net::TcpStream;
 
 const CODE_STARTUP_CANCEL: i32 = 80877102;
 const CODE_STARTUP_SSL_REQUEST: i32 = 80877103;
@@ -33,9 +32,11 @@ impl StartupMessage {
             writer.write_i8(0)?; // Delimiter
         }
 
-        let len_of_message: i32 = writer.len() as i32;
+        writer.write_i8(0)?; // Delimiter
 
-        buf.write_i32::<BigEndian>(len_of_message)?;
+        let len_of_message: u32 = writer.len() as u32 + 4; // Add 4 bytes for the u32 containing the total message length
+
+        buf.write_u32::<BigEndian>(len_of_message)?;
         buf.write(&mut writer[..])?;
 
         Ok(())
@@ -47,10 +48,11 @@ impl StartupMessage {
         let mut bytes = vec![0; 4];
         bytes = stream.read_exact(&mut bytes).map(|_| bytes)?;
 
-        let frame_len = usize::try_from(NetworkEndian::read_u32(&bytes))?;
+        let message_length = usize::try_from(NetworkEndian::read_u32(&bytes))?;
+        let frame_legth = message_length - 4; // Remove 4 bytes for the u32 containing the total message length
 
         let mut buf = BytesMut::new();
-        buf.resize(frame_len, b'0');
+        buf.resize(frame_legth, b'0');
         stream.read_exact(&mut buf)?;
 
         let protocol_version = buf.get_i32();
@@ -66,23 +68,29 @@ impl StartupMessage {
 
                 let bytes = buf.to_vec();
 
-                let mut strings: Vec<String> = vec![];
+                let mut params: HashMap<String, String> = HashMap::new();
+
+                let mut last_string: Option<String> = None;
                 let mut current: Vec<u8> = vec![];
 
                 for b in bytes {
                     if b == 0 {
-                        let string = std::str::from_utf8(&current[..])?;
-                        strings.push(string.to_string());
+                        let string = std::str::from_utf8(&current.as_slice())?.to_string();
+
+                        match &last_string {
+                            Some(ls) => {
+                                params.insert(ls.clone(), string.clone());
+                                last_string = None;
+                            }
+                            None => {
+                                last_string = Some(string.clone());
+                            }
+                        }
+
                         current = vec![];
                     } else {
                         current.push(b)
                     }
-                }
-
-                let mut params = HashMap::new();
-                for (i, key) in strings.iter().step_by(2).enumerate() {
-                    let value = strings.get(i + 1).expect("Missing value for key");
-                    params.insert(key.clone(), value.clone());
                 }
 
                 StartupMessage::Startup { params }
@@ -134,23 +142,6 @@ impl CharTag {
     }
 }
 
-pub fn read_startup_message(stream: &mut TcpStream) -> Result<StartupMessage> {
-    return StartupMessage::read(stream);
-}
-
-pub fn send_and_handle_startup(stream: &mut TcpStream) -> Result<()> {
-    // Send startup message
-    StartupMessage::write(stream, HashMap::new())?;
-
-    // TODO: Hndle response
-    let mut bytes = vec![0; 1];
-    stream.read(&mut bytes)?;
-
-    println!("{:?}", bytes);
-
-    return Ok(());
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -166,6 +157,8 @@ mod tests {
     fn startup_message_with_parameters() {
         let mut params: HashMap<String, String> = HashMap::new();
         params.insert("Test Key".to_string(), "Test Value".to_string());
+        params.insert("Test Key 2".to_string(), "Test Value 2".to_string());
+        params.insert("Test Key 3".to_string(), "Test Value 3".to_string());
 
         let mut buf = vec![];
         StartupMessage::write(&mut buf, params.clone()).unwrap();
