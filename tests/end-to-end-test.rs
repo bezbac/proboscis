@@ -4,11 +4,20 @@ use postgres::{Client, Error, NoTls, SimpleQueryMessage, SimpleQueryRow};
 #[test]
 #[cfg(feature = "e2e")]
 fn test_end_to_end() -> Result<(), Error> {
+    use std::collections::HashMap;
     use std::thread;
 
     thread::spawn(|| {
         // Launch proxy
-        let app = proboscis::new("0.0.0.0:5432");
+        let mut authentication = HashMap::new();
+        authentication.insert("admin".to_string(), "password".to_string());
+
+        let config = proboscis::Config {
+            target_addr: "0.0.0.0:5432".to_string(),
+            authentication,
+        };
+
+        let app = proboscis::new(config.clone());
         app.listen("0.0.0.0:5430");
     });
 

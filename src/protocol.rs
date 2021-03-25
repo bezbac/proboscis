@@ -1,6 +1,7 @@
 use anyhow::Result;
 use byteorder::{BigEndian, ByteOrder, NetworkEndian, WriteBytesExt};
 use bytes::{Buf, BytesMut};
+use md5::{Digest, Md5};
 use std::collections::HashMap;
 use std::convert::TryFrom;
 use std::io::prelude::*;
@@ -106,10 +107,30 @@ impl StartupMessage {
     }
 }
 
+fn encode_md5_password_hash(username: &str, password: &str, salt: &[u8]) -> String {
+    let mut md5 = Md5::new();
+    md5.update(password.as_bytes());
+    md5.update(username.as_bytes());
+    let output = md5.finalize_reset();
+    md5.update(format!("{:x}", output));
+    md5.update(&salt);
+    format!("md5{:x}", md5.finalize())
+}
+
 #[derive(Debug)]
 pub enum Message {
-    AuthenticationRequestMD5Password,
+    AuthenticationRequestMD5Password {
+        salt: Vec<u8>,
+    },
     AuthenticationOk,
+    MD5PasswordMessage {
+        salt: Vec<u8>,
+        username: String,
+        password: String,
+    },
+    MD5HashedPasswordMessage {
+        hash: String,
+    },
     ReadyForQuery,
     SimpleQuery(String),
 }
@@ -126,21 +147,29 @@ impl Message {
                 5,
                 CharTag::EmptyQueryResponse.into(),
             ],
-            Self::AuthenticationRequestMD5Password => vec![
-                CharTag::Authentication.into(),
-                0,
-                0,
-                0,
-                12,
-                0,
-                0,
-                0,
-                5,
-                1,
-                1,
-                1,
-                1,
-            ],
+            Self::AuthenticationRequestMD5Password { salt } => {
+                let mut result = vec![CharTag::Authentication.into(), 0, 0, 0, 12, 0, 0, 0, 5];
+                result.extend_from_slice(salt);
+                result
+            }
+            Self::MD5PasswordMessage {
+                username,
+                password,
+                salt,
+            } => {
+                let mut result = vec![CharTag::Password.into()];
+                let md5 = encode_md5_password_hash(username, password, salt)
+                    .as_bytes()
+                    .to_vec();
+
+                let message_len = md5.len() as u32 + 4 + 1; // +1 for delimiter, +4 for message len u32
+                result.write_u32::<BigEndian>(message_len).unwrap();
+
+                result.extend_from_slice(&md5);
+                result.push(0);
+
+                result
+            }
             _ => unimplemented!(),
         }
     }
@@ -179,20 +208,41 @@ impl Message {
                 bytes = stream.read_exact(&mut bytes).map(|_| bytes)?;
                 let message_len = u32::try_from(NetworkEndian::read_u32(&bytes))?;
 
-                let mut bytes = vec![0 as u8; message_len as usize - 5];
+                let mut bytes = vec![0; 4];
                 bytes = stream.read_exact(&mut bytes).map(|_| bytes)?;
-
-                if bytes.len() == 0 {
-                    return Ok(Self::AuthenticationOk);
-                }
-
                 let method = u32::try_from(NetworkEndian::read_u32(&bytes))?;
 
                 if method == 5 {
-                    return Ok(Self::AuthenticationRequestMD5Password);
+                    let mut bytes = vec![0 as u8; 4];
+                    bytes = stream.read_exact(&mut bytes).map(|_| bytes)?;
+                    return Ok(Self::AuthenticationRequestMD5Password { salt: bytes });
+                }
+
+                if method == 0 {
+                    return Ok(Self::AuthenticationOk);
                 }
 
                 unimplemented!();
+            }
+            CharTag::Password => {
+                let mut bytes = vec![0; 4];
+                bytes = stream.read_exact(&mut bytes).map(|_| bytes)?;
+                let message_len = u32::try_from(NetworkEndian::read_u32(&bytes))?;
+
+                let string_len = message_len - 4 - 1; // -4 for length u32, -1 for trailing delimiter
+
+                let mut bytes = vec![0; string_len as usize];
+                bytes = stream.read_exact(&mut bytes).map(|_| bytes)?;
+
+                let password_hash = std::str::from_utf8(&bytes[..])?;
+
+                // Read another byte (should be a zero)
+                let mut bytes = vec![0; 1];
+                stream.read_exact(&mut bytes)?;
+
+                Ok(Self::MD5HashedPasswordMessage {
+                    hash: password_hash.to_string(),
+                })
             }
             _ => unimplemented!("Recieved tag {:?}", tag),
         }
@@ -205,6 +255,7 @@ pub enum CharTag {
     ReadyForQuery,
     EmptyQueryResponse,
     Query,
+    Password,
 }
 
 impl CharTag {
@@ -222,6 +273,7 @@ impl From<CharTag> for u8 {
             CharTag::ReadyForQuery => b'Z',
             CharTag::EmptyQueryResponse => b'I',
             CharTag::Query => b'Q',
+            CharTag::Password => b'p',
         }
     }
 }
@@ -235,6 +287,7 @@ impl TryFrom<u8> for CharTag {
             b'Z' => Ok(CharTag::ReadyForQuery),
             b'I' => Ok(CharTag::EmptyQueryResponse),
             b'Q' => Ok(CharTag::Query),
+            b'p' => Ok(CharTag::Password),
             _ => Err("Unknown char tag {:?}"),
         }
     }

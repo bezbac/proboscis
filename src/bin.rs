@@ -1,25 +1,15 @@
 extern crate proboscis;
-
-struct Config {
-    app_host: String,
-    app_port: String,
-
-    target_host: String,
-    target_port: String,
-}
+use std::collections::HashMap;
 
 fn main() {
-    let config: Config = Config {
-        app_host: "0.0.0.0".to_string(),
-        app_port: "5430".to_string(),
+    let mut authentication = HashMap::new();
+    authentication.insert("admin".to_string(), "password".to_string());
 
-        target_host: "0.0.0.0".to_string(),
-        target_port: "5432".to_string(),
+    let config = proboscis::Config {
+        target_addr: "0.0.0.0:5432".to_string(),
+        authentication,
     };
 
-    let target_addr = format!("{}:{}", config.target_host, config.target_port);
-    let app_addr = format!("{}:{}", config.app_host, config.app_port);
-
-    let app = proboscis::new(&target_addr);
-    app.listen(&app_addr);
+    let app = proboscis::new(config);
+    app.listen("0.0.0.0:5430");
 }

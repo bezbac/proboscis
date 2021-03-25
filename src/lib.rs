@@ -6,8 +6,14 @@ mod protocol;
 
 use protocol::{Message, StartupMessage};
 
+#[derive(Clone)]
+pub struct Config {
+    pub target_addr: String,
+    pub authentication: HashMap<String, String>,
+}
+
 pub struct App {
-    target_addr: String,
+    config: Config,
 }
 
 impl App {
@@ -18,17 +24,15 @@ impl App {
         for stream in listener.incoming() {
             let stream = stream.unwrap();
             let wrapper = StreamWrapper::new(stream, StreamWrapperKind::Frontend);
-            handle_connection(wrapper, self.target_addr.clone())?;
+            handle_connection(wrapper, self.config.clone())?;
         }
 
         Ok(())
     }
 }
 
-pub fn new(target_addr: &str) -> App {
-    App {
-        target_addr: target_addr.to_string(),
-    }
+pub fn new(config: Config) -> App {
+    App { config }
 }
 
 enum StreamWrapperKind {
@@ -102,10 +106,7 @@ impl std::io::Read for StreamWrapper {
     }
 }
 
-fn handle_connection(
-    mut frontend: StreamWrapper,
-    target_addr: String,
-) -> Result<(), anyhow::Error> {
+fn handle_connection(mut frontend: StreamWrapper, config: Config) -> Result<(), anyhow::Error> {
     println!("New connection established!");
 
     let startup_message = frontend.read_startup_message()?;
@@ -115,17 +116,17 @@ fn handle_connection(
         _ => return Err(anyhow::anyhow!("Didn't recieve startup message")),
     };
 
-    let backend_stream = TcpStream::connect(&target_addr)?;
+    let user = frontend_params
+        .get("user")
+        .expect("Missing user parameter")
+        .clone();
+
+    let backend_stream =
+        TcpStream::connect(&config.target_addr).expect("Connecting to backend failed");
     let mut backend = StreamWrapper::new(backend_stream, StreamWrapperKind::Backend);
 
     let mut backend_params: HashMap<String, String> = HashMap::new();
-    backend_params.insert(
-        "user".to_string(),
-        frontend_params
-            .get("user")
-            .expect("Missing user parameter")
-            .clone(),
-    );
+    backend_params.insert("user".to_string(), user.clone());
     backend_params.insert("client_encoding".to_string(), "UTF8".to_string());
 
     backend.write_startup_message(StartupMessage::Startup {
@@ -133,6 +134,39 @@ fn handle_connection(
     })?;
 
     let response = backend.read_message()?;
+    match response {
+        Message::AuthenticationRequestMD5Password { salt } => {
+            let password = config
+                .authentication
+                .get(&user.clone())
+                .expect(&format!("Password for {} not found inside config", &user));
+
+            frontend
+                .write_message(Message::AuthenticationRequestMD5Password { salt: salt.clone() })?;
+            let frontend_response = frontend.read_message()?;
+
+            let hash = match frontend_response {
+                Message::MD5HashedPasswordMessage { hash } => hash,
+                _ => return Err(anyhow::anyhow!("Expected Password Message")),
+            };
+
+            // TODO: Compare hash
+
+            let message = Message::MD5PasswordMessage {
+                salt: salt.clone(),
+                password: password.clone(),
+                username: user,
+            };
+            backend.write_message(message)?;
+            let response = backend.read_message()?;
+
+            match response {
+                Message::AuthenticationOk => {}
+                _ => return Err(anyhow::anyhow!("Expected AuthenticationOk")),
+            }
+        }
+        _ => unimplemented!(),
+    }
 
     // Skip auth for now
     frontend.write_message(Message::AuthenticationOk)?;
