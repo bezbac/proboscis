@@ -117,9 +117,10 @@ fn encode_md5_password_hash(username: &str, password: &str, salt: &[u8]) -> Stri
     format!("md5{:x}", md5.finalize())
 }
 
-fn handle_connection(mut frontend: StreamWrapper, config: Config) -> Result<(), anyhow::Error> {
-    println!("New connection established!");
-
+fn setup_tunnel(
+    frontend: &mut StreamWrapper,
+    config: Config,
+) -> Result<StreamWrapper, anyhow::Error> {
     let startup_message = frontend.read_startup_message()?;
 
     let frontend_params = match startup_message {
@@ -175,12 +176,20 @@ fn handle_connection(mut frontend: StreamWrapper, config: Config) -> Result<(), 
                 Message::AuthenticationOk => {}
                 _ => return Err(anyhow::anyhow!("Expected AuthenticationOk")),
             }
+
+            frontend.write_message(Message::AuthenticationOk)?;
         }
         _ => unimplemented!(),
     }
 
-    // Skip auth for now
-    frontend.write_message(Message::AuthenticationOk)?;
+    return Ok(backend);
+}
+
+fn handle_connection(mut frontend: StreamWrapper, config: Config) -> Result<(), anyhow::Error> {
+    println!("New connection established!");
+
+    let backend = setup_tunnel(&mut frontend, config)?;
+
     frontend.write_message(Message::ReadyForQuery)?;
 
     loop {
