@@ -1,4 +1,5 @@
 use anyhow::Result;
+use md5::{Digest, Md5};
 use std::collections::HashMap;
 use std::net::{TcpListener, TcpStream};
 
@@ -106,6 +107,16 @@ impl std::io::Read for StreamWrapper {
     }
 }
 
+fn encode_md5_password_hash(username: &str, password: &str, salt: &[u8]) -> String {
+    let mut md5 = Md5::new();
+    md5.update(password.as_bytes());
+    md5.update(username.as_bytes());
+    let output = md5.finalize_reset();
+    md5.update(format!("{:x}", output));
+    md5.update(&salt);
+    format!("md5{:x}", md5.finalize())
+}
+
 fn handle_connection(mut frontend: StreamWrapper, config: Config) -> Result<(), anyhow::Error> {
     println!("New connection established!");
 
@@ -145,18 +156,18 @@ fn handle_connection(mut frontend: StreamWrapper, config: Config) -> Result<(), 
                 .write_message(Message::AuthenticationRequestMD5Password { salt: salt.clone() })?;
             let frontend_response = frontend.read_message()?;
 
-            let hash = match frontend_response {
+            let frontend_hash = match frontend_response {
                 Message::MD5HashedPasswordMessage { hash } => hash,
                 _ => return Err(anyhow::anyhow!("Expected Password Message")),
             };
 
-            // TODO: Compare hash
+            let hash = encode_md5_password_hash(&user, password, &salt[..]);
 
-            let message = Message::MD5PasswordMessage {
-                salt: salt.clone(),
-                password: password.clone(),
-                username: user,
-            };
+            if frontend_hash != hash {
+                return Err(anyhow::anyhow!("Incorrect password"));
+            }
+
+            let message = Message::MD5HashedPasswordMessage { hash };
             backend.write_message(message)?;
             let response = backend.read_message()?;
 

@@ -1,7 +1,6 @@
 use anyhow::Result;
 use byteorder::{BigEndian, ByteOrder, NetworkEndian, WriteBytesExt};
 use bytes::{Buf, BytesMut};
-use md5::{Digest, Md5};
 use std::collections::HashMap;
 use std::convert::TryFrom;
 use std::io::prelude::*;
@@ -107,30 +106,11 @@ impl StartupMessage {
     }
 }
 
-fn encode_md5_password_hash(username: &str, password: &str, salt: &[u8]) -> String {
-    let mut md5 = Md5::new();
-    md5.update(password.as_bytes());
-    md5.update(username.as_bytes());
-    let output = md5.finalize_reset();
-    md5.update(format!("{:x}", output));
-    md5.update(&salt);
-    format!("md5{:x}", md5.finalize())
-}
-
 #[derive(Debug)]
 pub enum Message {
-    AuthenticationRequestMD5Password {
-        salt: Vec<u8>,
-    },
+    AuthenticationRequestMD5Password { salt: Vec<u8> },
     AuthenticationOk,
-    MD5PasswordMessage {
-        salt: Vec<u8>,
-        username: String,
-        password: String,
-    },
-    MD5HashedPasswordMessage {
-        hash: String,
-    },
+    MD5HashedPasswordMessage { hash: String },
     ReadyForQuery,
     SimpleQuery(String),
 }
@@ -152,20 +132,15 @@ impl Message {
                 result.extend_from_slice(salt);
                 result
             }
-            Self::MD5PasswordMessage {
-                username,
-                password,
-                salt,
-            } => {
+            Self::MD5HashedPasswordMessage { hash } => {
                 let mut result = vec![CharTag::Password.into()];
-                let md5 = encode_md5_password_hash(username, password, salt)
-                    .as_bytes()
-                    .to_vec();
 
-                let message_len = md5.len() as u32 + 4 + 1; // +1 for delimiter, +4 for message len u32
+                let hash_bytes = hash.as_bytes();
+
+                let message_len = hash_bytes.len() as u32 + 4 + 1; // +1 for delimiter, +4 for message len u32
                 result.write_u32::<BigEndian>(message_len).unwrap();
 
-                result.extend_from_slice(&md5);
+                result.extend_from_slice(&hash_bytes);
                 result.push(0);
 
                 result
