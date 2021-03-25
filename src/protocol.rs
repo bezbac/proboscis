@@ -105,6 +105,16 @@ impl StartupMessage {
         Ok(message)
     }
 }
+#[derive(Debug)]
+pub struct Field {
+    name: String,
+    table_oid: i32,
+    column_number: i16,
+    type_oid: i32,
+    type_length: i16,
+    type_modifier: i32,
+    format: i16,
+}
 
 #[derive(Debug)]
 pub enum Message {
@@ -113,6 +123,27 @@ pub enum Message {
     MD5HashedPasswordMessage { hash: String },
     ReadyForQuery,
     SimpleQuery(String),
+    ParameterStatus,
+    BackendKeyData,
+    RowDescription { fields: Vec<Field> },
+    DataRow,
+    CommandComplete,
+}
+
+pub fn read_until_zero<T: Read>(stream: &mut T) -> Result<Vec<u8>> {
+    let mut result = vec![];
+
+    loop {
+        let mut bytes = vec![0; 1];
+        bytes = stream.read_exact(&mut bytes).map(|_| bytes)?;
+
+        match bytes[..] {
+            [0] => break,
+            _ => result.extend_from_slice(&bytes[..]),
+        }
+    }
+
+    Ok(result)
 }
 
 impl Message {
@@ -145,7 +176,41 @@ impl Message {
 
                 result
             }
-            _ => unimplemented!(),
+            Self::SimpleQuery(query) => {
+                let mut result = vec![CharTag::Query.into()];
+
+                let query_bytes = query.as_bytes();
+
+                let message_len = query_bytes.len() as u32 + 4 + 1; // +1 for delimiter, +4 for message len u32
+                result.write_u32::<BigEndian>(message_len).unwrap();
+
+                result.extend_from_slice(&query_bytes);
+                result.push(0);
+
+                result
+            }
+            Self::RowDescription { fields } => {
+                let mut result = vec![CharTag::RowDescription.into()];
+
+                let mut body = vec![];
+
+                body.write_i16::<BigEndian>(fields.len() as i16).unwrap();
+                for field in fields {
+                    body.write(field.name.as_bytes()).unwrap();
+                    body.write_i32::<BigEndian>(field.table_oid).unwrap();
+                    body.write_i16::<BigEndian>(field.column_number).unwrap();
+                    body.write_i32::<BigEndian>(field.type_oid).unwrap();
+                    body.write_i16::<BigEndian>(field.type_length).unwrap();
+                    body.write_i32::<BigEndian>(field.type_modifier).unwrap();
+                    body.write_i16::<BigEndian>(field.format).unwrap();
+                }
+
+                result.write_i32::<BigEndian>(body.len() as i32).unwrap();
+                result.extend_from_slice(&body[..]);
+
+                result
+            }
+            _ => unimplemented!("as_vec not implemented for this messsage"),
         }
     }
 
@@ -156,8 +221,6 @@ impl Message {
 
     pub fn read<T: Read>(stream: &mut T) -> Result<Self> {
         let tag = CharTag::read(stream)?;
-
-        println!("Encountered Tag: {:?}", tag);
 
         match tag {
             CharTag::Query => {
@@ -219,6 +282,113 @@ impl Message {
                     hash: password_hash.to_string(),
                 })
             }
+            CharTag::ParameterStatus => {
+                let mut bytes = vec![0; 4];
+                bytes = stream.read_exact(&mut bytes).map(|_| bytes)?;
+                let message_len = u32::try_from(NetworkEndian::read_u32(&bytes))?;
+
+                let string_len = message_len - 4; // -4 for length u32
+
+                let mut bytes = vec![0; string_len as usize];
+                bytes = stream.read_exact(&mut bytes).map(|_| bytes)?;
+
+                // TODO: Parse the message
+
+                Ok(Self::ParameterStatus)
+            }
+            CharTag::BackendKeyData => {
+                let mut bytes = vec![0; 4];
+                bytes = stream.read_exact(&mut bytes).map(|_| bytes)?;
+                let message_len = u32::try_from(NetworkEndian::read_u32(&bytes))?;
+
+                let mut bytes = vec![0; 4];
+                bytes = stream.read_exact(&mut bytes).map(|_| bytes)?;
+                let process_id = u32::try_from(NetworkEndian::read_u32(&bytes))?;
+
+                let mut bytes = vec![0; 4];
+                bytes = stream.read_exact(&mut bytes).map(|_| bytes)?;
+                let secret_key = u32::try_from(NetworkEndian::read_u32(&bytes))?;
+
+                let string_len = message_len - 12; // -4 for length u32, -4 process_id, -4 secret_key
+
+                let mut bytes = vec![0; string_len as usize];
+                bytes = stream.read_exact(&mut bytes).map(|_| bytes)?;
+
+                // TODO: Use the parsed data
+
+                Ok(Self::BackendKeyData)
+            }
+            CharTag::ReadyForQuery => {
+                let mut bytes = vec![0; 4];
+                bytes = stream.read_exact(&mut bytes).map(|_| bytes)?;
+                let message_len = u32::try_from(NetworkEndian::read_u32(&bytes))?;
+
+                let string_len = message_len - 4; // -4 for length u32
+
+                let mut bytes = vec![0; string_len as usize];
+                bytes = stream.read_exact(&mut bytes).map(|_| bytes)?;
+
+                // TODO: Use the parsed data
+
+                Ok(Message::ReadyForQuery)
+            }
+            CharTag::RowDescription => {
+                let mut bytes = vec![0; 4];
+                bytes = stream.read_exact(&mut bytes).map(|_| bytes)?;
+                let message_len = u32::try_from(NetworkEndian::read_u32(&bytes))?;
+
+                let mut bytes = vec![0; 2];
+                bytes = stream.read_exact(&mut bytes).map(|_| bytes)?;
+                let num_fields = u16::try_from(NetworkEndian::read_u16(&bytes))?;
+
+                let mut fields = vec![];
+
+                while fields.len() < num_fields as usize {
+                    let name_bytes = read_until_zero(stream)?;
+
+                    let mut bytes = vec![0; 4];
+                    bytes = stream.read_exact(&mut bytes).map(|_| bytes)?;
+                    let table_oid = i32::try_from(NetworkEndian::read_i32(&bytes))?;
+
+                    let mut bytes = vec![0; 2];
+                    bytes = stream.read_exact(&mut bytes).map(|_| bytes)?;
+                    let column_number = i16::try_from(NetworkEndian::read_i16(&bytes))?;
+
+                    let mut bytes = vec![0; 4];
+                    bytes = stream.read_exact(&mut bytes).map(|_| bytes)?;
+                    let type_oid = i32::try_from(NetworkEndian::read_i32(&bytes))?;
+
+                    let mut bytes = vec![0; 2];
+                    bytes = stream.read_exact(&mut bytes).map(|_| bytes)?;
+                    let type_length = i16::try_from(NetworkEndian::read_i16(&bytes))?;
+
+                    let mut bytes = vec![0; 4];
+                    bytes = stream.read_exact(&mut bytes).map(|_| bytes)?;
+                    let type_modifier = i32::try_from(NetworkEndian::read_i32(&bytes))?;
+
+                    let mut bytes = vec![0; 2];
+                    bytes = stream.read_exact(&mut bytes).map(|_| bytes)?;
+                    let format = i16::try_from(NetworkEndian::read_i16(&bytes))?;
+
+                    let field = Field {
+                        name: String::from_utf8(name_bytes.clone())?,
+                        table_oid,
+                        column_number,
+                        type_oid,
+                        type_length,
+                        type_modifier,
+                        format,
+                    };
+
+                    println!("{:?}", field);
+
+                    fields.push(field);
+                }
+
+                // TODO: Use the parsed data
+
+                Ok(Message::RowDescription { fields })
+            }
             _ => unimplemented!("Recieved tag {:?}", tag),
         }
     }
@@ -231,13 +401,30 @@ pub enum CharTag {
     EmptyQueryResponse,
     Query,
     Password,
+    CommandComplete,
+    RowDescription,
+    DataRow,
+    ParameterStatus,
+    BackendKeyData,
 }
 
 impl CharTag {
     pub fn read<T: Read>(stream: &mut T) -> Result<CharTag> {
         let mut bytes = vec![0; 1];
         stream.read(&mut bytes)?;
-        return CharTag::try_from(bytes[0]).map_err(|e| anyhow::anyhow!(e));
+
+        let tag = CharTag::try_from(bytes[0]);
+
+        println!(
+            "Encountered Tag: {} ({:?})",
+            String::from_utf8(bytes)?,
+            match &tag {
+                Ok(tag) => format!("{:?}", tag),
+                Err(_) => "Error".to_string(),
+            }
+        );
+
+        Ok(tag.expect("Could not read char tag"))
     }
 }
 
@@ -249,6 +436,11 @@ impl From<CharTag> for u8 {
             CharTag::EmptyQueryResponse => b'I',
             CharTag::Query => b'Q',
             CharTag::Password => b'p',
+            CharTag::RowDescription => b'T',
+            CharTag::DataRow => b'D',
+            CharTag::CommandComplete => b'C',
+            CharTag::ParameterStatus => b'S',
+            CharTag::BackendKeyData => b'K',
         }
     }
 }
@@ -263,7 +455,12 @@ impl TryFrom<u8> for CharTag {
             b'I' => Ok(CharTag::EmptyQueryResponse),
             b'Q' => Ok(CharTag::Query),
             b'p' => Ok(CharTag::Password),
-            _ => Err("Unknown char tag {:?}"),
+            b'T' => Ok(CharTag::RowDescription),
+            b'D' => Ok(CharTag::DataRow),
+            b'C' => Ok(CharTag::CommandComplete),
+            b'S' => Ok(CharTag::ParameterStatus),
+            b'K' => Ok(CharTag::BackendKeyData),
+            _ => Err("Unknown char tag"),
         }
     }
 }

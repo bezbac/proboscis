@@ -178,9 +178,26 @@ fn setup_tunnel(
             }
 
             frontend.write_message(Message::AuthenticationOk)?;
+
+            loop {
+                let response = backend.read_message()?;
+
+                match response {
+                    Message::ReadyForQuery => break,
+                    Message::ParameterStatus => {
+                        // TODO:
+                    }
+                    Message::BackendKeyData => {
+                        // TODO:
+                    }
+                    _ => unimplemented!("Unexpected message"),
+                }
+            }
         }
         _ => unimplemented!(),
     }
+
+    frontend.write_message(Message::ReadyForQuery)?;
 
     return Ok(backend);
 }
@@ -188,19 +205,31 @@ fn setup_tunnel(
 fn handle_connection(mut frontend: StreamWrapper, config: Config) -> Result<(), anyhow::Error> {
     println!("New connection established!");
 
-    let backend = setup_tunnel(&mut frontend, config)?;
-
-    frontend.write_message(Message::ReadyForQuery)?;
+    let mut backend = setup_tunnel(&mut frontend, config)?;
 
     loop {
         let request = frontend.read_message()?;
 
         match request {
             Message::SimpleQuery(query_string) => {
-                // TODO: Execute simple query
+                backend.write_message(Message::SimpleQuery(query_string))?;
 
-                // Next message
-                // Row Description
+                loop {
+                    let response = backend.read_message()?;
+                    match response {
+                        Message::ReadyForQuery => break,
+                        Message::RowDescription { fields } => {
+                            frontend.write_message(Message::RowDescription { fields })?;
+                        }
+                        Message::DataRow => unimplemented!(),
+                        Message::CommandComplete => {
+                            frontend.write_message(Message::CommandComplete)?;
+                        }
+                        _ => unimplemented!(""),
+                    }
+                }
+
+                frontend.write_message(Message::ReadyForQuery)?;
             }
             _ => unimplemented!(),
         }
