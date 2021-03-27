@@ -105,7 +105,7 @@ impl StartupMessage {
         Ok(message)
     }
 }
-#[derive(Debug)]
+#[derive(Debug, PartialEq, Clone)]
 pub struct Field {
     name: String,
     table_oid: i32,
@@ -116,18 +116,35 @@ pub struct Field {
     format: i16,
 }
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq, Clone)]
 pub enum Message {
-    AuthenticationRequestMD5Password { salt: Vec<u8> },
+    AuthenticationRequestMD5Password {
+        salt: Vec<u8>,
+    },
     AuthenticationOk,
-    MD5HashedPasswordMessage { hash: String },
+    MD5HashedPasswordMessage {
+        hash: String,
+    },
     ReadyForQuery,
     SimpleQuery(String),
-    ParameterStatus,
-    BackendKeyData,
-    RowDescription { fields: Vec<Field> },
-    DataRow { field_data: Vec<Vec<u8>> },
-    CommandComplete { tag: String },
+    ParameterStatus {
+        key: String,
+        value: String,
+    },
+    BackendKeyData {
+        process_id: u32,
+        secret_key: u32,
+        additional: Vec<u8>,
+    },
+    RowDescription {
+        fields: Vec<Field>,
+    },
+    DataRow {
+        field_data: Vec<Vec<u8>>,
+    },
+    CommandComplete {
+        tag: String,
+    },
     Terminate,
 }
 
@@ -198,6 +215,8 @@ impl Message {
                 body.write_i16::<BigEndian>(fields.len() as i16).unwrap();
                 for field in fields {
                     body.write(field.name.as_bytes()).unwrap();
+                    body.push(0);
+
                     body.write_i32::<BigEndian>(field.table_oid).unwrap();
                     body.write_i16::<BigEndian>(field.column_number).unwrap();
                     body.write_i32::<BigEndian>(field.type_oid).unwrap();
@@ -249,6 +268,44 @@ impl Message {
                 let mut result = vec![CharTag::Terminate.into()];
 
                 result.write_i32::<BigEndian>(0).unwrap();
+
+                result
+            }
+            Self::ParameterStatus { key, value } => {
+                let mut result = vec![CharTag::ParameterStatus.into()];
+
+                let mut body = vec![];
+
+                body.extend_from_slice(key.as_bytes());
+                body.push(0);
+
+                body.extend_from_slice(value.as_bytes());
+                body.push(0);
+
+                result
+                    .write_i32::<BigEndian>(body.len() as i32 + 4) // + 4 for message_len (this i32)
+                    .unwrap();
+                result.extend_from_slice(&body[..]);
+
+                result
+            }
+            Self::BackendKeyData {
+                process_id,
+                secret_key,
+                additional,
+            } => {
+                let mut result = vec![CharTag::BackendKeyData.into()];
+
+                let mut body = vec![];
+
+                body.write_i32::<BigEndian>(*process_id as i32).unwrap();
+                body.write_i32::<BigEndian>(*secret_key as i32).unwrap();
+                body.extend_from_slice(additional);
+
+                result
+                    .write_i32::<BigEndian>(body.len() as i32 + 4) // + 4 for message_len (this i32)
+                    .unwrap();
+                result.extend_from_slice(&body[..]);
 
                 result
             }
@@ -329,14 +386,13 @@ impl Message {
                 bytes = stream.read_exact(&mut bytes).map(|_| bytes)?;
                 let message_len = u32::try_from(NetworkEndian::read_u32(&bytes))?;
 
-                let string_len = message_len - 4; // -4 for length u32
+                let key_bytes = read_until_zero(stream)?;
+                let key = String::from_utf8(key_bytes)?;
 
-                let mut bytes = vec![0; string_len as usize];
-                bytes = stream.read_exact(&mut bytes).map(|_| bytes)?;
+                let value_bytes = read_until_zero(stream)?;
+                let value = String::from_utf8(value_bytes)?;
 
-                // TODO: Parse the message
-
-                Ok(Self::ParameterStatus)
+                Ok(Self::ParameterStatus { key, value })
             }
             CharTag::BackendKeyData => {
                 let mut bytes = vec![0; 4];
@@ -356,9 +412,11 @@ impl Message {
                 let mut bytes = vec![0; string_len as usize];
                 bytes = stream.read_exact(&mut bytes).map(|_| bytes)?;
 
-                // TODO: Use the parsed data
-
-                Ok(Self::BackendKeyData)
+                Ok(Self::BackendKeyData {
+                    process_id,
+                    secret_key,
+                    additional: bytes,
+                })
             }
             CharTag::ReadyForQuery => {
                 let mut bytes = vec![0; 4];
@@ -585,5 +643,66 @@ mod tests {
         let parsed = StartupMessage::read(&mut buf.as_slice()).unwrap();
 
         assert_eq!(parsed, StartupMessage::Startup { params })
+    }
+
+    #[test]
+    fn parameter_status() {
+        let mut buf = vec![];
+        let message = Message::ParameterStatus {
+            key: "Test Key".to_string(),
+            value: "Test Value".to_string(),
+        };
+
+        message.clone().write(&mut buf).unwrap();
+        let parsed = Message::read(&mut buf.as_slice()).unwrap();
+
+        assert_eq!(parsed, message)
+    }
+
+    #[test]
+    fn empty_backend_key_data() {
+        let mut buf = vec![];
+        let message = Message::BackendKeyData {
+            process_id: 1,
+            secret_key: 1,
+            additional: vec![],
+        };
+
+        message.clone().write(&mut buf).unwrap();
+        let parsed = Message::read(&mut buf.as_slice()).unwrap();
+
+        assert_eq!(parsed, message)
+    }
+
+    #[test]
+    fn ready_for_query() {
+        let mut buf = vec![];
+        let message = Message::ReadyForQuery;
+
+        message.clone().write(&mut buf).unwrap();
+        let parsed = Message::read(&mut buf.as_slice()).unwrap();
+
+        assert_eq!(parsed, message)
+    }
+
+    #[test]
+    fn row_description() {
+        let mut buf = vec![];
+        let message = Message::RowDescription {
+            fields: vec![Field {
+                name: "test".to_string(),
+                column_number: 1,
+                table_oid: -1,
+                type_length: -1,
+                type_modifier: -1,
+                type_oid: -1,
+                format: -1,
+            }],
+        };
+
+        message.clone().write(&mut buf).unwrap();
+        let parsed = Message::read(&mut buf.as_slice()).unwrap();
+
+        assert_eq!(parsed, message)
     }
 }

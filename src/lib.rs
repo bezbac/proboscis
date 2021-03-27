@@ -184,11 +184,19 @@ fn setup_tunnel(
 
                 match response {
                     Message::ReadyForQuery => break,
-                    Message::ParameterStatus => {
-                        // TODO:
+                    Message::ParameterStatus { key, value } => {
+                        frontend.write_message(Message::ParameterStatus { key, value })?;
                     }
-                    Message::BackendKeyData => {
-                        // TODO:
+                    Message::BackendKeyData {
+                        process_id,
+                        secret_key,
+                        additional,
+                    } => {
+                        frontend.write_message(Message::BackendKeyData {
+                            process_id,
+                            secret_key,
+                            additional,
+                        })?;
                     }
                     _ => unimplemented!("Unexpected message"),
                 }
