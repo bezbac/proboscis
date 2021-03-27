@@ -1,5 +1,7 @@
 # Testing
+
 ## End-to-end tests
+
 ```
 docker-compose up
 cargo test --features e2e
@@ -16,6 +18,7 @@ psql "sslmode=disable host=localhost port=5430 dbname=test"
 Repos:
 
 - [alex-dukhno/isomorphicdb](https://github.com/alex-dukhno/isomorphicdb) for a reference implementation of a postgres-compatible server in rust
+- [sfackler/rust-postgres](https://github.com/sfackler/rust-postgres) for another implementation of the postgresql protocol in rust
 
 Other:
 

@@ -211,6 +211,7 @@ fn handle_connection(mut frontend: StreamWrapper, config: Config) -> Result<(), 
         let request = frontend.read_message()?;
 
         match request {
+            Message::Terminate => break,
             Message::SimpleQuery(query_string) => {
                 backend.write_message(Message::SimpleQuery(query_string))?;
 
@@ -221,9 +222,11 @@ fn handle_connection(mut frontend: StreamWrapper, config: Config) -> Result<(), 
                         Message::RowDescription { fields } => {
                             frontend.write_message(Message::RowDescription { fields })?;
                         }
-                        Message::DataRow => unimplemented!(),
-                        Message::CommandComplete => {
-                            frontend.write_message(Message::CommandComplete)?;
+                        Message::DataRow { field_data } => {
+                            frontend.write_message(Message::DataRow { field_data })?;
+                        }
+                        Message::CommandComplete { tag } => {
+                            frontend.write_message(Message::CommandComplete { tag })?;
                         }
                         _ => unimplemented!(""),
                     }
@@ -234,4 +237,6 @@ fn handle_connection(mut frontend: StreamWrapper, config: Config) -> Result<(), 
             _ => unimplemented!(),
         }
     }
+
+    Ok(())
 }
