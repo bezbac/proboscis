@@ -23,15 +23,21 @@ fn test_end_to_end() -> Result<(), Error> {
 
     let mut client = Client::connect("host=0.0.0.0 port=5430 user=admin password=password", NoTls)?;
 
-    let result = client.simple_query("SELECT id, name FROM person")?;
+    let query = "SELECT id, name FROM person";
 
-    let row: &SimpleQueryRow = match result.first().unwrap() {
+    // Simple query
+    let simple_query_result = client.simple_query(query)?;
+    let row: &SimpleQueryRow = match simple_query_result.first().unwrap() {
         SimpleQueryMessage::Row(v) => v,
         _ => panic!("Not a row"),
     };
 
     let name: &str = row.get(1).unwrap();
     assert_eq!(name, "Max");
+
+    // Normal query
+    let query_result = client.query(query, &[])?;
+    let row = query_result.first().unwrap();
 
     Ok(())
 }

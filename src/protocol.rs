@@ -118,6 +118,21 @@ pub struct Field {
 }
 
 #[derive(Debug, PartialEq, Clone)]
+pub enum DescribeKind {
+    Statement,
+    Portal,
+}
+
+impl From<DescribeKind> for u8 {
+    fn from(value: DescribeKind) -> Self {
+        match value {
+            DescribeKind::Statement => b'S',
+            DescribeKind::Portal => b'P',
+        }
+    }
+}
+
+#[derive(Debug, PartialEq, Clone)]
 pub enum Message {
     AuthenticationRequestMD5Password {
         salt: Vec<u8>,
@@ -147,6 +162,15 @@ pub enum Message {
         tag: String,
     },
     Terminate,
+    Parse {
+        statement: String,
+        query: String,
+        params_types: Vec<u32>,
+    },
+    Describe {
+        kind: DescribeKind,
+        name: String,
+    },
 }
 
 pub fn read_until_zero<T: Read>(stream: &mut T) -> Result<Vec<u8>> {
@@ -249,7 +273,7 @@ impl Message {
             ),
             Self::DataRow { field_data } => write_message_with_prefixed_message_len(
                 buf,
-                CharTag::DataRow,
+                CharTag::DataRowOrDescribe,
                 Box::new(move |body| -> Result<()> {
                     body.write_be(field_data.len() as i16)?;
 
@@ -305,6 +329,39 @@ impl Message {
                     body.write_be(process_id as i32)?;
                     body.write_be(secret_key as i32)?;
                     body.extend_from_slice(&additional[..]);
+
+                    Ok(())
+                }),
+            ),
+            Self::Parse {
+                statement,
+                query,
+                params_types,
+            } => write_message_with_prefixed_message_len(
+                buf,
+                CharTag::Parse,
+                Box::new(move |body| -> Result<()> {
+                    body.extend_from_slice(query.as_bytes());
+                    body.push(0);
+
+                    body.extend_from_slice(statement.as_bytes());
+                    body.push(0);
+
+                    for param in &params_types {
+                        body.write_be(*param)?;
+                    }
+
+                    Ok(())
+                }),
+            ),
+            Self::Describe { name, kind } => write_message_with_prefixed_message_len(
+                buf,
+                CharTag::DataRowOrDescribe,
+                Box::new(move |body| -> Result<()> {
+                    body.push(kind.clone().into());
+
+                    body.extend_from_slice(name.as_bytes());
+                    body.push(0);
 
                     Ok(())
                 }),
@@ -419,19 +476,27 @@ impl Message {
 
                 Ok(Message::RowDescription { fields })
             }
-            CharTag::DataRow => {
+            CharTag::DataRowOrDescribe => {
                 let message_len: u32 = stream.read_be()?;
-                let num_fields: u16 = stream.read_be()?;
+
+                let mut bytes: Vec<u8> = vec![0; message_len as usize - 4];
+                bytes = stream.read_exact(&mut bytes).map(|_| bytes)?;
+
+                let describe_identifier = bytes[5];
+
+                let mut cursor = std::io::Cursor::new(bytes);
+
+                let num_fields: u16 = cursor.read_be()?;
 
                 let mut fields = vec![];
 
                 while fields.len() < num_fields as usize {
-                    let field_len: u32 = stream.read_be()?;
+                    let field_len: u32 = cursor.read_be()?;
 
-                    let mut bytes = vec![0; field_len as usize];
-                    bytes = stream.read_exact(&mut bytes).map(|_| bytes)?;
+                    let mut field_bytes = vec![0; field_len as usize];
+                    cursor.read_exact(&mut field_bytes)?;
 
-                    fields.push(bytes[..].to_vec())
+                    fields.push(field_bytes[..].to_vec())
                 }
 
                 Ok(Message::DataRow { field_data: fields })
@@ -449,6 +514,31 @@ impl Message {
 
                 Ok(Message::Terminate)
             }
+            CharTag::Parse => {
+                let message_len: u32 = stream.read_be()?;
+
+                let statement_bytes = read_until_zero(stream)?;
+                let statement = String::from_utf8(statement_bytes.clone())?;
+
+                let query_bytes = read_until_zero(stream)?;
+                let query = String::from_utf8(query_bytes.clone())?;
+
+                let num_param_types: u16 = stream.read_be()?;
+
+                let mut params_types = vec![];
+
+                while params_types.len() < num_param_types as usize {
+                    let param_oid: u32 = stream.read_be()?;
+
+                    params_types.push(param_oid)
+                }
+
+                Ok(Message::Parse {
+                    statement,
+                    query,
+                    params_types,
+                })
+            }
             _ => unimplemented!("Recieved tag {:?}", tag),
         }
     }
@@ -463,10 +553,14 @@ pub enum CharTag {
     Password,
     CommandComplete,
     RowDescription,
-    DataRow,
+    DataRowOrDescribe,
     ParameterStatus,
     BackendKeyData,
     Terminate,
+    Parse,
+    Bind,
+    ParameterDescription,
+    Execute,
 }
 
 impl CharTag {
@@ -498,11 +592,15 @@ impl From<CharTag> for u8 {
             CharTag::Query => b'Q',
             CharTag::Password => b'p',
             CharTag::RowDescription => b'T',
-            CharTag::DataRow => b'D',
+            CharTag::DataRowOrDescribe => b'D',
             CharTag::CommandComplete => b'C',
             CharTag::ParameterStatus => b'S',
             CharTag::BackendKeyData => b'K',
             CharTag::Terminate => b'X',
+            CharTag::Parse => b'P',
+            CharTag::Bind => b'B',
+            CharTag::ParameterDescription => b't',
+            CharTag::Execute => b'E',
         }
     }
 }
@@ -518,11 +616,15 @@ impl TryFrom<u8> for CharTag {
             b'Q' => Ok(CharTag::Query),
             b'p' => Ok(CharTag::Password),
             b'T' => Ok(CharTag::RowDescription),
-            b'D' => Ok(CharTag::DataRow),
+            b'D' => Ok(CharTag::DataRowOrDescribe),
             b'C' => Ok(CharTag::CommandComplete),
             b'S' => Ok(CharTag::ParameterStatus),
             b'K' => Ok(CharTag::BackendKeyData),
             b'X' => Ok(CharTag::Terminate),
+            b'P' => Ok(CharTag::Parse),
+            b'B' => Ok(CharTag::Bind),
+            b't' => Ok(CharTag::ParameterDescription),
+            b'E' => Ok(CharTag::Execute),
             _ => Err("Unknown char tag"),
         }
     }

@@ -242,6 +242,33 @@ fn handle_connection(mut frontend: StreamWrapper, config: Config) -> Result<(), 
 
                 frontend.write_message(Message::ReadyForQuery)?;
             }
+            Message::Parse {
+                query,
+                params_types,
+                statement,
+            } => {
+                backend.write_message(Message::Parse {
+                    query,
+                    params_types,
+                    statement,
+                })?;
+
+                loop {
+                    let response = backend.read_message()?;
+                    match response {
+                        Message::DataRow { field_data } => {
+                            frontend.write_message(Message::DataRow { field_data })?;
+                        }
+                        Message::Describe { name, kind } => {
+                            frontend.write_message(Message::Describe { name, kind })?;
+                        }
+                        Message::CommandComplete { tag } => {
+                            frontend.write_message(Message::CommandComplete { tag })?;
+                        }
+                        _ => unimplemented!(""),
+                    }
+                }
+            }
             _ => unimplemented!(),
         }
     }
