@@ -222,7 +222,7 @@ impl Message {
                     body.extend_from_slice(query.as_bytes());
                     body.push(0);
 
-                    body.write_be((&params_types).len() as u16)?;
+                    body.write_be(params_types.clone().len() as i16)?;
 
                     for param in &params_types {
                         body.write_be(*param)?;
@@ -453,7 +453,6 @@ impl Message {
 
                 while params_types.len() < num_param_types as usize {
                     let param_oid: u32 = stream.read_be()?;
-
                     params_types.push(param_oid)
                 }
 
@@ -484,9 +483,16 @@ mod tests {
 
     fn test_symmetric_serialization_deserialization(message: Message) {
         let mut buf = vec![];
-        message.clone().write(&mut buf).unwrap();
-        let parsed = Message::read(&mut buf.as_slice()).unwrap();
+        let mut cursor = std::io::Cursor::new(&mut buf);
+        message.clone().write(&mut cursor).unwrap();
+        let bytes_written = cursor.position();
+
+        cursor.set_position(0);
+        let parsed = Message::read(&mut cursor).unwrap();
+        let bytes_read = cursor.position();
+
         assert_eq!(parsed, message);
+        assert_eq!(bytes_read, bytes_written);
     }
 
     #[test]
@@ -567,7 +573,7 @@ mod tests {
     #[test]
     fn parse() {
         let message = Message::Parse {
-            statement: "".to_string(),
+            statement: "s0".to_string(),
             query: "SELECT id, name FROM person".to_string(),
             params_types: vec![],
         };
