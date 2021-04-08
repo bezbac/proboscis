@@ -265,6 +265,9 @@ fn handle_connection(mut frontend: StreamWrapper, config: Config) -> Result<(), 
                         Message::CommandComplete { tag } => {
                             frontend.write_message(Message::CommandComplete { tag })?;
                         }
+                        Message::Execute { portal, row_limit } => {
+                            frontend.write_message(Message::Execute { portal, row_limit })?;
+                        }
                         _ => unimplemented!(""),
                     }
                 }

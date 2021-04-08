@@ -171,6 +171,16 @@ pub enum Message {
         kind: DescribeKind,
         name: String,
     },
+    Execute {
+        portal: String,
+        row_limit: i32,
+    },
+    Sync {
+        len: u32,
+    },
+    Error {
+        messages: HashMap<String, String>,
+    },
 }
 
 pub fn read_until_zero<T: Read>(stream: &mut T) -> Result<Vec<u8>> {
@@ -307,7 +317,7 @@ impl Message {
 
             Self::ParameterStatus { key, value } => write_message_with_prefixed_message_len(
                 buf,
-                CharTag::ParameterStatus,
+                CharTag::ParameterStatusOrSync,
                 Box::new(move |body| -> Result<()> {
                     body.extend_from_slice(key.as_bytes());
                     body.push(0);
@@ -341,11 +351,13 @@ impl Message {
                 buf,
                 CharTag::Parse,
                 Box::new(move |body| -> Result<()> {
+                    body.extend_from_slice(statement.as_bytes());
+                    body.push(0);
+
                     body.extend_from_slice(query.as_bytes());
                     body.push(0);
 
-                    body.extend_from_slice(statement.as_bytes());
-                    body.push(0);
+                    body.write_be((&params_types).len() as u16)?;
 
                     for param in &params_types {
                         body.write_be(*param)?;
@@ -366,6 +378,30 @@ impl Message {
                     Ok(())
                 }),
             ),
+            Self::Execute { portal, row_limit } => write_message_with_prefixed_message_len(
+                buf,
+                CharTag::ExecuteOrError,
+                Box::new(move |body| -> Result<()> {
+                    body.extend_from_slice(portal.as_bytes());
+                    body.push(0);
+
+                    body.write_be(row_limit)?;
+
+                    Ok(())
+                }),
+            ),
+            Self::Sync { len } => write_message_with_prefixed_message_len(
+                buf,
+                CharTag::ParameterStatusOrSync,
+                Box::new(move |body| -> Result<()> {
+                    body.write_be(len)?;
+
+                    Ok(())
+                }),
+            ),
+            Self::Error { messages } => {
+                unimplemented!()
+            }
         }
     }
 
@@ -405,8 +441,13 @@ impl Message {
 
                 Ok(Self::MD5HashedPasswordMessage { hash })
             }
-            CharTag::ParameterStatus => {
+            CharTag::ParameterStatusOrSync => {
                 let message_len: u32 = stream.read_be()?;
+
+                if message_len == 8 {
+                    let len: u32 = stream.read_be()?;
+                    return Ok(Self::Sync { len });
+                }
 
                 let key_bytes = read_until_zero(stream)?;
                 let key = String::from_utf8(key_bytes)?;
@@ -482,24 +523,42 @@ impl Message {
                 let mut bytes: Vec<u8> = vec![0; message_len as usize - 4];
                 bytes = stream.read_exact(&mut bytes).map(|_| bytes)?;
 
-                let describe_identifier = bytes[5];
+                let describe_identifier = bytes[0];
 
-                let mut cursor = std::io::Cursor::new(bytes);
+                match describe_identifier {
+                    b'S' | b'P' => {
+                        let mut cursor = std::io::Cursor::new(&bytes[1..]);
 
-                let num_fields: u16 = cursor.read_be()?;
+                        let kind = match describe_identifier {
+                            b'S' => DescribeKind::Statement,
+                            b'P' => DescribeKind::Portal,
+                            _ => return Err(anyhow::anyhow!("Invalid describe kind")),
+                        };
 
-                let mut fields = vec![];
+                        let name_bytes = read_until_zero(&mut cursor)?;
+                        let name = String::from_utf8(name_bytes)?;
 
-                while fields.len() < num_fields as usize {
-                    let field_len: u32 = cursor.read_be()?;
+                        Ok(Message::Describe { kind, name })
+                    }
+                    _ => {
+                        let mut cursor = std::io::Cursor::new(bytes);
 
-                    let mut field_bytes = vec![0; field_len as usize];
-                    cursor.read_exact(&mut field_bytes)?;
+                        let num_fields: u16 = cursor.read_be()?;
 
-                    fields.push(field_bytes[..].to_vec())
+                        let mut fields = vec![];
+
+                        while fields.len() < num_fields as usize {
+                            let field_len: u32 = cursor.read_be()?;
+
+                            let mut field_bytes = vec![0; field_len as usize];
+                            cursor.read_exact(&mut field_bytes)?;
+
+                            fields.push(field_bytes[..].to_vec())
+                        }
+
+                        Ok(Message::DataRow { field_data: fields })
+                    }
                 }
-
-                Ok(Message::DataRow { field_data: fields })
             }
             CharTag::CommandComplete => {
                 let message_len: u32 = stream.read_be()?;
@@ -539,6 +598,16 @@ impl Message {
                     params_types,
                 })
             }
+            CharTag::ExecuteOrError => {
+                let message_len: u32 = stream.read_be()?;
+
+                let portal_bytes = read_until_zero(stream)?;
+                let portal = String::from_utf8(portal_bytes.clone())?;
+
+                let row_limit: i32 = stream.read_be()?;
+
+                Ok(Message::Execute { portal, row_limit })
+            }
             _ => unimplemented!("Recieved tag {:?}", tag),
         }
     }
@@ -554,13 +623,13 @@ pub enum CharTag {
     CommandComplete,
     RowDescription,
     DataRowOrDescribe,
-    ParameterStatus,
     BackendKeyData,
     Terminate,
     Parse,
     Bind,
     ParameterDescription,
-    Execute,
+    ExecuteOrError,
+    ParameterStatusOrSync,
 }
 
 impl CharTag {
@@ -594,13 +663,13 @@ impl From<CharTag> for u8 {
             CharTag::RowDescription => b'T',
             CharTag::DataRowOrDescribe => b'D',
             CharTag::CommandComplete => b'C',
-            CharTag::ParameterStatus => b'S',
+            CharTag::ParameterStatusOrSync => b'S',
             CharTag::BackendKeyData => b'K',
             CharTag::Terminate => b'X',
             CharTag::Parse => b'P',
             CharTag::Bind => b'B',
             CharTag::ParameterDescription => b't',
-            CharTag::Execute => b'E',
+            CharTag::ExecuteOrError => b'E',
         }
     }
 }
@@ -618,13 +687,13 @@ impl TryFrom<u8> for CharTag {
             b'T' => Ok(CharTag::RowDescription),
             b'D' => Ok(CharTag::DataRowOrDescribe),
             b'C' => Ok(CharTag::CommandComplete),
-            b'S' => Ok(CharTag::ParameterStatus),
+            b'S' => Ok(CharTag::ParameterStatusOrSync),
             b'K' => Ok(CharTag::BackendKeyData),
             b'X' => Ok(CharTag::Terminate),
             b'P' => Ok(CharTag::Parse),
             b'B' => Ok(CharTag::Bind),
             b't' => Ok(CharTag::ParameterDescription),
-            b'E' => Ok(CharTag::Execute),
+            b'E' => Ok(CharTag::ExecuteOrError),
             _ => Err("Unknown char tag"),
         }
     }
@@ -633,6 +702,13 @@ impl TryFrom<u8> for CharTag {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn test_symmetric_serialization_deserialization(message: Message) {
+        let mut buf = vec![];
+        message.clone().write(&mut buf).unwrap();
+        let parsed = Message::read(&mut buf.as_slice()).unwrap();
+        assert_eq!(parsed, message);
+    }
 
     #[test]
     fn startup_message_without_parameters() {
@@ -665,48 +741,34 @@ mod tests {
 
     #[test]
     fn parameter_status() {
-        let mut buf = vec![];
         let message = Message::ParameterStatus {
             key: "Test Key".to_string(),
             value: "Test Value".to_string(),
         };
 
-        message.clone().write(&mut buf).unwrap();
-        let parsed = Message::read(&mut buf.as_slice()).unwrap();
-
-        assert_eq!(parsed, message)
+        test_symmetric_serialization_deserialization(message);
     }
 
     #[test]
     fn empty_backend_key_data() {
-        let mut buf = vec![];
         let message = Message::BackendKeyData {
             process_id: 1,
             secret_key: 1,
             additional: vec![],
         };
 
-        message.clone().write(&mut buf).unwrap();
-
-        let parsed = Message::read(&mut buf.as_slice()).unwrap();
-
-        assert_eq!(parsed, message)
+        test_symmetric_serialization_deserialization(message);
     }
 
     #[test]
     fn ready_for_query() {
-        let mut buf = vec![];
         let message = Message::ReadyForQuery;
 
-        message.clone().write(&mut buf).unwrap();
-        let parsed = Message::read(&mut buf.as_slice()).unwrap();
-
-        assert_eq!(parsed, message)
+        test_symmetric_serialization_deserialization(message);
     }
 
     #[test]
     fn row_description() {
-        let mut buf = vec![];
         let message = Message::RowDescription {
             fields: vec![Field {
                 name: "test".to_string(),
@@ -719,9 +781,47 @@ mod tests {
             }],
         };
 
-        message.clone().write(&mut buf).unwrap();
-        let parsed = Message::read(&mut buf.as_slice()).unwrap();
+        test_symmetric_serialization_deserialization(message);
+    }
 
-        assert_eq!(parsed, message)
+    #[test]
+    fn describe_statement() {
+        let message = Message::Describe {
+            kind: DescribeKind::Statement,
+            name: "Test".to_string(),
+        };
+
+        test_symmetric_serialization_deserialization(message);
+    }
+
+    #[test]
+    fn describe_portal() {
+        let message = Message::Describe {
+            kind: DescribeKind::Portal,
+            name: "Test".to_string(),
+        };
+
+        test_symmetric_serialization_deserialization(message);
+    }
+
+    #[test]
+    fn execute() {
+        let message = Message::Execute {
+            portal: "Test".to_string(),
+            row_limit: 0,
+        };
+
+        test_symmetric_serialization_deserialization(message);
+    }
+
+    #[test]
+    fn parse() {
+        let message = Message::Parse {
+            statement: "".to_string(),
+            query: "SELECT id, name FROM person".to_string(),
+            params_types: vec![],
+        };
+
+        test_symmetric_serialization_deserialization(message);
     }
 }
