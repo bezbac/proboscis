@@ -311,6 +311,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "omnom"
+version = "3.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "66562a92c66d5937e9d549597c2d3cafe3d2367dd08dc257da730587c2cfc218"
+dependencies = [
+ "memchr",
+]
+
+[[package]]
 name = "opaque-debug"
 version = "0.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -434,6 +443,7 @@ dependencies = [
  "byteorder",
  "bytes",
  "md-5",
+ "omnom",
  "postgres",
 ]
 
