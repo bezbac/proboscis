@@ -1,0 +1,89 @@
+use anyhow::Result;
+use std::convert::TryFrom;
+use std::io::prelude::*;
+
+#[derive(Debug, std::cmp::PartialEq)]
+pub enum CharTag {
+    Authentication,
+    ReadyForQuery,
+    EmptyQueryResponse,
+    Query,
+    Password,
+    CommandComplete,
+    RowDescription,
+    DataRowOrDescribe,
+    BackendKeyData,
+    Terminate,
+    Parse,
+    Bind,
+    ParameterDescription,
+    ExecuteOrError,
+    ParameterStatusOrSync,
+}
+
+impl CharTag {
+    pub fn read<T: Read>(stream: &mut T) -> Result<CharTag> {
+        let mut bytes = vec![0; 1];
+        stream.read(&mut bytes)?;
+
+        let tag = CharTag::try_from(bytes[0]);
+
+        println!(
+            "Encountered Tag: {} ({:?})",
+            String::from_utf8(bytes)?,
+            match &tag {
+                Ok(tag) => format!("{:?}", tag),
+                Err(_) => "Error".to_string(),
+            }
+        );
+
+        Ok(tag.expect("Could not read char tag"))
+    }
+}
+
+impl From<CharTag> for u8 {
+    fn from(value: CharTag) -> Self {
+        match value {
+            CharTag::Authentication => b'R',
+            CharTag::ReadyForQuery => b'Z',
+            CharTag::EmptyQueryResponse => b'I',
+            CharTag::Query => b'Q',
+            CharTag::Password => b'p',
+            CharTag::RowDescription => b'T',
+            CharTag::DataRowOrDescribe => b'D',
+            CharTag::CommandComplete => b'C',
+            CharTag::ParameterStatusOrSync => b'S',
+            CharTag::BackendKeyData => b'K',
+            CharTag::Terminate => b'X',
+            CharTag::Parse => b'P',
+            CharTag::Bind => b'B',
+            CharTag::ParameterDescription => b't',
+            CharTag::ExecuteOrError => b'E',
+        }
+    }
+}
+
+impl TryFrom<u8> for CharTag {
+    type Error = &'static str;
+
+    fn try_from(value: u8) -> Result<Self, Self::Error> {
+        match value {
+            b'R' => Ok(CharTag::Authentication),
+            b'Z' => Ok(CharTag::ReadyForQuery),
+            b'I' => Ok(CharTag::EmptyQueryResponse),
+            b'Q' => Ok(CharTag::Query),
+            b'p' => Ok(CharTag::Password),
+            b'T' => Ok(CharTag::RowDescription),
+            b'D' => Ok(CharTag::DataRowOrDescribe),
+            b'C' => Ok(CharTag::CommandComplete),
+            b'S' => Ok(CharTag::ParameterStatusOrSync),
+            b'K' => Ok(CharTag::BackendKeyData),
+            b'X' => Ok(CharTag::Terminate),
+            b'P' => Ok(CharTag::Parse),
+            b'B' => Ok(CharTag::Bind),
+            b't' => Ok(CharTag::ParameterDescription),
+            b'E' => Ok(CharTag::ExecuteOrError),
+            _ => Err("Unknown char tag"),
+        }
+    }
+}
