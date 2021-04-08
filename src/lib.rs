@@ -215,7 +215,7 @@ fn handle_connection(mut frontend: StreamWrapper, config: Config) -> Result<(), 
 
     let mut backend = setup_tunnel(&mut frontend, config)?;
 
-    loop {
+    'connection: loop {
         let request = frontend.read_message()?;
 
         match request {
@@ -244,30 +244,92 @@ fn handle_connection(mut frontend: StreamWrapper, config: Config) -> Result<(), 
             }
             Message::Parse {
                 query,
-                params_types,
+                param_types,
                 statement,
             } => {
                 backend.write_message(Message::Parse {
                     query,
-                    params_types,
+                    param_types,
                     statement,
                 })?;
 
+                let mut stage = "parse";
+
                 loop {
-                    let response = backend.read_message()?;
-                    match response {
-                        Message::DataRow { field_data } => {
-                            frontend.write_message(Message::DataRow { field_data })?;
+                    let request = frontend.read_message()?;
+
+                    println!("{}", stage);
+
+                    match request {
+                        Message::Describe { kind, name } => {
+                            backend.write_message(Message::Describe { kind, name })?;
                         }
-                        Message::Describe { name, kind } => {
-                            frontend.write_message(Message::Describe { name, kind })?;
+                        Message::Sync => {
+                            backend.write_message(Message::Sync)?;
+
+                            loop {
+                                let response = backend.read_message()?;
+
+                                match response {
+                                    Message::ParseComplete => {
+                                        frontend.write_message(Message::ParseComplete)?;
+                                    }
+                                    Message::ParameterDescription { param_types } => {
+                                        frontend.write_message(Message::ParameterDescription {
+                                            param_types,
+                                        })?;
+                                    }
+                                    Message::ReadyForQuery => {
+                                        frontend.write_message(Message::ReadyForQuery)?;
+                                        stage = "bind";
+                                        break;
+                                    }
+                                    Message::RowDescription { fields } => {
+                                        frontend
+                                            .write_message(Message::RowDescription { fields })?;
+                                    }
+                                    Message::BindComplete => {
+                                        frontend.write_message(Message::BindComplete)?;
+                                    }
+                                    Message::DataRow { field_data } => {
+                                        frontend.write_message(Message::DataRow { field_data })?;
+                                    }
+                                    Message::CommandComplete { tag } => {
+                                        frontend.write_message(Message::CommandComplete { tag })?;
+                                    }
+                                    Message::CloseComplete => {
+                                        frontend.write_message(Message::CloseComplete)?;
+                                    }
+                                    _ => unimplemented!(""),
+                                }
+                            }
                         }
-                        Message::CommandComplete { tag } => {
-                            frontend.write_message(Message::CommandComplete { tag })?;
+                        Message::Bind {
+                            portal,
+                            statement,
+                            formats,
+                            params,
+                            results,
+                        } => {
+                            backend.write_message(Message::Bind {
+                                portal,
+                                statement,
+                                params,
+                                formats,
+                                results,
+                            })?;
                         }
                         Message::Execute { portal, row_limit } => {
-                            frontend.write_message(Message::Execute { portal, row_limit })?;
+                            backend.write_message(Message::Execute { portal, row_limit })?;
                         }
+                        Message::CommandComplete { tag } => {
+                            backend.write_message(Message::CommandComplete { tag })?;
+                        }
+                        Message::Terminate => {
+                            backend.write_message(Message::Terminate)?;
+                            break 'connection;
+                        }
+
                         _ => unimplemented!(""),
                     }
                 }

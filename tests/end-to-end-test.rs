@@ -26,7 +26,7 @@ fn test_end_to_end() -> Result<(), Error> {
     let query = "SELECT id, name FROM person";
 
     // Simple query
-    let simple_query_result = client.simple_query(query)?;
+    let simple_query_result = client.simple_query("SELECT id, name FROM person")?;
     let row: &SimpleQueryRow = match simple_query_result.first().unwrap() {
         SimpleQueryMessage::Row(v) => v,
         _ => panic!("Not a row"),
@@ -36,7 +36,7 @@ fn test_end_to_end() -> Result<(), Error> {
     assert_eq!(name, "Max");
 
     // Normal query
-    let query_result = client.query(query, &[])?;
+    let query_result = client.query("SELECT id, name FROM person", &[])?;
     let row = query_result.first().unwrap();
 
     Ok(())

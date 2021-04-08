@@ -64,7 +64,7 @@ pub enum Message {
     Parse {
         statement: String,
         query: String,
-        params_types: Vec<u32>,
+        param_types: Vec<u32>,
     },
     Describe {
         kind: DescribeKind,
@@ -74,11 +74,22 @@ pub enum Message {
         portal: String,
         row_limit: i32,
     },
-    Sync {
-        len: u32,
-    },
+    Sync,
+    ParseComplete,
+    BindComplete,
+    CloseComplete,
     Error {
         messages: HashMap<String, String>,
+    },
+    ParameterDescription {
+        param_types: Vec<u32>,
+    },
+    Bind {
+        statement: String,
+        portal: String,
+        formats: Vec<i16>,
+        params: Vec<Vec<u8>>,
+        results: Vec<i16>,
     },
 }
 
@@ -211,7 +222,7 @@ impl Message {
             Self::Parse {
                 statement,
                 query,
-                params_types,
+                param_types,
             } => write_message_with_prefixed_message_len(
                 buf,
                 CharTag::Parse,
@@ -222,9 +233,9 @@ impl Message {
                     body.extend_from_slice(query.as_bytes());
                     body.push(0);
 
-                    body.write_be(params_types.clone().len() as i16)?;
+                    body.write_be(param_types.clone().len() as i16)?;
 
-                    for param in &params_types {
+                    for param in &param_types {
                         body.write_be(*param)?;
                     }
 
@@ -255,14 +266,72 @@ impl Message {
                     Ok(())
                 }),
             ),
-            Self::Sync { len } => write_message_with_prefixed_message_len(
+            Self::Sync => write_message_with_prefixed_message_len(
                 buf,
                 CharTag::ParameterStatusOrSync,
+                Box::new(move |body| -> Result<()> { Ok(()) }),
+            ),
+            Self::ParseComplete => write_message_with_prefixed_message_len(
+                buf,
+                CharTag::ParseComplete,
+                Box::new(move |body| -> Result<()> { Ok(()) }),
+            ),
+            Self::BindComplete => write_message_with_prefixed_message_len(
+                buf,
+                CharTag::BindComplete,
+                Box::new(move |body| -> Result<()> { Ok(()) }),
+            ),
+            Self::ParameterDescription { param_types } => write_message_with_prefixed_message_len(
+                buf,
+                CharTag::ParameterDescription,
                 Box::new(move |body| -> Result<()> {
-                    body.write_be(len)?;
+                    body.write_be((&param_types).len() as i16)?;
+
+                    for param in &param_types {
+                        body.write_be(*param)?;
+                    }
 
                     Ok(())
                 }),
+            ),
+            Self::Bind {
+                portal,
+                statement,
+                params,
+                formats,
+                results,
+            } => write_message_with_prefixed_message_len(
+                buf,
+                CharTag::Bind,
+                Box::new(move |body| -> Result<()> {
+                    body.extend_from_slice(portal.as_bytes());
+                    body.push(0);
+
+                    body.extend_from_slice(statement.as_bytes());
+                    body.push(0);
+
+                    body.write_be((&formats).len() as i16)?;
+                    for format in &formats {
+                        body.write_be(*format)?;
+                    }
+
+                    body.write_be((&params).len() as i16)?;
+                    for param in &params {
+                        body.extend_from_slice(param);
+                    }
+
+                    body.write_be((&results).len() as i16)?;
+                    for result_format in &results {
+                        body.write_be(*result_format)?;
+                    }
+
+                    Ok(())
+                }),
+            ),
+            Self::CloseComplete => write_message_with_prefixed_message_len(
+                buf,
+                CharTag::CloseComplete,
+                Box::new(move |body| -> Result<()> { Ok(()) }),
             ),
             Self::Error { messages } => {
                 unimplemented!()
@@ -309,9 +378,8 @@ impl Message {
             CharTag::ParameterStatusOrSync => {
                 let message_len: u32 = stream.read_be()?;
 
-                if message_len == 8 {
-                    let len: u32 = stream.read_be()?;
-                    return Ok(Self::Sync { len });
+                if message_len == 4 {
+                    return Ok(Self::Sync);
                 }
 
                 let key_bytes = read_until_zero(stream)?;
@@ -447,19 +515,17 @@ impl Message {
                 let query_bytes = read_until_zero(stream)?;
                 let query = String::from_utf8(query_bytes.clone())?;
 
+                let mut param_types = vec![];
                 let num_param_types: u16 = stream.read_be()?;
-
-                let mut params_types = vec![];
-
-                while params_types.len() < num_param_types as usize {
+                while param_types.len() < num_param_types as usize {
                     let param_oid: u32 = stream.read_be()?;
-                    params_types.push(param_oid)
+                    param_types.push(param_oid)
                 }
 
                 Ok(Message::Parse {
                     statement,
                     query,
-                    params_types,
+                    param_types,
                 })
             }
             CharTag::ExecuteOrError => {
@@ -471,6 +537,76 @@ impl Message {
                 let row_limit: i32 = stream.read_be()?;
 
                 Ok(Message::Execute { portal, row_limit })
+            }
+            CharTag::ParseComplete => {
+                let message_len: u32 = stream.read_be()?;
+
+                Ok(Message::ParseComplete)
+            }
+            CharTag::BindComplete => {
+                let message_len: u32 = stream.read_be()?;
+
+                Ok(Message::BindComplete)
+            }
+            CharTag::ParameterDescription => {
+                let message_len: u32 = stream.read_be()?;
+
+                let num_param_types: u16 = stream.read_be()?;
+
+                let mut param_types = vec![];
+
+                while param_types.len() < num_param_types as usize {
+                    let param_oid: u32 = stream.read_be()?;
+                    param_types.push(param_oid)
+                }
+
+                Ok(Message::ParameterDescription { param_types })
+            }
+            CharTag::Bind => {
+                let message_len: u32 = stream.read_be()?;
+
+                let portal_bytes = read_until_zero(stream)?;
+                let portal = String::from_utf8(portal_bytes.clone())?;
+
+                let statement_bytes = read_until_zero(stream)?;
+                let statement = String::from_utf8(statement_bytes.clone())?;
+
+                let mut formats = vec![];
+                let num_formats: u16 = stream.read_be()?;
+                while formats.len() < num_formats as usize {
+                    let format: i16 = stream.read_be()?;
+                    formats.push(format)
+                }
+
+                let mut params = vec![];
+                let num_params: u16 = stream.read_be()?;
+                while params.len() < num_params as usize {
+                    let param_len: u32 = stream.read_be()?;
+
+                    let mut param_bytes: Vec<u8> = vec![0; param_len as usize];
+                    stream.read_exact(&mut param_bytes)?;
+                    params.push(param_bytes);
+                }
+
+                let mut results = vec![];
+                let num_results: u16 = stream.read_be()?;
+                while results.len() < num_results as usize {
+                    let result_format: i16 = stream.read_be()?;
+                    results.push(result_format)
+                }
+
+                Ok(Message::Bind {
+                    portal,
+                    statement,
+                    formats,
+                    params,
+                    results,
+                })
+            }
+            CharTag::CloseComplete => {
+                let message_len: u32 = stream.read_be()?;
+
+                Ok(Message::CloseComplete)
             }
             _ => unimplemented!("Recieved tag {:?}", tag),
         }
@@ -575,7 +711,7 @@ mod tests {
         let message = Message::Parse {
             statement: "s0".to_string(),
             query: "SELECT id, name FROM person".to_string(),
-            params_types: vec![],
+            param_types: vec![],
         };
 
         test_symmetric_serialization_deserialization(message);

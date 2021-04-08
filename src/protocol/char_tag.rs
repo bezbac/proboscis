@@ -19,6 +19,9 @@ pub enum CharTag {
     ParameterDescription,
     ExecuteOrError,
     ParameterStatusOrSync,
+    ParseComplete,
+    BindComplete,
+    CloseComplete,
 }
 
 impl CharTag {
@@ -59,6 +62,9 @@ impl From<CharTag> for u8 {
             CharTag::Bind => b'B',
             CharTag::ParameterDescription => b't',
             CharTag::ExecuteOrError => b'E',
+            CharTag::ParseComplete => b'1',
+            CharTag::BindComplete => b'2',
+            CharTag::CloseComplete => b'3',
         }
     }
 }
@@ -83,6 +89,9 @@ impl TryFrom<u8> for CharTag {
             b'B' => Ok(CharTag::Bind),
             b't' => Ok(CharTag::ParameterDescription),
             b'E' => Ok(CharTag::ExecuteOrError),
+            b'1' => Ok(CharTag::ParseComplete),
+            b'2' => Ok(CharTag::BindComplete),
+            b'3' => Ok(CharTag::CloseComplete),
             _ => Err("Unknown char tag"),
         }
     }
