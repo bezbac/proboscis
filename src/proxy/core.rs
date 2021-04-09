@@ -1,10 +1,10 @@
-use super::stream_wrapper::StreamWrapperKind;
+use super::config::Config;
+use super::connection::{Connection, ConnectionKind};
 use super::util::encode_md5_password_hash;
-use super::{config::Config, stream_wrapper::StreamWrapper};
 use crate::protocol::{Message, StartupMessage};
 use anyhow::Result;
 use std::collections::HashMap;
-use std::net::{TcpListener, TcpStream};
+use std::net::TcpListener;
 
 pub struct App {
     config: Config,
@@ -17,8 +17,8 @@ impl App {
 
         for stream in listener.incoming() {
             let stream = stream.unwrap();
-            let wrapper = StreamWrapper::new(stream, StreamWrapperKind::Frontend);
-            handle_connection(wrapper, self.config.clone())?;
+            let frontend_connection = Connection::new(stream, ConnectionKind::Frontend);
+            handle_connection(frontend_connection, self.config.clone())?;
         }
 
         Ok(())
@@ -30,9 +30,9 @@ impl App {
 }
 
 pub fn setup_tunnel(
-    frontend: &mut StreamWrapper,
+    frontend: &mut Connection,
     config: Config,
-) -> Result<StreamWrapper, anyhow::Error> {
+) -> Result<Connection, anyhow::Error> {
     let startup_message = frontend.read_startup_message()?;
 
     let frontend_params = match startup_message {
@@ -45,9 +45,7 @@ pub fn setup_tunnel(
         .expect("Missing user parameter")
         .clone();
 
-    let backend_stream =
-        TcpStream::connect(&config.target_addr).expect("Connecting to backend failed");
-    let mut backend = StreamWrapper::new(backend_stream, StreamWrapperKind::Backend);
+    let mut backend = Connection::connect(&config.target_addr, ConnectionKind::Backend);
 
     let mut backend_params: HashMap<String, String> = HashMap::new();
     backend_params.insert("user".to_string(), user.clone());
@@ -122,7 +120,7 @@ pub fn setup_tunnel(
     return Ok(backend);
 }
 
-pub fn handle_connection(mut frontend: StreamWrapper, config: Config) -> Result<(), anyhow::Error> {
+pub fn handle_connection(mut frontend: Connection, config: Config) -> Result<(), anyhow::Error> {
     println!("New connection established!");
 
     let mut backend = setup_tunnel(&mut frontend, config)?;

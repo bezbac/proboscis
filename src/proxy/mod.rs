@@ -1,4 +1,4 @@
 pub mod config;
+pub mod connection;
 pub mod core;
-pub mod stream_wrapper;
 mod util;

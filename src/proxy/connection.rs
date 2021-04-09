@@ -1,13 +1,13 @@
 use crate::protocol::{Message, StartupMessage};
 use anyhow::Result;
-use std::net::TcpStream;
+use std::net::{TcpStream, ToSocketAddrs};
 
-pub enum StreamWrapperKind {
+pub enum ConnectionKind {
     Backend,
     Frontend,
 }
 
-impl StreamWrapperKind {
+impl ConnectionKind {
     fn log_char(&self) -> String {
         match self {
             Self::Backend => "->".to_string(),
@@ -16,14 +16,19 @@ impl StreamWrapperKind {
     }
 }
 
-pub struct StreamWrapper {
+pub struct Connection {
     pub stream: TcpStream,
-    kind: StreamWrapperKind,
+    kind: ConnectionKind,
 }
 
-impl StreamWrapper {
-    pub fn new(stream: std::net::TcpStream, kind: StreamWrapperKind) -> StreamWrapper {
-        StreamWrapper { stream, kind }
+impl Connection {
+    pub fn new(stream: std::net::TcpStream, kind: ConnectionKind) -> Connection {
+        Connection { stream, kind }
+    }
+
+    pub fn connect<A: ToSocketAddrs>(address: A, kind: ConnectionKind) -> Connection {
+        let stream = TcpStream::connect(address).expect("Connecting failed");
+        Self::new(stream, kind)
     }
 
     pub fn write_message(&mut self, message: Message) -> Result<usize> {
@@ -57,7 +62,7 @@ impl StreamWrapper {
     }
 }
 
-impl std::io::Write for StreamWrapper {
+impl std::io::Write for Connection {
     fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
         self.stream.write(buf)
     }
@@ -67,7 +72,7 @@ impl std::io::Write for StreamWrapper {
     }
 }
 
-impl std::io::Read for StreamWrapper {
+impl std::io::Read for Connection {
     fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
         self.stream.read(buf)
     }
