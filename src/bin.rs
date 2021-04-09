@@ -1,4 +1,6 @@
 extern crate proboscis;
+
+use proboscis::App;
 use std::collections::HashMap;
 
 fn main() {
@@ -10,6 +12,6 @@ fn main() {
         authentication,
     };
 
-    let app = proboscis::new(config);
+    let app = App::new(config);
     app.listen("0.0.0.0:5430");
 }
