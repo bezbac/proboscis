@@ -1,19 +1,25 @@
-# Testing
+<p align="center">
+  <img src="resources/icon.png" alt="Logo" width="128" height="128">
 
-## End-to-end tests
+  <h3 align="center">Proboscis</h3>
+
+  <p align="center">
+    An experimental, extensible PostgreSQL proxy
+  </p>
+</p>
+
+# Development
+
+## Testing
+
+### End-to-end tests
 
 ```
 docker-compose up
 cargo test --features e2e
 ```
 
-# Useful commands cheat sheet
-
-```
-psql "sslmode=disable host=localhost port=5430 dbname=test"
-```
-
-# Thanks
+# Acknowledgements
 
 Repos:
 
