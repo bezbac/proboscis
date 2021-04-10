@@ -1,6 +1,6 @@
 use anyhow::Result;
 use std::convert::TryFrom;
-use std::io::prelude::*;
+use std::io::Read;
 
 #[derive(Debug, std::cmp::PartialEq)]
 pub enum CharTag {
@@ -27,7 +27,7 @@ pub enum CharTag {
 impl CharTag {
     pub fn read<T: Read>(stream: &mut T) -> Result<CharTag> {
         let mut bytes = vec![0; 1];
-        stream.read(&mut bytes)?;
+        stream.read_exact(&mut bytes)?;
 
         let tag = CharTag::try_from(bytes[0]);
 

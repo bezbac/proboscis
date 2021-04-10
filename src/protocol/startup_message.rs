@@ -5,6 +5,8 @@ use omnom::prelude::*;
 use std::collections::HashMap;
 use std::convert::TryFrom;
 use std::io::prelude::*;
+use tokio::io::AsyncRead;
+use tokio::io::AsyncReadExt;
 
 pub const CODE_STARTUP_CANCEL: i32 = 80877102;
 pub const CODE_STARTUP_SSL_REQUEST: i32 = 80877103;
@@ -20,6 +22,12 @@ pub enum StartupMessage {
 }
 
 impl StartupMessage {
+    pub fn as_vec(self) -> Vec<u8> {
+        let mut vec = vec![];
+        self.write(&mut vec).unwrap();
+        vec
+    }
+
     pub fn write<T: Write>(self, buf: &mut T) -> Result<()> {
         match self {
             Self::Startup { params } => {
@@ -48,17 +56,29 @@ impl StartupMessage {
         }
     }
 
+    pub async fn read_async<T: AsyncRead + Unpin>(stream: &mut T) -> Result<Self> {
+        let mut message_len_bytes = vec![0; 4];
+        stream.read_exact(&mut message_len_bytes).await?;
+        let message_length = usize::try_from(NetworkEndian::read_u32(&message_len_bytes))?;
+
+        let mut body_bytes = vec![0; message_length - 4];
+        stream.read_exact(&mut body_bytes).await?;
+
+        let mut total_bytes = vec![];
+        total_bytes.append(&mut message_len_bytes);
+        total_bytes.append(&mut body_bytes);
+
+        let mut cursor = std::io::Cursor::new(total_bytes);
+
+        Self::read(&mut cursor)
+    }
+
     pub fn read<T: Read>(stream: &mut T) -> Result<Self> {
-        // Init handshake
-
-        let mut bytes = vec![0; 4];
-        bytes = stream.read_exact(&mut bytes).map(|_| bytes)?;
-
-        let message_length = usize::try_from(NetworkEndian::read_u32(&bytes))?;
-        let frame_legth = message_length - 4; // Remove 4 bytes for the u32 containing the total message length
+        let message_length: u32 = stream.read_be()?;
+        let frame_length = message_length - 4; // Remove 4 bytes for the u32 containing the total message length
 
         let mut buf = BytesMut::new();
-        buf.resize(frame_legth, b'0');
+        buf.resize(frame_length as usize, b'0');
         stream.read_exact(&mut buf)?;
 
         let protocol_version = buf.get_i32();

@@ -1,9 +1,13 @@
 use super::util::{read_until_zero, write_message_with_prefixed_message_len};
 use super::CharTag;
 use anyhow::Result;
+use byteorder::{ByteOrder, NetworkEndian};
 use omnom::prelude::*;
 use std::collections::HashMap;
+use std::convert::TryFrom;
 use std::io::prelude::*;
+use tokio::io::AsyncRead;
+use tokio::io::AsyncReadExt;
 
 #[derive(Debug, PartialEq, Clone)]
 pub struct Field {
@@ -94,6 +98,12 @@ pub enum Message {
 }
 
 impl Message {
+    pub fn as_vec(self) -> Vec<u8> {
+        let mut vec = vec![];
+        self.write(&mut vec).unwrap();
+        vec
+    }
+
     pub fn write<T: Write>(self: Self, buf: &mut T) -> Result<usize> {
         match self {
             Self::AuthenticationOk => {
@@ -339,6 +349,27 @@ impl Message {
         }
     }
 
+    pub async fn read_async<T: AsyncRead + Unpin>(stream: &mut T) -> Result<Self> {
+        let mut char_tag_bytes = vec![0; 1];
+        stream.read_exact(&mut char_tag_bytes).await?;
+
+        let mut message_len_bytes = vec![0; 4];
+        stream.read_exact(&mut message_len_bytes).await?;
+        let message_length = usize::try_from(NetworkEndian::read_u32(&message_len_bytes))?;
+
+        let mut body_bytes = vec![0; message_length - 4];
+        stream.read_exact(&mut body_bytes).await?;
+
+        let mut total_bytes = vec![];
+        total_bytes.append(&mut char_tag_bytes);
+        total_bytes.append(&mut message_len_bytes);
+        total_bytes.append(&mut body_bytes);
+
+        let mut cursor = std::io::Cursor::new(total_bytes);
+
+        Self::read(&mut cursor)
+    }
+
     pub fn read<T: Read>(stream: &mut T) -> Result<Self> {
         let tag = CharTag::read(stream)?;
 
@@ -484,7 +515,7 @@ impl Message {
                             let field_len: u32 = cursor.read_be()?;
 
                             let mut field_bytes = vec![0; field_len as usize];
-                            cursor.read_exact(&mut field_bytes)?;
+                            std::io::Read::read_exact(&mut cursor, &mut field_bytes)?;
 
                             fields.push(field_bytes[..].to_vec())
                         }

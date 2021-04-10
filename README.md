@@ -4,7 +4,7 @@
   <h3 align="center">Proboscis</h3>
 
   <p align="center">
-    An experimental, extensible PostgreSQL proxy
+    An experimental, extensible, asynchronous PostgreSQL proxy
   </p>
 </p>
 

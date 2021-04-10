@@ -1,6 +1,7 @@
 use crate::protocol::{Message, StartupMessage};
 use anyhow::Result;
-use std::net::{TcpStream, ToSocketAddrs};
+use tokio::io::AsyncWriteExt;
+use tokio::net::{TcpStream, ToSocketAddrs};
 
 pub enum ConnectionKind {
     Backend,
@@ -22,58 +23,47 @@ pub struct Connection {
 }
 
 impl Connection {
-    pub fn new(stream: std::net::TcpStream, kind: ConnectionKind) -> Connection {
+    pub fn new(stream: TcpStream, kind: ConnectionKind) -> Connection {
         Connection { stream, kind }
     }
 
-    pub fn connect<A: ToSocketAddrs>(address: A, kind: ConnectionKind) -> Connection {
-        let stream = TcpStream::connect(address).expect("Connecting failed");
-        Self::new(stream, kind)
+    pub async fn connect<A: ToSocketAddrs>(address: A, kind: ConnectionKind) -> Result<Connection> {
+        let stream = TcpStream::connect(address).await?;
+        Ok(Self::new(stream, kind))
     }
 
-    pub fn write_message(&mut self, message: Message) -> Result<usize> {
+    pub async fn write_message(&mut self, message: Message) -> tokio::io::Result<usize> {
+        let (_, mut wr) = tokio::io::split(&mut self.stream);
         println!("{} Writing message: {:?}", self.kind.log_char(), message);
-        message.write(self)
+        wr.write(&message.as_vec()[..]).await
     }
 
-    pub fn write_startup_message(&mut self, message: StartupMessage) -> Result<()> {
+    pub async fn write_startup_message(
+        &mut self,
+        message: StartupMessage,
+    ) -> tokio::io::Result<usize> {
+        let (_, mut wr) = tokio::io::split(&mut self.stream);
         println!(
             "{} Writing startup message: {:?}",
             self.kind.log_char(),
             message
         );
-        message.write(self)
+        wr.write(&message.as_vec()[..]).await
     }
 
-    pub fn read_message(&mut self) -> Result<Message> {
-        let result = Message::read(self)?;
+    pub async fn read_message(&mut self) -> Result<Message> {
+        let result = Message::read_async(&mut self.stream).await?;
         println!("{} Read message: {:?}", self.kind.log_char(), result);
         Ok(result)
     }
 
-    pub fn read_startup_message(&mut self) -> Result<StartupMessage> {
-        let result = StartupMessage::read(self)?;
+    pub async fn read_startup_message(&mut self) -> Result<StartupMessage> {
+        let result = StartupMessage::read_async(&mut self.stream).await?;
         println!(
             "{} Read startup message: {:?}",
             self.kind.log_char(),
             result
         );
         Ok(result)
-    }
-}
-
-impl std::io::Write for Connection {
-    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
-        self.stream.write(buf)
-    }
-
-    fn flush(&mut self) -> std::io::Result<()> {
-        self.stream.flush()
-    }
-}
-
-impl std::io::Read for Connection {
-    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
-        self.stream.read(buf)
     }
 }

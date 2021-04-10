@@ -10,6 +10,7 @@ bytes = "1"
 postgres = { version = "0.19", optional = true }
 md-5 = "0.9.1"
 omnom = "3.0.0"
+tokio = { version = "1.4.0", features = ["full"] }
 
 [features]
 e2e = ["postgres"]

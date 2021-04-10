@@ -3,7 +3,8 @@ extern crate proboscis;
 use proboscis::App;
 use std::collections::HashMap;
 
-fn main() {
+#[tokio::main]
+async fn main() {
     let mut authentication = HashMap::new();
     authentication.insert("admin".to_string(), "password".to_string());
 
@@ -13,5 +14,5 @@ fn main() {
     };
 
     let app = App::new(config);
-    app.listen("0.0.0.0:5430");
+    app.listen("0.0.0.0:5430").await;
 }
