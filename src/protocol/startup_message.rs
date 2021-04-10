@@ -1,9 +1,8 @@
 use anyhow::Result;
 use byteorder::{ByteOrder, NetworkEndian};
-use bytes::{Buf, BytesMut};
+use bytes::BytesMut;
 use omnom::prelude::*;
 use std::collections::HashMap;
-use std::convert::TryFrom;
 use std::io::prelude::*;
 use tokio::io::AsyncRead;
 use tokio::io::AsyncReadExt;
@@ -59,38 +58,36 @@ impl StartupMessage {
     pub async fn read_async<T: AsyncRead + Unpin>(stream: &mut T) -> Result<Self> {
         let mut message_len_bytes = vec![0; 4];
         stream.read_exact(&mut message_len_bytes).await?;
-        let message_length = usize::try_from(NetworkEndian::read_u32(&message_len_bytes))?;
+        let message_length = NetworkEndian::read_u32(&message_len_bytes);
 
-        let mut body_bytes = vec![0; message_length - 4];
+        let mut body_bytes = vec![0; message_length as usize - 4];
         stream.read_exact(&mut body_bytes).await?;
 
-        let mut total_bytes = vec![];
-        total_bytes.append(&mut message_len_bytes);
-        total_bytes.append(&mut body_bytes);
+        let mut cursor = std::io::Cursor::new(body_bytes);
 
-        let mut cursor = std::io::Cursor::new(total_bytes);
-
-        Self::read(&mut cursor)
+        Self::read_body(&mut cursor, message_length - 4)
     }
 
     pub fn read<T: Read>(stream: &mut T) -> Result<Self> {
         let message_length: u32 = stream.read_be()?;
-        let frame_length = message_length - 4; // Remove 4 bytes for the u32 containing the total message length
+        Self::read_body(stream, message_length - 4)
+    }
 
-        let mut buf = BytesMut::new();
-        buf.resize(frame_length as usize, b'0');
-        stream.read_exact(&mut buf)?;
-
-        let protocol_version = buf.get_i32();
+    pub fn read_body<T: Read>(stream: &mut T, remaining_bytes_len: u32) -> Result<Self> {
+        let protocol_version: i32 = stream.read_be()?;
         let message = match protocol_version {
             CODE_STARTUP_CANCEL => StartupMessage::CancelRequest {
-                connection_id: buf.get_u32(),
-                secret_key: buf.get_u32(),
+                connection_id: stream.read_be()?,
+                secret_key: stream.read_be()?,
             },
             CODE_STARTUP_SSL_REQUEST => StartupMessage::SslRequest,
             CODE_STARTUP_GSSENC_REQUEST => StartupMessage::GssEncRequest,
             _ => {
                 // TODO: Find a better way to read these strings
+
+                let mut buf = BytesMut::new();
+                buf.resize(remaining_bytes_len as usize - 4, b'0'); // - 4 for the protocol version i32
+                stream.read_exact(&mut buf)?;
 
                 let bytes = buf.to_vec();
 

@@ -4,7 +4,6 @@ use anyhow::Result;
 use byteorder::{ByteOrder, NetworkEndian};
 use omnom::prelude::*;
 use std::collections::HashMap;
-use std::convert::TryFrom;
 use std::io::prelude::*;
 use tokio::io::AsyncRead;
 use tokio::io::AsyncReadExt;
@@ -279,17 +278,17 @@ impl Message {
             Self::Sync => write_message_with_prefixed_message_len(
                 buf,
                 CharTag::ParameterStatusOrSync,
-                Box::new(move |body| -> Result<()> { Ok(()) }),
+                Box::new(move |_| -> Result<()> { Ok(()) }),
             ),
             Self::ParseComplete => write_message_with_prefixed_message_len(
                 buf,
                 CharTag::ParseComplete,
-                Box::new(move |body| -> Result<()> { Ok(()) }),
+                Box::new(move |_| -> Result<()> { Ok(()) }),
             ),
             Self::BindComplete => write_message_with_prefixed_message_len(
                 buf,
                 CharTag::BindComplete,
-                Box::new(move |body| -> Result<()> { Ok(()) }),
+                Box::new(move |_| -> Result<()> { Ok(()) }),
             ),
             Self::ParameterDescription { param_types } => write_message_with_prefixed_message_len(
                 buf,
@@ -341,7 +340,7 @@ impl Message {
             Self::CloseComplete => write_message_with_prefixed_message_len(
                 buf,
                 CharTag::CloseComplete,
-                Box::new(move |body| -> Result<()> { Ok(()) }),
+                Box::new(move |_| -> Result<()> { Ok(()) }),
             ),
             Self::Error { messages } => {
                 unimplemented!()
@@ -350,40 +349,42 @@ impl Message {
     }
 
     pub async fn read_async<T: AsyncRead + Unpin>(stream: &mut T) -> Result<Self> {
-        let mut char_tag_bytes = vec![0; 1];
-        stream.read_exact(&mut char_tag_bytes).await?;
+        let mut bytes = [0; 1];
+        stream.read_exact(&mut bytes).await?;
+        let mut cursor = std::io::Cursor::new(bytes);
+        let tag = CharTag::read(&mut cursor)?;
 
         let mut message_len_bytes = vec![0; 4];
         stream.read_exact(&mut message_len_bytes).await?;
-        let message_length = usize::try_from(NetworkEndian::read_u32(&message_len_bytes))?;
+        let message_length = NetworkEndian::read_u32(&message_len_bytes);
 
-        let mut body_bytes = vec![0; message_length - 4];
+        let mut body_bytes = vec![0; message_length as usize - 4];
         stream.read_exact(&mut body_bytes).await?;
 
-        let mut total_bytes = vec![];
-        total_bytes.append(&mut char_tag_bytes);
-        total_bytes.append(&mut message_len_bytes);
-        total_bytes.append(&mut body_bytes);
+        let mut cursor = std::io::Cursor::new(body_bytes);
 
-        let mut cursor = std::io::Cursor::new(total_bytes);
-
-        Self::read(&mut cursor)
+        Self::read_body(&mut cursor, tag, message_length - 4)
     }
 
     pub fn read<T: Read>(stream: &mut T) -> Result<Self> {
         let tag = CharTag::read(stream)?;
+        let message_len: u32 = stream.read_be()?;
+        Self::read_body(stream, tag, message_len - 4)
+    }
 
+    pub fn read_body<T: Read>(
+        stream: &mut T,
+        tag: CharTag,
+        remaining_bytes_len: u32,
+    ) -> Result<Self> {
         match tag {
             CharTag::Query => {
-                let message_len: u32 = stream.read_be()?;
-
                 let query_string_bytes = read_until_zero(stream)?;
                 let query_string = String::from_utf8(query_string_bytes.clone())?;
 
                 Ok(Self::SimpleQuery(query_string.to_string()))
             }
             CharTag::Authentication => {
-                let message_len: u32 = stream.read_be()?;
                 let method: u32 = stream.read_be()?;
 
                 if method == 5 {
@@ -399,17 +400,13 @@ impl Message {
                 unimplemented!();
             }
             CharTag::Password => {
-                let message_len: u32 = stream.read_be()?;
-
                 let hash_bytes = read_until_zero(stream)?;
                 let hash = String::from_utf8(hash_bytes.clone())?;
 
                 Ok(Self::MD5HashedPasswordMessage { hash })
             }
             CharTag::ParameterStatusOrSync => {
-                let message_len: u32 = stream.read_be()?;
-
-                if message_len == 4 {
+                if remaining_bytes_len == 0 {
                     return Ok(Self::Sync);
                 }
 
@@ -422,11 +419,10 @@ impl Message {
                 Ok(Self::ParameterStatus { key, value })
             }
             CharTag::BackendKeyData => {
-                let message_len: u32 = stream.read_be()?;
                 let process_id: u32 = stream.read_be()?;
                 let secret_key: u32 = stream.read_be()?;
 
-                let remaining_bytes = message_len - 12; // -4 for length u32, -4 process_id, -4 secret_key
+                let remaining_bytes = remaining_bytes_len - 8; // -4 process_id, -4 secret_key
 
                 let mut bytes = vec![0; remaining_bytes as usize];
                 bytes = stream.read_exact(&mut bytes).map(|_| bytes)?;
@@ -438,19 +434,14 @@ impl Message {
                 })
             }
             CharTag::ReadyForQuery => {
-                let message_len: u32 = stream.read_be()?;
-
-                let string_len = message_len - 4; // -4 for length u32
-
-                let mut bytes = vec![0; string_len as usize];
-                bytes = stream.read_exact(&mut bytes).map(|_| bytes)?;
+                let mut bytes = vec![0; remaining_bytes_len as usize];
+                stream.read_exact(&mut bytes).map(|_| bytes)?;
 
                 // TODO: Use the parsed data
 
                 Ok(Message::ReadyForQuery)
             }
             CharTag::RowDescription => {
-                let message_len: u32 = stream.read_be()?;
                 let num_fields: u16 = stream.read_be()?;
 
                 let mut fields = vec![];
@@ -482,9 +473,7 @@ impl Message {
                 Ok(Message::RowDescription { fields })
             }
             CharTag::DataRowOrDescribe => {
-                let message_len: u32 = stream.read_be()?;
-
-                let mut bytes: Vec<u8> = vec![0; message_len as usize - 4];
+                let mut bytes: Vec<u8> = vec![0; remaining_bytes_len as usize];
                 bytes = stream.read_exact(&mut bytes).map(|_| bytes)?;
 
                 let describe_identifier = bytes[0];
@@ -525,21 +514,13 @@ impl Message {
                 }
             }
             CharTag::CommandComplete => {
-                let message_len: u32 = stream.read_be()?;
-
                 let tag_bytes = read_until_zero(stream)?;
                 let tag = String::from_utf8(tag_bytes.clone())?;
 
                 Ok(Message::CommandComplete { tag })
             }
-            CharTag::Terminate => {
-                let message_len: u32 = stream.read_be()?;
-
-                Ok(Message::Terminate)
-            }
+            CharTag::Terminate => Ok(Message::Terminate),
             CharTag::Parse => {
-                let message_len: u32 = stream.read_be()?;
-
                 let statement_bytes = read_until_zero(stream)?;
                 let statement = String::from_utf8(statement_bytes.clone())?;
 
@@ -560,8 +541,6 @@ impl Message {
                 })
             }
             CharTag::ExecuteOrError => {
-                let message_len: u32 = stream.read_be()?;
-
                 let portal_bytes = read_until_zero(stream)?;
                 let portal = String::from_utf8(portal_bytes.clone())?;
 
@@ -569,19 +548,9 @@ impl Message {
 
                 Ok(Message::Execute { portal, row_limit })
             }
-            CharTag::ParseComplete => {
-                let message_len: u32 = stream.read_be()?;
-
-                Ok(Message::ParseComplete)
-            }
-            CharTag::BindComplete => {
-                let message_len: u32 = stream.read_be()?;
-
-                Ok(Message::BindComplete)
-            }
+            CharTag::ParseComplete => Ok(Message::ParseComplete),
+            CharTag::BindComplete => Ok(Message::BindComplete),
             CharTag::ParameterDescription => {
-                let message_len: u32 = stream.read_be()?;
-
                 let num_param_types: u16 = stream.read_be()?;
 
                 let mut param_types = vec![];
@@ -594,8 +563,6 @@ impl Message {
                 Ok(Message::ParameterDescription { param_types })
             }
             CharTag::Bind => {
-                let message_len: u32 = stream.read_be()?;
-
                 let portal_bytes = read_until_zero(stream)?;
                 let portal = String::from_utf8(portal_bytes.clone())?;
 
@@ -634,12 +601,8 @@ impl Message {
                     results,
                 })
             }
-            CharTag::CloseComplete => {
-                let message_len: u32 = stream.read_be()?;
-
-                Ok(Message::CloseComplete)
-            }
-            _ => unimplemented!("Recieved tag {:?}", tag),
+            CharTag::CloseComplete => Ok(Message::CloseComplete),
+            CharTag::EmptyQueryResponse => unimplemented!(),
         }
     }
 }
