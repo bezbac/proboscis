@@ -18,7 +18,7 @@ impl App {
         loop {
             let (stream, _) = listener.accept().await?;
             let frontend_connection = Connection::new(stream, ConnectionKind::Frontend);
-            handle_connection(frontend_connection, self.config.clone()).await;
+            handle_connection(frontend_connection, self.config.clone()).await?;
         }
     }
 
