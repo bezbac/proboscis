@@ -175,12 +175,8 @@ pub async fn handle_connection(mut frontend: Connection, config: Config) -> Resu
                     })
                     .await?;
 
-                let mut stage = "parse";
-
                 loop {
                     let request = frontend.read_message().await?;
-
-                    println!("{}", stage);
 
                     match request {
                         Message::Describe { kind, name } => {
@@ -207,7 +203,6 @@ pub async fn handle_connection(mut frontend: Connection, config: Config) -> Resu
                                     }
                                     Message::ReadyForQuery => {
                                         frontend.write_message(Message::ReadyForQuery).await?;
-                                        stage = "bind";
                                         break;
                                     }
                                     Message::RowDescription { fields } => {
