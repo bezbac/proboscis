@@ -1,13 +1,18 @@
 use super::config::Config;
 use super::connection::{Connection, ConnectionKind};
+use super::data::SimpleQueryResponse;
 use super::util::encode_md5_password_hash;
-use crate::protocol::{Message, StartupMessage};
+use crate::{
+    protocol::{Message, StartupMessage},
+    Transformer,
+};
 use anyhow::Result;
 use std::collections::HashMap;
 use tokio::net::TcpListener;
 
 pub struct App {
     config: Config,
+    transformers: Vec<Box<dyn Transformer>>,
 }
 
 impl App {
@@ -17,13 +22,32 @@ impl App {
 
         loop {
             let (stream, _) = listener.accept().await?;
-            let frontend_connection = Connection::new(stream, ConnectionKind::Frontend);
-            handle_connection(frontend_connection, self.config.clone()).await?;
+            let mut frontend_connection = Connection::new(stream, ConnectionKind::Frontend);
+
+            println!("New connection established!");
+
+            let mut backend_connection =
+                setup_tunnel(&mut frontend_connection, self.config.clone()).await?;
+
+            handle_connection(
+                &mut frontend_connection,
+                &mut backend_connection,
+                &self.transformers,
+            )
+            .await?;
         }
     }
 
     pub fn new(config: Config) -> App {
-        App { config }
+        App {
+            config,
+            transformers: vec![],
+        }
+    }
+
+    pub fn add_transformer(mut self, transformer: Box<dyn Transformer>) -> App {
+        self.transformers.push(transformer);
+        self
     }
 }
 
@@ -122,29 +146,75 @@ pub async fn setup_tunnel(frontend: &mut Connection, config: Config) -> Result<C
     return Ok(backend);
 }
 
-pub async fn handle_connection(mut frontend: Connection, config: Config) -> Result<()> {
-    println!("New connection established!");
+pub async fn pass_through_simple_query_response(
+    frontend: &mut Connection,
+    backend: &mut Connection,
+) -> Result<()> {
+    loop {
+        let response = backend.read_message().await?;
+        match response {
+            Message::ReadyForQuery => break,
+            Message::RowDescription { fields } => {
+                frontend
+                    .write_message(Message::RowDescription { fields })
+                    .await?;
+            }
+            Message::DataRow { field_data } => {
+                frontend
+                    .write_message(Message::DataRow { field_data })
+                    .await?;
+            }
+            Message::CommandComplete { tag } => {
+                frontend
+                    .write_message(Message::CommandComplete { tag })
+                    .await?;
+            }
+            _ => unimplemented!(""),
+        }
+    }
 
-    let mut backend = setup_tunnel(&mut frontend, config).await?;
+    Ok(())
+}
 
-    'connection: loop {
+pub async fn pass_through_query_response(
+    frontend: &mut Connection,
+    backend: &mut Connection,
+) -> Result<()> {
+    loop {
         let request = frontend.read_message().await?;
 
         match request {
-            Message::Terminate => break,
-            Message::SimpleQuery(query_string) => {
+            Message::Describe { kind, name } => {
                 backend
-                    .write_message(Message::SimpleQuery(query_string))
+                    .write_message(Message::Describe { kind, name })
                     .await?;
+            }
+            Message::Sync => {
+                backend.write_message(Message::Sync).await?;
 
                 loop {
                     let response = backend.read_message().await?;
+
                     match response {
-                        Message::ReadyForQuery => break,
+                        Message::ParseComplete => {
+                            frontend.write_message(Message::ParseComplete).await?;
+                        }
+                        Message::ParameterDescription { param_types } => {
+                            frontend
+                                .write_message(Message::ParameterDescription { param_types })
+                                .await?;
+                        }
+                        Message::ReadyForQuery => {
+                            frontend.write_message(Message::ReadyForQuery).await?;
+                            break;
+                        }
                         Message::RowDescription { fields } => {
                             frontend
                                 .write_message(Message::RowDescription { fields })
                                 .await?;
+                        }
+                        Message::BindComplete => {
+                            frontend.write_message(Message::BindComplete).await?;
                         }
                         Message::DataRow { field_data } => {
                             frontend
@@ -156,7 +226,78 @@ pub async fn handle_connection(mut frontend: Connection, config: Config) -> Resu
                                 .write_message(Message::CommandComplete { tag })
                                 .await?;
                         }
+                        Message::CloseComplete => {
+                            frontend.write_message(Message::CloseComplete).await?;
+                        }
                         _ => unimplemented!(""),
+                    }
+                }
+            }
+            Message::Bind {
+                portal,
+                statement,
+                formats,
+                params,
+                results,
+            } => {
+                backend
+                    .write_message(Message::Bind {
+                        portal,
+                        statement,
+                        params,
+                        formats,
+                        results,
+                    })
+                    .await?;
+            }
+            Message::Execute { portal, row_limit } => {
+                backend
+                    .write_message(Message::Execute { portal, row_limit })
+                    .await?;
+            }
+            Message::CommandComplete { tag } => {
+                backend
+                    .write_message(Message::CommandComplete { tag })
+                    .await?;
+            }
+            _ => unimplemented!(),
+        }
+    }
+}
+
+pub async fn handle_connection(
+    frontend: &mut Connection,
+    backend: &mut Connection,
+    transformers: &Vec<Box<dyn Transformer>>,
+) -> Result<()> {
+    loop {
+        let request = frontend.read_message().await?;
+
+        match request {
+            Message::Terminate => {
+                backend.write_message(Message::Terminate).await?;
+                break;
+            }
+            Message::SimpleQuery(query_string) => {
+                backend
+                    .write_message(Message::SimpleQuery(query_string))
+                    .await?;
+
+                if transformers.len() == 0 {
+                    pass_through_simple_query_response(frontend, backend).await?;
+                } else {
+                    let response = SimpleQueryResponse::read(backend).await?;
+
+                    let transformed = SimpleQueryResponse {
+                        data: transformers.first().unwrap().transform(&response.data),
+                        fields: response.fields,
+                        tag: response.tag,
+                    };
+
+                    let messages = transformed.serialize().await?;
+
+                    for message in messages {
+                        frontend.write_message(message).await?;
                     }
                 }
 
@@ -175,96 +316,7 @@ pub async fn handle_connection(mut frontend: Connection, config: Config) -> Resu
                     })
                     .await?;
 
-                loop {
-                    let request = frontend.read_message().await?;
-
-                    match request {
-                        Message::Describe { kind, name } => {
-                            backend
-                                .write_message(Message::Describe { kind, name })
-                                .await?;
-                        }
-                        Message::Sync => {
-                            backend.write_message(Message::Sync).await?;
-
-                            loop {
-                                let response = backend.read_message().await?;
-
-                                match response {
-                                    Message::ParseComplete => {
-                                        frontend.write_message(Message::ParseComplete).await?;
-                                    }
-                                    Message::ParameterDescription { param_types } => {
-                                        frontend
-                                            .write_message(Message::ParameterDescription {
-                                                param_types,
-                                            })
-                                            .await?;
-                                    }
-                                    Message::ReadyForQuery => {
-                                        frontend.write_message(Message::ReadyForQuery).await?;
-                                        break;
-                                    }
-                                    Message::RowDescription { fields } => {
-                                        frontend
-                                            .write_message(Message::RowDescription { fields })
-                                            .await?;
-                                    }
-                                    Message::BindComplete => {
-                                        frontend.write_message(Message::BindComplete).await?;
-                                    }
-                                    Message::DataRow { field_data } => {
-                                        frontend
-                                            .write_message(Message::DataRow { field_data })
-                                            .await?;
-                                    }
-                                    Message::CommandComplete { tag } => {
-                                        frontend
-                                            .write_message(Message::CommandComplete { tag })
-                                            .await?;
-                                    }
-                                    Message::CloseComplete => {
-                                        frontend.write_message(Message::CloseComplete).await?;
-                                    }
-                                    _ => unimplemented!(""),
-                                }
-                            }
-                        }
-                        Message::Bind {
-                            portal,
-                            statement,
-                            formats,
-                            params,
-                            results,
-                        } => {
-                            backend
-                                .write_message(Message::Bind {
-                                    portal,
-                                    statement,
-                                    params,
-                                    formats,
-                                    results,
-                                })
-                                .await?;
-                        }
-                        Message::Execute { portal, row_limit } => {
-                            backend
-                                .write_message(Message::Execute { portal, row_limit })
-                                .await?;
-                        }
-                        Message::CommandComplete { tag } => {
-                            backend
-                                .write_message(Message::CommandComplete { tag })
-                                .await?;
-                        }
-                        Message::Terminate => {
-                            backend.write_message(Message::Terminate).await?;
-                            break 'connection;
-                        }
-
-                        _ => unimplemented!(""),
-                    }
-                }
+                pass_through_query_response(frontend, backend).await?;
             }
             _ => unimplemented!(),
         }

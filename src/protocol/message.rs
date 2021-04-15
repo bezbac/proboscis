@@ -10,13 +10,13 @@ use tokio::io::AsyncReadExt;
 
 #[derive(Debug, PartialEq, Clone)]
 pub struct Field {
-    name: String,
-    table_oid: i32,
-    column_number: i16,
-    type_oid: i32,
-    type_length: i16,
-    type_modifier: i32,
-    format: i16,
+    pub name: String,
+    pub table_oid: i32,
+    pub column_number: i16,
+    pub type_oid: i32,
+    pub type_length: i16,
+    pub type_modifier: i32,
+    pub format: i16,
 }
 
 #[derive(Debug, PartialEq, Clone)]

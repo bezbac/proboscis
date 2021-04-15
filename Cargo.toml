@@ -11,6 +11,8 @@ tokio-postgres = { version = "0.7.1", optional = true }
 md-5 = "0.9.1"
 omnom = "3.0.0"
 tokio = { version = "1.4.0", features = ["full"] }
+arrow = "3.0.0"
+postgres = "0.19.1"
 
 [features]
 e2e = ["tokio-postgres"]
