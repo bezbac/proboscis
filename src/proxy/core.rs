@@ -287,14 +287,7 @@ pub async fn handle_connection(
                     pass_through_simple_query_response(frontend, backend).await?;
                 } else {
                     let response = SimpleQueryResponse::read(backend).await?;
-
-                    let transformed = SimpleQueryResponse {
-                        data: transformers.first().unwrap().transform(&response.data),
-                        fields: response.fields,
-                        tag: response.tag,
-                    };
-
-                    let messages = transformed.serialize().await?;
+                    let messages = response.serialize(transformers).await?;
 
                     for message in messages {
                         frontend.write_message(message).await?;

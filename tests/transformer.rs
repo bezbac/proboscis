@@ -2,44 +2,32 @@ use std::sync::Arc;
 
 use arrow::{
     array::{ArrayRef, GenericStringArray},
-    record_batch::RecordBatch,
+    datatypes::{DataType, Field},
 };
 use proboscis::Transformer;
 
 struct AnnonymizeTransformer {}
 
 impl Transformer for AnnonymizeTransformer {
-    fn transform(&self, data: &arrow::record_batch::RecordBatch) -> arrow::record_batch::RecordBatch
+    fn transform(&self, data: ArrayRef) -> ArrayRef
     where
         Self: Sized,
     {
-        if data.schema().field_with_name("name").is_err() {
-            return data.clone();
-        }
-
-        let new_columns: Vec<ArrayRef> = data
-            .columns()
+        let new_values: Vec<String> = data
+            .as_any()
+            .downcast_ref::<GenericStringArray<i64>>()
+            .unwrap()
             .iter()
-            .zip(data.schema().fields().iter())
-            .map(|(column, field)| match field.name().as_str() {
-                "name" => {
-                    let new_values: Vec<String> = column
-                        .as_any()
-                        .downcast_ref::<GenericStringArray<i64>>()
-                        .unwrap()
-                        .iter()
-                        .map(|v| "Annonymous".to_string())
-                        .collect();
-
-                    Arc::new(GenericStringArray::<i64>::from(
-                        new_values.iter().map(|s| s.as_ref()).collect::<Vec<&str>>(),
-                    ))
-                }
-                _ => column.clone(),
-            })
+            .map(|_| "Annonymous".to_string())
             .collect();
 
-        return RecordBatch::try_new(data.schema(), new_columns).unwrap();
+        Arc::new(GenericStringArray::<i64>::from(
+            new_values.iter().map(|s| s.as_ref()).collect::<Vec<&str>>(),
+        ))
+    }
+
+    fn matches(&self, field: &Field) -> bool {
+        field.name().as_str() == "name" && field.data_type() == &DataType::LargeUtf8
     }
 }
 

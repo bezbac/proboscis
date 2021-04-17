@@ -9,7 +9,8 @@ use omnom::prelude::*;
 use std::{sync::Arc, vec};
 
 pub trait Transformer: Sync + Send {
-    fn transform(&self, data: &RecordBatch) -> RecordBatch;
+    fn transform(&self, column: ArrayRef) -> ArrayRef;
+    fn matches(&self, field: &Field) -> bool;
 }
 
 impl From<crate::protocol::message::Field> for Field {
@@ -130,63 +131,6 @@ async fn protocol_rows_to_arrow_columns(
     Ok(result)
 }
 
-// TODO: FIX THIS SUUUUPER SHITTY IMPLEMENTATION
-async fn columns_to_row_data(columns: &[ArrayRef]) -> Vec<Vec<Vec<u8>>> {
-    let mut row_data: Vec<Vec<Vec<u8>>> = vec![];
-
-    for row_index in 0..columns.get(0).unwrap().len() {
-        let mut row = vec![];
-
-        for column in columns {
-            let mut cell: Vec<u8> = vec![];
-            match column.data_type() {
-                DataType::Int8 => {
-                    let values: &Int8Array = as_primitive_array(column);
-                    let value: i8 = values.value(row_index);
-                    value.write_be_bytes(&mut cell).unwrap();
-                }
-                DataType::Int16 => {
-                    let values: &Int16Array = as_primitive_array(column);
-                    let value: i16 = values.value(row_index);
-                    value.write_be_bytes(&mut cell).unwrap();
-                }
-                DataType::Int32 => {
-                    let values: &Int32Array = as_primitive_array(column);
-                    let value: i32 = values.value(row_index);
-                    value.write_be_bytes(&mut cell).unwrap();
-                }
-                DataType::Int64 => {
-                    let values: &Int64Array = as_primitive_array(column);
-                    let value: i64 = values.value(row_index);
-                    value.write_be_bytes(&mut cell).unwrap();
-                }
-                DataType::LargeUtf8 => {
-                    let values = column
-                        .as_any()
-                        .downcast_ref::<GenericStringArray<i64>>()
-                        .unwrap();
-                    let value = values.value(row_index);
-                    cell.extend_from_slice(value.as_bytes())
-                }
-                DataType::Utf8 => {
-                    let values = column
-                        .as_any()
-                        .downcast_ref::<GenericStringArray<i32>>()
-                        .unwrap();
-                    let value = values.value(row_index);
-                    cell.extend_from_slice(value.as_bytes())
-                }
-                _ => unimplemented!(),
-            }
-            row.push(cell)
-        }
-
-        row_data.push(row)
-    }
-
-    row_data
-}
-
 pub struct SimpleQueryResponse {
     pub data: RecordBatch,
     pub fields: Vec<crate::protocol::message::Field>,
@@ -232,21 +176,88 @@ impl SimpleQueryResponse {
         })
     }
 
-    pub async fn serialize(&self) -> Result<Vec<Message>> {
+    pub async fn serialize(
+        &self,
+        transformers: &Vec<Box<dyn Transformer>>,
+    ) -> Result<Vec<Message>> {
         let mut messages = vec![];
 
         messages.push(Message::RowDescription {
             fields: self.fields.clone(),
         });
 
-        let mut data_rows = (columns_to_row_data(self.data.columns()).await)
+        let mut data_rows: Vec<Vec<Vec<u8>>> = vec![];
+
+        let num_rows = self.data.column(0).len();
+
+        for row_index in 0..num_rows {
+            let mut row_data = vec![];
+
+            for (column_index, column) in self.data.columns().iter().enumerate() {
+                let field = self.data.schema().field(column_index).clone();
+
+                let mut transformed_column = column.clone();
+                for transformer in transformers {
+                    if transformer.matches(&field) {
+                        transformed_column = transformer.transform(transformed_column)
+                    }
+                }
+
+                let mut cell: Vec<u8> = vec![];
+                match transformed_column.data_type() {
+                    DataType::Int8 => {
+                        let values: &Int8Array = as_primitive_array(&transformed_column);
+                        let value: i8 = values.value(row_index);
+
+                        value.write_be_bytes(&mut cell).unwrap();
+                    }
+                    DataType::Int16 => {
+                        let values: &Int16Array = as_primitive_array(&transformed_column);
+                        let value: i16 = values.value(row_index);
+                        value.write_be_bytes(&mut cell).unwrap();
+                    }
+                    DataType::Int32 => {
+                        let values: &Int32Array = as_primitive_array(&transformed_column);
+                        let value: i32 = values.value(row_index);
+                        value.write_be_bytes(&mut cell).unwrap();
+                    }
+                    DataType::Int64 => {
+                        let values: &Int64Array = as_primitive_array(&transformed_column);
+                        let value: i64 = values.value(row_index);
+                        value.write_be_bytes(&mut cell).unwrap();
+                    }
+                    DataType::LargeUtf8 => {
+                        let values = &transformed_column
+                            .as_any()
+                            .downcast_ref::<GenericStringArray<i64>>()
+                            .unwrap();
+                        let value = values.value(row_index);
+                        cell.extend_from_slice(value.as_bytes())
+                    }
+                    DataType::Utf8 => {
+                        let values = &transformed_column
+                            .as_any()
+                            .downcast_ref::<GenericStringArray<i32>>()
+                            .unwrap();
+                        let value = values.value(row_index);
+                        cell.extend_from_slice(value.as_bytes())
+                    }
+                    _ => unimplemented!(),
+                }
+                row_data.push(cell)
+            }
+
+            data_rows.push(row_data)
+        }
+
+        let mut data_row_messages = data_rows
             .iter()
             .map(|data| Message::DataRow {
                 field_data: data.clone(),
             })
             .collect();
 
-        messages.append(&mut data_rows);
+        messages.append(&mut data_row_messages);
         messages.push(Message::CommandComplete {
             tag: self.tag.clone(),
         });
