@@ -13,9 +13,13 @@ omnom = "3.0.0"
 tokio = { version = "1.4.0", features = ["full"] }
 arrow = "3.0.0"
 postgres = "0.19.1"
+refinery = { version = "0.5.0", optional = true, features = ["tokio-postgres"] }
+
+[dev-dependencies]
+serial_test = "*"
 
 [features]
-e2e = ["tokio-postgres"]
+e2e = ["tokio-postgres", "refinery"]
 
 [[bin]]
 bench = false

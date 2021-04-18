@@ -1,10 +1,17 @@
-use std::sync::Arc;
+#[macro_use]
+extern crate serial_test;
 
 use arrow::{
     array::{ArrayRef, GenericStringArray},
     datatypes::{DataType, Field},
 };
 use proboscis::Transformer;
+use std::sync::Arc;
+
+mod embedded {
+    use refinery::embed_migrations;
+    embed_migrations!("tests/sql_migrations");
+}
 
 struct AnnonymizeTransformer {}
 
@@ -32,10 +39,28 @@ impl Transformer for AnnonymizeTransformer {
 }
 
 #[tokio::test]
+#[serial]
 #[cfg(feature = "e2e")]
 async fn test_general_use() {
     use std::collections::HashMap;
     use tokio_postgres::{NoTls, SimpleQueryMessage};
+
+    // Run migrations
+    let (mut client, connection) =
+        tokio_postgres::connect("host=0.0.0.0 port=5432 user=admin password=password", NoTls)
+            .await
+            .unwrap();
+
+    tokio::spawn(async move {
+        if let Err(e) = connection.await {
+            eprintln!("connection error: {}", e);
+        }
+    });
+
+    embedded::migrations::runner()
+        .run_async(&mut client)
+        .await
+        .expect("Migrations failed");
 
     let proxy_process = async {
         let mut authentication = HashMap::new();
@@ -69,7 +94,7 @@ async fn test_general_use() {
 
         // Simple query
         let simple_query_result = client
-            .simple_query("SELECT id, name FROM person")
+            .simple_query("SELECT id, name FROM users")
             .await
             .unwrap();
 
