@@ -31,12 +31,13 @@ async fn test_general_use() {
         .expect("Migrations failed");
 
     let proxy_process = async {
-        let mut authentication = HashMap::new();
-        authentication.insert("admin".to_string(), "password".to_string());
+        let mut credentials = HashMap::new();
+        credentials.insert("admin".to_string(), "password".to_string());
 
         let config = proboscis::Config {
             target_addr: "0.0.0.0:5432".to_string(),
-            authentication,
+            credentials,
+            tls_config: None,
         };
 
         let app = proboscis::App::new(config.clone());
@@ -69,15 +70,6 @@ async fn test_general_use() {
         };
 
         let name: &str = row.get(1).unwrap();
-        assert_eq!(name, "Max");
-
-        // Normal query
-        let rows = client
-            .query("SELECT id, name FROM users", &[])
-            .await
-            .unwrap();
-
-        let name: &str = rows[0].get(1);
         assert_eq!(name, "Max");
     };
 

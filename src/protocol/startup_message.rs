@@ -75,6 +75,7 @@ impl StartupMessage {
 
     pub fn read_body<T: Read>(stream: &mut T, remaining_bytes_len: u32) -> Result<Self> {
         let protocol_version: i32 = stream.read_be()?;
+
         let message = match protocol_version {
             CODE_STARTUP_CANCEL => StartupMessage::CancelRequest {
                 connection_id: stream.read_be()?,

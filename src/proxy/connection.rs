@@ -17,19 +17,33 @@ impl ConnectionKind {
     }
 }
 
+pub type MaybeTlsStream = tokio_util::either::Either<
+    tokio::net::TcpStream,
+    tokio_native_tls::TlsStream<tokio::net::TcpStream>,
+>;
+
 pub struct Connection {
-    pub stream: TcpStream,
+    pub stream: MaybeTlsStream,
     kind: ConnectionKind,
 }
 
 impl Connection {
-    pub fn new(stream: TcpStream, kind: ConnectionKind) -> Connection {
+    pub fn new(stream: MaybeTlsStream, kind: ConnectionKind) -> Connection {
         Connection { stream, kind }
     }
 
     pub async fn connect<A: ToSocketAddrs>(address: A, kind: ConnectionKind) -> Result<Connection> {
         let stream = TcpStream::connect(address).await?;
-        Ok(Self::new(stream, kind))
+        Ok(Connection {
+            stream: MaybeTlsStream::Left(stream),
+            kind,
+        })
+    }
+
+    pub async fn write(&mut self, bytes: &[u8]) -> tokio::io::Result<usize> {
+        let (_, mut wr) = tokio::io::split(&mut self.stream);
+        println!("{} Writing bytes", self.kind.log_char());
+        wr.write(bytes).await
     }
 
     pub async fn write_message(&mut self, message: Message) -> tokio::io::Result<usize> {
