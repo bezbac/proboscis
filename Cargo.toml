@@ -19,6 +19,7 @@ native-tls = "0.2.7"
 tokio-native-tls = "0.3.0"
 tempdir = { version = "0.3.7", optional = true }
 tokio-util = "0.6.6"
+async-trait = "0.1.50"
 
 [dev-dependencies]
 serial_test = "*"

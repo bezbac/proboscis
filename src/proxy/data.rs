@@ -1,5 +1,6 @@
 use super::connection::Connection;
 use crate::protocol::Message;
+use crate::proxy::connection::ProtocolStream;
 use anyhow::Result;
 use arrow::array::as_primitive_array;
 use arrow::array::{ArrayRef, GenericStringArray, Int16Array, Int32Array, Int64Array, Int8Array};

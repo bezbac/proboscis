@@ -2,6 +2,7 @@ use super::connection::{Connection, ConnectionKind};
 use super::data::SimpleQueryResponse;
 use super::util::encode_md5_password_hash;
 use super::{config::Config, connection::MaybeTlsStream};
+use crate::proxy::connection::ProtocolStream;
 use crate::{
     protocol::{Message, StartupMessage},
     Transformer,
@@ -11,6 +12,7 @@ use native_tls::Identity;
 use std::collections::HashMap;
 use std::fs::File;
 use std::io::Read;
+use tokio::io::AsyncWriteExt;
 use tokio::net::TcpListener;
 
 pub struct App {
@@ -44,11 +46,13 @@ impl App {
             let (stream, _) = listener.accept().await?;
             println!("New connection established!");
 
-            let (mut frontend_connection, mut backend_connection) = setup_tunnel(
-                stream,
-                &self.config.target_addr,
+            let (mut frontend_connection, mut backend_connection) =
+                setup_connections(stream, &self.config.target_addr, &tls_acceptor).await?;
+
+            handle_authentication(
+                &mut frontend_connection,
+                &mut backend_connection,
                 &self.config.credentials,
-                &tls_acceptor,
             )
             .await?;
 
@@ -74,71 +78,80 @@ impl App {
     }
 }
 
-pub async fn setup_tunnel(
-    frontend_stream: tokio::net::TcpStream,
+pub async fn setup_connections(
+    mut frontend_stream: tokio::net::TcpStream,
     target_addr: &String,
-    credentials: &HashMap<String, String>,
     tls_acceptor: &Option<tokio_native_tls::TlsAcceptor>,
 ) -> Result<(Connection, Connection)> {
-    let mut frontend = Connection::new(
-        MaybeTlsStream::Left(frontend_stream),
-        ConnectionKind::Frontend,
-    );
+    let mut startup_message = frontend_stream.read_startup_message().await?;
 
-    let frontend_params = loop {
-        let startup_message = frontend.read_startup_message().await?;
-        match startup_message {
-            StartupMessage::Startup { params } => {
-                break params;
+    let mut frontend: MaybeTlsStream;
+    match startup_message {
+        StartupMessage::SslRequest => {
+            // TLS not supported
+            if tls_acceptor.is_none() {
+                frontend_stream.write(&[b'N']).await?;
+                return Err(anyhow::anyhow!("TLS is not enabled on the server"));
             }
-            StartupMessage::SslRequest => {
-                match tls_acceptor {
-                    Some(tls_acceptor) => {
-                        // Confirm TLS request
-                        frontend.write(&[b'S']).await?;
 
-                        let tls_stream = tls_acceptor
-                            .accept(match frontend.stream {
-                                tokio_util::either::Either::Left(stream) => stream,
-                                _ => panic!("Already tls stream"),
-                            })
-                            .await?;
+            let tls_acceptor = tls_acceptor.as_ref().unwrap();
 
-                        frontend = Connection::new(
-                            MaybeTlsStream::Right(tls_stream),
-                            ConnectionKind::Frontend,
-                        )
-                    }
-                    _ => {
-                        // TLS not supported
-                        frontend.write(&[b'N']).await?;
-                    }
-                }
-            }
-            _ => return Err(anyhow::anyhow!("Recieved unknown startup message")),
+            // Confirm TLS request
+            frontend_stream.write(&[b'S']).await?;
+            let tls_stream = tls_acceptor.accept(frontend_stream).await?;
+
+            frontend = MaybeTlsStream::Right(tls_stream);
+            startup_message = frontend.read_startup_message().await?;
         }
+        _ => frontend = MaybeTlsStream::Left(frontend_stream),
     };
+
+    let frontend_params = match startup_message {
+        StartupMessage::Startup { params } => params,
+        _ => panic!(""),
+    };
+
+    let frontend = Connection::new(frontend, ConnectionKind::Frontend, frontend_params.clone());
 
     let user = frontend_params
         .get("user")
         .expect("Missing user parameter")
         .clone();
 
-    let mut backend = Connection::connect(&target_addr, ConnectionKind::Backend).await?;
-
     let mut backend_params: HashMap<String, String> = HashMap::new();
     backend_params.insert("user".to_string(), user.clone());
     backend_params.insert("client_encoding".to_string(), "UTF8".to_string());
 
-    backend
+    let mut backend_stream = tokio::net::TcpStream::connect(&target_addr).await?;
+    backend_stream
         .write_startup_message(StartupMessage::Startup {
-            params: backend_params,
+            params: backend_params.clone(),
         })
         .await?;
 
+    let backend = Connection::new(
+        MaybeTlsStream::Left(backend_stream),
+        ConnectionKind::Backend,
+        backend_params,
+    );
+
+    return Ok((frontend, backend));
+}
+
+pub async fn handle_authentication(
+    frontend: &mut Connection,
+    backend: &mut Connection,
+    credentials: &HashMap<String, String>,
+) -> Result<()> {
     let response = backend.read_message().await?;
     match response {
         Message::AuthenticationRequestMD5Password { salt } => {
+            let user = frontend
+                .parameters
+                .get("user")
+                .expect("Missing user parameter")
+                .clone();
+
             let password = credentials
                 .get(&user.clone())
                 .expect(&format!("Password for {} not found inside config", &user));
@@ -202,7 +215,7 @@ pub async fn setup_tunnel(
 
     frontend.write_message(Message::ReadyForQuery).await?;
 
-    return Ok((frontend, backend));
+    Ok(())
 }
 
 pub async fn pass_through_simple_query_response(
