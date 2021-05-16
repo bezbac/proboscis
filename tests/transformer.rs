@@ -5,7 +5,7 @@ use arrow::{
     array::{ArrayRef, GenericStringArray},
     datatypes::{DataType, Field},
 };
-use proboscis::Transformer;
+use proboscis::{PoolConfig, TargetConfig, Transformer};
 use std::sync::Arc;
 
 mod embedded {
@@ -67,7 +67,14 @@ async fn test_general_use() {
         credentials.insert("admin".to_string(), "password".to_string());
 
         let config = proboscis::Config {
-            target_addr: "0.0.0.0:5432".to_string(),
+            target_config: TargetConfig {
+                host: "0.0.0.0".to_string(),
+                port: "5432".to_string(),
+                user: "admin".to_string(),
+                password: "password".to_string(),
+                database: "postgres".to_string(),
+            },
+            pool_config: PoolConfig { max_size: 1 },
             credentials,
             tls_config: None,
         };

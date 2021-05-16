@@ -1,17 +1,21 @@
 use super::connection::{Connection, ConnectionKind};
 use super::data::SimpleQueryResponse;
-use super::util::encode_md5_password_hash;
 use super::{config::Config, connection::MaybeTlsStream};
-use crate::proxy::connection::ProtocolStream;
+use crate::proxy::{
+    connection::ProtocolStream,
+    connection_pool::{ConnectionManager, ConnectionPool},
+    util::encode_md5_password_hash,
+};
 use crate::{
     protocol::{Message, StartupMessage},
     Transformer,
 };
 use anyhow::Result;
+use deadpool::managed::PoolConfig;
 use native_tls::Identity;
-use std::collections::HashMap;
-use std::fs::File;
+use rand::Rng;
 use std::io::Read;
+use std::{collections::HashMap, fs::File};
 use tokio::io::AsyncWriteExt;
 use tokio::net::TcpListener;
 
@@ -24,6 +28,10 @@ impl App {
     pub async fn listen(&self, address: &str) -> Result<()> {
         let listener = TcpListener::bind(&address).await?;
         println!("Server running on {}!", &address);
+
+        let manager = ConnectionManager::new(self.config.target_config.clone());
+
+        let pool = ConnectionPool::from_config(manager, PoolConfig::new(100));
 
         let tls_acceptor: Option<tokio_native_tls::TlsAcceptor> = match &self.config.tls_config {
             Some(tls_config) => {
@@ -46,22 +54,11 @@ impl App {
             let (stream, _) = listener.accept().await?;
             println!("New connection established!");
 
-            let (mut frontend_connection, mut backend_connection) =
-                setup_connections(stream, &self.config.target_addr, &tls_acceptor).await?;
+            let mut frontend_connection = accept_frontend_connection(stream, &tls_acceptor).await?;
 
-            handle_authentication(
-                &mut frontend_connection,
-                &mut backend_connection,
-                &self.config.credentials,
-            )
-            .await?;
+            handle_authentication(&mut frontend_connection, &self.config.credentials).await?;
 
-            handle_connection(
-                &mut frontend_connection,
-                &mut backend_connection,
-                &self.transformers,
-            )
-            .await?;
+            handle_connection(&mut frontend_connection, &pool, &self.transformers).await?;
         }
     }
 
@@ -78,11 +75,49 @@ impl App {
     }
 }
 
-pub async fn setup_connections(
+pub async fn handle_authentication(
+    frontend: &mut Connection,
+    credentials: &HashMap<String, String>,
+) -> Result<()> {
+    let salt = rand::thread_rng().gen::<[u8; 4]>().to_vec();
+
+    frontend
+        .write_message(Message::AuthenticationRequestMD5Password { salt: salt.clone() })
+        .await?;
+
+    let response = frontend.read_message().await?;
+
+    let received_hash = match response {
+        Message::MD5HashedPasswordMessage { hash } => hash,
+        _ => return Err(anyhow::anyhow!("Expected Password Message")),
+    };
+
+    let user = frontend
+        .parameters
+        .get("user")
+        .expect("Missing user parameter")
+        .clone();
+
+    let password = credentials
+        .get(&user.clone())
+        .expect(&format!("Password for {} not found inside config", &user));
+
+    let actual_hash = encode_md5_password_hash(&user, password, &salt[..]);
+
+    if received_hash != actual_hash {
+        return Err(anyhow::anyhow!("Incorrect password"));
+    }
+
+    frontend.write_message(Message::AuthenticationOk).await?;
+    frontend.write_message(Message::ReadyForQuery).await?;
+
+    Ok(())
+}
+
+pub async fn accept_frontend_connection(
     mut frontend_stream: tokio::net::TcpStream,
-    target_addr: &String,
     tls_acceptor: &Option<tokio_native_tls::TlsAcceptor>,
-) -> Result<(Connection, Connection)> {
+) -> Result<Connection> {
     let mut startup_message = frontend_stream.read_startup_message().await?;
 
     let mut frontend: MaybeTlsStream;
@@ -113,109 +148,7 @@ pub async fn setup_connections(
 
     let frontend = Connection::new(frontend, ConnectionKind::Frontend, frontend_params.clone());
 
-    let user = frontend_params
-        .get("user")
-        .expect("Missing user parameter")
-        .clone();
-
-    let mut backend_params: HashMap<String, String> = HashMap::new();
-    backend_params.insert("user".to_string(), user.clone());
-    backend_params.insert("client_encoding".to_string(), "UTF8".to_string());
-
-    let mut backend_stream = tokio::net::TcpStream::connect(&target_addr).await?;
-    backend_stream
-        .write_startup_message(StartupMessage::Startup {
-            params: backend_params.clone(),
-        })
-        .await?;
-
-    let backend = Connection::new(
-        MaybeTlsStream::Left(backend_stream),
-        ConnectionKind::Backend,
-        backend_params,
-    );
-
-    return Ok((frontend, backend));
-}
-
-pub async fn handle_authentication(
-    frontend: &mut Connection,
-    backend: &mut Connection,
-    credentials: &HashMap<String, String>,
-) -> Result<()> {
-    let response = backend.read_message().await?;
-    match response {
-        Message::AuthenticationRequestMD5Password { salt } => {
-            let user = frontend
-                .parameters
-                .get("user")
-                .expect("Missing user parameter")
-                .clone();
-
-            let password = credentials
-                .get(&user.clone())
-                .expect(&format!("Password for {} not found inside config", &user));
-
-            frontend
-                .write_message(Message::AuthenticationRequestMD5Password { salt: salt.clone() })
-                .await?;
-            let frontend_response = frontend.read_message().await?;
-
-            let frontend_hash = match frontend_response {
-                Message::MD5HashedPasswordMessage { hash } => hash,
-                _ => return Err(anyhow::anyhow!("Expected Password Message")),
-            };
-
-            let hash = encode_md5_password_hash(&user, password, &salt[..]);
-
-            if frontend_hash != hash {
-                return Err(anyhow::anyhow!("Incorrect password"));
-            }
-
-            let message = Message::MD5HashedPasswordMessage { hash };
-            backend.write_message(message).await?;
-            let response = backend.read_message().await?;
-
-            match response {
-                Message::AuthenticationOk => {}
-                _ => return Err(anyhow::anyhow!("Expected AuthenticationOk")),
-            }
-
-            frontend.write_message(Message::AuthenticationOk).await?;
-
-            loop {
-                let response = backend.read_message().await?;
-
-                match response {
-                    Message::ReadyForQuery => break,
-                    Message::ParameterStatus { key, value } => {
-                        frontend
-                            .write_message(Message::ParameterStatus { key, value })
-                            .await?;
-                    }
-                    Message::BackendKeyData {
-                        process_id,
-                        secret_key,
-                        additional,
-                    } => {
-                        frontend
-                            .write_message(Message::BackendKeyData {
-                                process_id,
-                                secret_key,
-                                additional,
-                            })
-                            .await?;
-                    }
-                    _ => unimplemented!("Unexpected message"),
-                }
-            }
-        }
-        _ => unimplemented!(),
-    }
-
-    frontend.write_message(Message::ReadyForQuery).await?;
-
-    Ok(())
+    Ok(frontend)
 }
 
 pub async fn pass_through_simple_query_response(
@@ -339,11 +272,13 @@ pub async fn pass_through_query_response(
 
 pub async fn handle_connection(
     frontend: &mut Connection,
-    backend: &mut Connection,
+    pool: &ConnectionPool,
     transformers: &Vec<Box<dyn Transformer>>,
 ) -> Result<()> {
     loop {
         let request = frontend.read_message().await?;
+
+        let mut backend = pool.get().await.map_err(|err| anyhow::anyhow!(err))?;
 
         match request {
             Message::Terminate => {
@@ -356,9 +291,9 @@ pub async fn handle_connection(
                     .await?;
 
                 if transformers.len() == 0 {
-                    pass_through_simple_query_response(frontend, backend).await?;
+                    pass_through_simple_query_response(frontend, &mut backend).await?;
                 } else {
-                    let response = SimpleQueryResponse::read(backend).await?;
+                    let response = SimpleQueryResponse::read(&mut backend).await?;
                     let messages = response.serialize(transformers).await?;
 
                     for message in messages {
@@ -381,7 +316,7 @@ pub async fn handle_connection(
                     })
                     .await?;
 
-                pass_through_query_response(frontend, backend).await?;
+                pass_through_query_response(frontend, &mut backend).await?;
             }
             _ => unimplemented!(),
         }
