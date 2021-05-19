@@ -49,7 +49,7 @@ async fn test_general_use() {
             tls_config: None,
         };
 
-        let app = proboscis::App::new(config.clone());
+        let mut app = proboscis::App::new(config.clone());
         app.listen("0.0.0.0:5430").await.unwrap();
     };
 

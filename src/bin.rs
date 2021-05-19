@@ -24,6 +24,6 @@ async fn main() {
         }),
     };
 
-    let app = App::new(config);
+    let mut app = App::new(config);
     app.listen("0.0.0.0:5430").await;
 }

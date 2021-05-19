@@ -1,6 +1,6 @@
 use super::connection::Connection;
-use crate::protocol::Message;
 use crate::proxy::connection::ProtocolStream;
+use crate::{protocol::Message, Transformer};
 use anyhow::Result;
 use arrow::array::as_primitive_array;
 use arrow::array::{ArrayRef, GenericStringArray, Int16Array, Int32Array, Int64Array, Int8Array};
@@ -8,11 +8,6 @@ use arrow::datatypes::{DataType, Field, Schema};
 use arrow::record_batch::RecordBatch;
 use omnom::prelude::*;
 use std::{sync::Arc, vec};
-
-pub trait Transformer: Sync + Send {
-    fn transform(&self, column: ArrayRef) -> ArrayRef;
-    fn matches(&self, field: &Field) -> bool;
-}
 
 impl From<crate::protocol::message::Field> for Field {
     fn from(value: crate::protocol::message::Field) -> Self {
@@ -132,6 +127,7 @@ async fn protocol_rows_to_arrow_columns(
     Ok(result)
 }
 
+#[derive(Clone)]
 pub struct SimpleQueryResponse {
     pub data: RecordBatch,
     pub fields: Vec<crate::protocol::message::Field>,

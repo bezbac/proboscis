@@ -1,17 +1,22 @@
 use super::connection::{Connection, ConnectionKind};
 use super::data::SimpleQueryResponse;
 use super::{config::Config, connection::MaybeTlsStream};
-use crate::proxy::{
-    connection::ProtocolStream,
-    connection_pool::{ConnectionManager, ConnectionPool},
-    util::encode_md5_password_hash,
-};
 use crate::{
     protocol::{Message, StartupMessage},
     Transformer,
 };
+use crate::{
+    proxy::{
+        connection::ProtocolStream,
+        connection_pool::{ConnectionManager, ConnectionPool},
+        resolver::ResolverResult,
+        util::encode_md5_password_hash,
+    },
+    Resolver,
+};
 use anyhow::Result;
 use deadpool::managed::PoolConfig;
+use futures::future::join_all;
 use native_tls::Identity;
 use rand::Rng;
 use std::io::Read;
@@ -22,10 +27,11 @@ use tokio::net::TcpListener;
 pub struct App {
     config: Config,
     transformers: Vec<Box<dyn Transformer>>,
+    resolvers: Vec<Box<dyn Resolver>>,
 }
 
 impl App {
-    pub async fn listen(&self, address: &str) -> Result<()> {
+    pub async fn listen(&mut self, address: &str) -> Result<()> {
         let listener = TcpListener::bind(&address).await?;
         println!("Server running on {}!", &address);
 
@@ -58,7 +64,13 @@ impl App {
 
             handle_authentication(&mut frontend_connection, &self.config.credentials).await?;
 
-            handle_connection(&mut frontend_connection, &pool, &self.transformers).await?;
+            handle_connection(
+                &mut frontend_connection,
+                &pool,
+                &self.transformers,
+                &mut self.resolvers,
+            )
+            .await?;
         }
     }
 
@@ -66,11 +78,17 @@ impl App {
         App {
             config,
             transformers: vec![],
+            resolvers: vec![],
         }
     }
 
     pub fn add_transformer(mut self, transformer: Box<dyn Transformer>) -> App {
         self.transformers.push(transformer);
+        self
+    }
+
+    pub fn add_resolver(mut self, resolver: Box<dyn Resolver>) -> App {
+        self.resolvers.push(resolver);
         self
     }
 }
@@ -274,6 +292,7 @@ pub async fn handle_connection(
     frontend: &mut Connection,
     pool: &ConnectionPool,
     transformers: &Vec<Box<dyn Transformer>>,
+    resolvers: &mut Vec<Box<dyn Resolver>>,
 ) -> Result<()> {
     loop {
         let request = frontend.read_message().await?;
@@ -286,19 +305,48 @@ pub async fn handle_connection(
                 break;
             }
             Message::SimpleQuery(query_string) => {
-                backend
-                    .write_message(Message::SimpleQuery(query_string))
-                    .await?;
-
-                if transformers.len() == 0 {
+                if transformers.len() == 0 && resolvers.len() == 0 {
                     pass_through_simple_query_response(frontend, &mut backend).await?;
-                } else {
-                    let response = SimpleQueryResponse::read(&mut backend).await?;
-                    let messages = response.serialize(transformers).await?;
+                    frontend.write_message(Message::ReadyForQuery).await?;
+                    continue;
+                }
 
-                    for message in messages {
-                        frontend.write_message(message).await?;
+                let resolver_responses =
+                    join_all(resolvers.iter().map(|r| r.lookup(&query_string))).await;
+
+                let resolver_data: Vec<SimpleQueryResponse> = resolver_responses
+                    .iter()
+                    .filter_map(|result| match result {
+                        ResolverResult::Hit(data) => Some(data),
+                        ResolverResult::Miss => None,
+                    })
+                    .cloned()
+                    .collect();
+
+                let final_response = match resolver_data.first() {
+                    Some(data) => data.clone(),
+                    None => {
+                        backend
+                            .write_message(Message::SimpleQuery(query_string.clone()))
+                            .await?;
+
+                        let response = SimpleQueryResponse::read(&mut backend).await?;
+
+                        join_all(
+                            resolvers
+                                .iter_mut()
+                                .map(|r| r.inform(&query_string, response.clone())),
+                        )
+                        .await;
+
+                        response
                     }
+                };
+
+                let messages = final_response.serialize(transformers).await?;
+
+                for message in messages {
+                    frontend.write_message(message).await?;
                 }
 
                 frontend.write_message(Message::ReadyForQuery).await?;

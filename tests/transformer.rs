@@ -81,7 +81,7 @@ async fn test_general_use() {
 
         let transformer = AnnonymizeTransformer {};
 
-        let app = proboscis::App::new(config.clone()).add_transformer(Box::new(transformer));
+        let mut app = proboscis::App::new(config.clone()).add_transformer(Box::new(transformer));
 
         app.listen("0.0.0.0:5430").await.unwrap();
     };

@@ -1,4 +1,4 @@
-use proboscis::{PoolConfig, TargetConfig};
+use proboscis::{PoolConfig, StupidCache, TargetConfig};
 
 #[macro_use]
 extern crate serial_test;
@@ -11,7 +11,7 @@ mod embedded {
 #[tokio::test]
 #[serial]
 #[cfg(feature = "e2e")]
-async fn test_general_use() {
+async fn test_stupid_cache() {
     use std::collections::HashMap;
     use tokio_postgres::{NoTls, SimpleQueryMessage};
 
@@ -49,7 +49,10 @@ async fn test_general_use() {
             tls_config: None,
         };
 
-        let mut app = proboscis::App::new(config.clone());
+        let resolver = StupidCache::new();
+
+        let mut app = proboscis::App::new(config.clone()).add_resolver(Box::new(resolver));
+
         app.listen("0.0.0.0:5430").await.unwrap();
     };
 
@@ -68,6 +71,20 @@ async fn test_general_use() {
         });
 
         // Simple query
+        let simple_query_result = client
+            .simple_query("SELECT id, name FROM users")
+            .await
+            .unwrap();
+
+        let row = match simple_query_result.first().unwrap() {
+            SimpleQueryMessage::Row(v) => v,
+            _ => panic!("Not a row"),
+        };
+
+        let name: &str = row.get(1).unwrap();
+        assert_eq!(name, "Max");
+
+        // Second query, expecting cached result
         let simple_query_result = client
             .simple_query("SELECT id, name FROM users")
             .await
