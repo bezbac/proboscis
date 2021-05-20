@@ -1,6 +1,13 @@
 use super::connection::{Connection, ConnectionKind};
 use super::{config::Config, connection::MaybeTlsStream};
-use crate::{Transformer, protocol::{Message, StartupMessage}, proxy::data::{serialize_record_batch_schema_to_row_description, serialize_record_batch_to_data_rows, simple_query_response_to_record_batch}};
+use crate::{
+    protocol::{Message, StartupMessage},
+    proxy::data::{
+        serialize_record_batch_schema_to_row_description, serialize_record_batch_to_data_rows,
+        simple_query_response_to_record_batch,
+    },
+    Transformer,
+};
 use crate::{
     proxy::{
         connection::ProtocolStream,
@@ -304,8 +311,8 @@ pub async fn handle_connection(
             Message::SimpleQuery(query_string) => {
                 if transformers.len() == 0 && resolvers.len() == 0 {
                     backend
-                            .write_message(Message::SimpleQuery(query_string.clone()))
-                            .await?;
+                        .write_message(Message::SimpleQuery(query_string.clone()))
+                        .await?;
                     pass_through_simple_query_response(frontend, &mut backend).await?;
                     frontend.write_message(Message::ReadyForQuery).await?;
                     continue;
@@ -328,27 +335,26 @@ pub async fn handle_connection(
                         resolver_data.first().unwrap().clone()
                     } else {
                         backend
-                        .write_message(Message::SimpleQuery(query_string.clone()))
-                        .await?;
-    
+                            .write_message(Message::SimpleQuery(query_string.clone()))
+                            .await?;
+
                         let mut fields = vec![];
                         let mut data_rows = vec![];
                         loop {
                             let response = backend.read_message().await?;
                             match response {
                                 Message::ReadyForQuery => break,
-                                Message::RowDescription { fields: mut message_fields } => {
-                                    fields.append(&mut message_fields)
-                                },
+                                Message::RowDescription {
+                                    fields: mut message_fields,
+                                } => fields.append(&mut message_fields),
                                 Message::DataRow { field_data: _ } => {
                                     data_rows.push(response);
-                                },
-                                Message::CommandComplete { tag: _ } => {
-                                },
+                                }
+                                Message::CommandComplete { tag: _ } => {}
                                 _ => unimplemented!(""),
                             }
-                        };
-    
+                        }
+
                         simple_query_response_to_record_batch(&fields, &data_rows).await?
                     }
                 };
@@ -360,9 +366,12 @@ pub async fn handle_connection(
                 )
                 .await;
 
-                let transformed = transformers.iter().fold(record_batch, |data, transformer| transformer.transform(&data));
+                let transformed = transformers.iter().fold(record_batch, |data, transformer| {
+                    transformer.transform_data(&data)
+                });
 
-                let row_description = serialize_record_batch_schema_to_row_description(transformed.schema());
+                let row_description =
+                    serialize_record_batch_schema_to_row_description(transformed.schema());
                 frontend.write_message(row_description).await?;
 
                 let data_rows = serialize_record_batch_to_data_rows(transformed);
@@ -371,7 +380,11 @@ pub async fn handle_connection(
                 }
 
                 // TODO: Fix the command complete tag
-                frontend.write_message(Message::CommandComplete { tag: "C".to_string() }).await?;
+                frontend
+                    .write_message(Message::CommandComplete {
+                        tag: "C".to_string(),
+                    })
+                    .await?;
                 frontend.write_message(Message::ReadyForQuery).await?;
             }
             Message::Parse {
