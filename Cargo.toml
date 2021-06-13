@@ -24,11 +24,8 @@ deadpool = "0.7.0"
 rand = "0.8.3"
 futures = "0.3.15"
 
-[dev-dependencies]
-serial_test = "*"
-
 [features]
-e2e = ["tokio-postgres", "postgres-native-tls", "refinery", "tempdir"]
+examples = ["tokio-postgres", "postgres-native-tls", "refinery", "tempdir"]
 
 [[bin]]
 bench = false
