@@ -306,6 +306,9 @@ pub async fn handle_connection(
             }
             Message::SimpleQuery(query_string) => {
                 if transformers.len() == 0 && resolvers.len() == 0 {
+                    backend
+                            .write_message(Message::SimpleQuery(query_string.clone()))
+                            .await?;
                     pass_through_simple_query_response(frontend, &mut backend).await?;
                     frontend.write_message(Message::ReadyForQuery).await?;
                     continue;
