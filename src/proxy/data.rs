@@ -1,5 +1,5 @@
 use super::connection::Connection;
-use crate::proxy::connection::ProtocolStream;
+use crate::proxy::{connection::ProtocolStream};
 use crate::{protocol::Message, Transformer};
 use anyhow::Result;
 use arrow::array::as_primitive_array;
@@ -177,54 +177,43 @@ impl SimpleQueryResponse {
         &self,
         transformers: &Vec<Box<dyn Transformer>>,
     ) -> Result<Vec<Message>> {
+        let transformed = transformers.iter().fold(self.data.clone(), |data, transformer| transformer.transform(&data));
+
         let mut messages = vec![];
 
         messages.push(Message::RowDescription {
             fields: self.fields.clone(),
         });
 
-        let mut data_rows: Vec<Vec<Vec<u8>>> = vec![];
-
-        let num_rows = self.data.column(0).len();
-
-        for row_index in 0..num_rows {
+        for row_index in 0..transformed.num_rows() {
             let mut row_data = vec![];
 
-            for (column_index, column) in self.data.columns().iter().enumerate() {
-                let field = self.data.schema().field(column_index).clone();
-
-                let mut transformed_column = column.clone();
-                for transformer in transformers {
-                    if transformer.matches(&field) {
-                        transformed_column = transformer.transform(transformed_column)
-                    }
-                }
-
+            for column in transformed.columns() {
                 let mut cell: Vec<u8> = vec![];
-                match transformed_column.data_type() {
+                match column.data_type() {
                     DataType::Int8 => {
-                        let values: &Int8Array = as_primitive_array(&transformed_column);
+                        let values: &Int8Array = as_primitive_array(&column);
                         let value: i8 = values.value(row_index);
 
                         value.write_be_bytes(&mut cell).unwrap();
                     }
                     DataType::Int16 => {
-                        let values: &Int16Array = as_primitive_array(&transformed_column);
+                        let values: &Int16Array = as_primitive_array(&column);
                         let value: i16 = values.value(row_index);
                         value.write_be_bytes(&mut cell).unwrap();
                     }
                     DataType::Int32 => {
-                        let values: &Int32Array = as_primitive_array(&transformed_column);
+                        let values: &Int32Array = as_primitive_array(&column);
                         let value: i32 = values.value(row_index);
                         value.write_be_bytes(&mut cell).unwrap();
                     }
                     DataType::Int64 => {
-                        let values: &Int64Array = as_primitive_array(&transformed_column);
+                        let values: &Int64Array = as_primitive_array(&column);
                         let value: i64 = values.value(row_index);
                         value.write_be_bytes(&mut cell).unwrap();
                     }
                     DataType::LargeUtf8 => {
-                        let values = &transformed_column
+                        let values = &column
                             .as_any()
                             .downcast_ref::<GenericStringArray<i64>>()
                             .unwrap();
@@ -232,7 +221,7 @@ impl SimpleQueryResponse {
                         cell.extend_from_slice(value.as_bytes())
                     }
                     DataType::Utf8 => {
-                        let values = &transformed_column
+                        let values = &column
                             .as_any()
                             .downcast_ref::<GenericStringArray<i32>>()
                             .unwrap();
@@ -244,17 +233,11 @@ impl SimpleQueryResponse {
                 row_data.push(cell)
             }
 
-            data_rows.push(row_data)
+            messages.push(Message::DataRow {
+                field_data: row_data,
+            })
         }
 
-        let mut data_row_messages = data_rows
-            .iter()
-            .map(|data| Message::DataRow {
-                field_data: data.clone(),
-            })
-            .collect();
-
-        messages.append(&mut data_row_messages);
         messages.push(Message::CommandComplete {
             tag: self.tag.clone(),
         });

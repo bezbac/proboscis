@@ -1,7 +1,4 @@
-use arrow::{
-    array::{ArrayRef, GenericStringArray},
-    datatypes::{DataType, Field},
-};
+use arrow::{array::{ArrayRef, LargeStringArray}, datatypes::{DataType}, record_batch::RecordBatch};
 use postgres::{NoTls, SimpleQueryMessage};
 use proboscis::{PoolConfig, TargetConfig, Transformer};
 use std::{collections::HashMap, sync::Arc};
@@ -9,25 +6,34 @@ use std::{collections::HashMap, sync::Arc};
 struct AnnonymizeTransformer {}
 
 impl Transformer for AnnonymizeTransformer {
-    fn transform(&self, data: ArrayRef) -> ArrayRef
+    fn transform(&self, data: &RecordBatch) -> RecordBatch
     where
         Self: Sized,
     {
-        let new_values: Vec<String> = data
-            .as_any()
-            .downcast_ref::<GenericStringArray<i64>>()
-            .unwrap()
-            .iter()
-            .map(|_| "Annonymous".to_string())
-            .collect();
+        // Select which columns to transform
+        let columns: Vec<usize> = data.schema().fields().into_iter().enumerate().filter_map(|(idx, field)| {
+            match field.data_type() == &DataType::LargeUtf8 && field.name().as_str() == "name" {
+                true => Some(idx),
+                _ => None
+            }
+        }).collect();
 
-        Arc::new(GenericStringArray::<i64>::from(
-            new_values.iter().map(|s| s.as_ref()).collect::<Vec<&str>>(),
-        ))
-    }
+        // If there's noting to transform return the untransformed records
+        if columns.len() == 0 {
+            return data.clone()
+        }
 
-    fn matches(&self, field: &Field) -> bool {
-        field.name().as_str() == "name" && field.data_type() == &DataType::LargeUtf8
+        // Replace values within matched colums with "Annonymous"
+        let arrays: Vec<ArrayRef> = (0..data.num_columns()).map(|idx| {
+            if columns.contains(&idx) {
+                Arc::new(LargeStringArray::from(vec!["Annonymous"; data.num_rows()]))
+            } else {
+                data.column(idx).clone()
+            }
+        }).collect();
+
+        // Return updated records
+        RecordBatch::try_new(data.schema(), arrays).unwrap()
     }
 }
 

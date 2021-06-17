@@ -1,6 +1,5 @@
-use arrow::{array::ArrayRef, datatypes::Field};
+use arrow::{record_batch::RecordBatch};
 
 pub trait Transformer: Sync + Send {
-    fn transform(&self, column: ArrayRef) -> ArrayRef;
-    fn matches(&self, field: &Field) -> bool;
+    fn transform(&self, data: &RecordBatch) -> RecordBatch;
 }
