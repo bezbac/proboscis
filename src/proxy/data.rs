@@ -1,31 +1,11 @@
-use super::connection::Connection;
-use crate::proxy::{connection::ProtocolStream};
-use crate::{protocol::Message, Transformer};
+use crate::{protocol::Message};
 use anyhow::Result;
 use arrow::array::as_primitive_array;
 use arrow::array::{ArrayRef, GenericStringArray, Int16Array, Int32Array, Int64Array, Int8Array};
 use arrow::datatypes::{DataType, Field, Schema};
 use arrow::record_batch::RecordBatch;
 use omnom::prelude::*;
-use std::{sync::Arc, vec};
-
-impl From<crate::protocol::message::Field> for Field {
-    fn from(value: crate::protocol::message::Field) -> Self {
-        let postgres_type = postgres::types::Type::from_oid(value.type_oid as u32).unwrap();
-
-        let arrow_type = match postgres_type {
-            postgres::types::Type::BOOL => DataType::Boolean,
-            postgres::types::Type::INT2 => DataType::Int8,
-            postgres::types::Type::INT4 => DataType::Int16,
-            postgres::types::Type::INT8 => DataType::Int32,
-            postgres::types::Type::TEXT => DataType::LargeUtf8,
-            postgres::types::Type::VARCHAR => DataType::Utf8,
-            _ => unimplemented!(),
-        };
-
-        Field::new(&value.name, arrow_type, false)
-    }
-}
+use std::{collections::BTreeMap, sync::Arc, vec};
 
 fn column_data_to_array(data: &Vec<Vec<u8>>, data_type: &DataType) -> ArrayRef {
     match data_type {
@@ -101,7 +81,7 @@ fn column_data_to_array(data: &Vec<Vec<u8>>, data_type: &DataType) -> ArrayRef {
     }
 }
 
-async fn protocol_rows_to_arrow_columns(
+fn protocol_rows_to_arrow_columns(
     schema: &Schema,
     rows: Vec<Vec<Vec<u8>>>,
 ) -> Result<Vec<ArrayRef>> {
@@ -127,121 +107,141 @@ async fn protocol_rows_to_arrow_columns(
     Ok(result)
 }
 
-#[derive(Clone)]
-pub struct SimpleQueryResponse {
-    pub data: RecordBatch,
-    pub fields: Vec<crate::protocol::message::Field>,
-    pub tag: String,
+fn message_field_to_arrow_field(value: &crate::protocol::message::Field) -> Field {
+    let postgres_type = postgres::types::Type::from_oid(value.type_oid as u32).unwrap();
+
+    let arrow_type = match postgres_type {
+        postgres::types::Type::BOOL => DataType::Boolean,
+        postgres::types::Type::INT2 => DataType::Int8,
+        postgres::types::Type::INT4 => DataType::Int16,
+        postgres::types::Type::INT8 => DataType::Int32,
+        postgres::types::Type::TEXT => DataType::LargeUtf8,
+        postgres::types::Type::VARCHAR => DataType::Utf8,
+        _ => unimplemented!(),
+    };
+
+    let mut metadata = BTreeMap::new();
+    metadata.insert("table_oid".to_string(), format!("{}", value.table_oid));
+    metadata.insert("format".to_string(), format!("{}", value.format));
+    metadata.insert("type_length".to_string(), format!("{}", value.type_length));
+    metadata.insert("type_modifier".to_string(), format!("{}", value.type_modifier));
+    
+    let mut field = Field::new(&value.name, arrow_type, false);
+    field.set_metadata(Some(metadata));
+
+    field
 }
 
-impl SimpleQueryResponse {
-    pub async fn read(connection: &mut Connection) -> Result<Self> {
-        let mut protocol_fields: Vec<crate::protocol::message::Field> = vec![];
-        let mut protocol_row_data: Vec<Vec<Vec<u8>>> = vec![];
-        let mut protocol_tag: Option<String> = Option::None;
+fn arrow_field_to_message_field(value: &Field, column_number: i16) -> crate::protocol::message::Field {
+    let postgres_type = match value.data_type() {
+        DataType::Boolean => postgres::types::Type::BOOL,
+        DataType::Int8 => postgres::types::Type::INT2,
+        DataType::Int16 => postgres::types::Type::INT4,
+        DataType::Int32 => postgres::types::Type::INT8,
+        DataType::LargeUtf8 => postgres::types::Type::TEXT,
+        DataType::Utf8 => postgres::types::Type::VARCHAR,
+        _ => unimplemented!(),
+    };
 
-        loop {
-            let response = connection.read_message().await?;
-            match response {
-                Message::ReadyForQuery => break,
-                Message::RowDescription { fields } => protocol_fields = fields,
-                Message::DataRow { field_data } => {
-                    protocol_row_data.push(field_data);
-                }
-                Message::CommandComplete { tag } => {
-                    protocol_tag = Some(tag);
-                }
-                _ => unimplemented!(""),
-            }
-        }
+    let metadata = value.metadata().clone().unwrap();
 
-        let fields = protocol_fields
+    let table_oid = metadata.get("table_oid").unwrap().clone().parse().unwrap();
+    let format = metadata.get("format").unwrap().clone().parse().unwrap();
+
+    // TODO: These can probably be inferred based on some criteria
+    let type_length = metadata.get("type_length").unwrap().clone().parse().unwrap();
+    let type_modifier = metadata.get("type_modifier").unwrap().clone().parse().unwrap();
+
+    crate::protocol::message::Field {
+        type_oid: postgres_type.oid() as i32,
+        name: value.name().clone(),
+        column_number,
+        table_oid,
+        format,
+        type_length,
+        type_modifier
+    }
+}
+
+pub async fn simple_query_response_to_record_batch(fields: &Vec<crate::protocol::message::Field> , data: &Vec<Message>) -> Result<RecordBatch> {
+    let fields = fields
             .iter()
-            .map(|message_field| message_field.clone().into())
+            .map(|message_field| message_field_to_arrow_field(message_field))
             .collect::<Vec<Field>>();
 
-        let schema = Schema::new(fields);
+    let schema = Schema::new(fields);
 
-        let columns = protocol_rows_to_arrow_columns(&schema, protocol_row_data).await?;
+    let protocol_row_data = data.iter().map(|message| {
+        if let Message::DataRow { field_data } = message {
+            field_data.clone()
+        } else {
+            panic!()
+        }
+    }).collect();
 
-        let batch = RecordBatch::try_new(Arc::new(schema), columns)?;
+    let columns = protocol_rows_to_arrow_columns(&schema, protocol_row_data)?;
 
-        Ok(SimpleQueryResponse {
-            data: batch,
-            fields: protocol_fields,
-            tag: protocol_tag.unwrap(),
-        })
-    }
+    RecordBatch::try_new(Arc::new(schema), columns).map_err(|err| anyhow::anyhow!(err))
+}
 
-    pub async fn serialize(
-        &self,
-        transformers: &Vec<Box<dyn Transformer>>,
-    ) -> Result<Vec<Message>> {
-        let transformed = transformers.iter().fold(self.data.clone(), |data, transformer| transformer.transform(&data));
+pub fn serialize_record_batch_to_data_rows(batch: RecordBatch) -> Vec<Message> {
+    (0..batch.num_rows()).map(|row_index| {
+        let mut row_data = vec![];
 
-        let mut messages = vec![];
+        for column in batch.columns() {
+            let mut cell: Vec<u8> = vec![];
+            match column.data_type() {
+                DataType::Int8 => {
+                    let values: &Int8Array = as_primitive_array(&column);
+                    let value: i8 = values.value(row_index);
 
-        messages.push(Message::RowDescription {
-            fields: self.fields.clone(),
-        });
-
-        for row_index in 0..transformed.num_rows() {
-            let mut row_data = vec![];
-
-            for column in transformed.columns() {
-                let mut cell: Vec<u8> = vec![];
-                match column.data_type() {
-                    DataType::Int8 => {
-                        let values: &Int8Array = as_primitive_array(&column);
-                        let value: i8 = values.value(row_index);
-
-                        value.write_be_bytes(&mut cell).unwrap();
-                    }
-                    DataType::Int16 => {
-                        let values: &Int16Array = as_primitive_array(&column);
-                        let value: i16 = values.value(row_index);
-                        value.write_be_bytes(&mut cell).unwrap();
-                    }
-                    DataType::Int32 => {
-                        let values: &Int32Array = as_primitive_array(&column);
-                        let value: i32 = values.value(row_index);
-                        value.write_be_bytes(&mut cell).unwrap();
-                    }
-                    DataType::Int64 => {
-                        let values: &Int64Array = as_primitive_array(&column);
-                        let value: i64 = values.value(row_index);
-                        value.write_be_bytes(&mut cell).unwrap();
-                    }
-                    DataType::LargeUtf8 => {
-                        let values = &column
-                            .as_any()
-                            .downcast_ref::<GenericStringArray<i64>>()
-                            .unwrap();
-                        let value = values.value(row_index);
-                        cell.extend_from_slice(value.as_bytes())
-                    }
-                    DataType::Utf8 => {
-                        let values = &column
-                            .as_any()
-                            .downcast_ref::<GenericStringArray<i32>>()
-                            .unwrap();
-                        let value = values.value(row_index);
-                        cell.extend_from_slice(value.as_bytes())
-                    }
-                    _ => unimplemented!(),
+                    value.write_be_bytes(&mut cell).unwrap();
                 }
-                row_data.push(cell)
+                DataType::Int16 => {
+                    let values: &Int16Array = as_primitive_array(&column);
+                    let value: i16 = values.value(row_index);
+                    value.write_be_bytes(&mut cell).unwrap();
+                }
+                DataType::Int32 => {
+                    let values: &Int32Array = as_primitive_array(&column);
+                    let value: i32 = values.value(row_index);
+                    value.write_be_bytes(&mut cell).unwrap();
+                }
+                DataType::Int64 => {
+                    let values: &Int64Array = as_primitive_array(&column);
+                    let value: i64 = values.value(row_index);
+                    value.write_be_bytes(&mut cell).unwrap();
+                }
+                DataType::LargeUtf8 => {
+                    let values = &column
+                        .as_any()
+                        .downcast_ref::<GenericStringArray<i64>>()
+                        .unwrap();
+                    let value = values.value(row_index);
+                    cell.extend_from_slice(value.as_bytes())
+                }
+                DataType::Utf8 => {
+                    let values = &column
+                        .as_any()
+                        .downcast_ref::<GenericStringArray<i32>>()
+                        .unwrap();
+                    let value = values.value(row_index);
+                    cell.extend_from_slice(value.as_bytes())
+                }
+                _ => unimplemented!(),
             }
-
-            messages.push(Message::DataRow {
-                field_data: row_data,
-            })
+            row_data.push(cell)
         }
 
-        messages.push(Message::CommandComplete {
-            tag: self.tag.clone(),
-        });
+        Message::DataRow {
+            field_data: row_data,
+        }
+    }).collect()
+}
 
-        Ok(messages)
+pub fn serialize_record_batch_schema_to_row_description(schema: Arc<Schema>) -> Message {
+    let fields: Vec<crate::protocol::message::Field> = schema.fields().into_iter().enumerate().map(|(idx, arrow_field)| arrow_field_to_message_field(arrow_field, idx as i16)).collect();
+    Message::RowDescription {
+        fields,
     }
 }

@@ -1,6 +1,40 @@
-use proboscis::{PoolConfig, StupidCache, TargetConfig};
+use arrow::record_batch::RecordBatch;
+use proboscis::{PoolConfig, TargetConfig, Resolver, ResolverResult};
 use std::collections::HashMap;
 use tokio_postgres::{NoTls, SimpleQueryMessage};
+use async_trait::async_trait;
+
+pub struct StupidCache {
+    store: HashMap<String, RecordBatch>,
+}
+
+impl StupidCache {
+    pub fn new() -> StupidCache {
+        StupidCache {
+            store: HashMap::new(),
+        }
+    }
+}
+
+#[async_trait]
+impl Resolver for StupidCache {
+    async fn lookup(&self, query: &String) -> ResolverResult<RecordBatch> {
+        println!("Cache Lookup: {}", query);
+        match self.store.get(query) {
+            Some(data) => {
+                println!("Cache Hit: {}", query);
+                ResolverResult::Hit(data.clone())
+            }
+            None => ResolverResult::Miss,
+        }
+    }
+
+    async fn inform(&mut self, query: &String, data: RecordBatch) {
+        println!("Cache Inform: {}", query);
+        self.store.insert(query.clone(), data);
+    }
+}
+
 
 async fn migrations() {
     mod embedded {

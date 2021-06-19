@@ -1,10 +1,6 @@
 use super::connection::{Connection, ConnectionKind};
-use super::data::SimpleQueryResponse;
 use super::{config::Config, connection::MaybeTlsStream};
-use crate::{
-    protocol::{Message, StartupMessage},
-    Transformer,
-};
+use crate::{Transformer, protocol::{Message, StartupMessage}, proxy::data::{serialize_record_batch_schema_to_row_description, serialize_record_batch_to_data_rows, simple_query_response_to_record_batch}};
 use crate::{
     proxy::{
         connection::ProtocolStream,
@@ -15,6 +11,7 @@ use crate::{
     Resolver,
 };
 use anyhow::Result;
+use arrow::record_batch::RecordBatch;
 use deadpool::managed::PoolConfig;
 use futures::future::join_all;
 use native_tls::Identity;
@@ -317,7 +314,7 @@ pub async fn handle_connection(
                 let resolver_responses =
                     join_all(resolvers.iter().map(|r| r.lookup(&query_string))).await;
 
-                let resolver_data: Vec<SimpleQueryResponse> = resolver_responses
+                let resolver_data: Vec<RecordBatch> = resolver_responses
                     .iter()
                     .filter_map(|result| match result {
                         ResolverResult::Hit(data) => Some(data),
@@ -326,32 +323,55 @@ pub async fn handle_connection(
                     .cloned()
                     .collect();
 
-                let final_response = match resolver_data.first() {
-                    Some(data) => data.clone(),
-                    None => {
+                let record_batch = {
+                    if resolver_data.len() != 0 {
+                        resolver_data.first().unwrap().clone()
+                    } else {
                         backend
-                            .write_message(Message::SimpleQuery(query_string.clone()))
-                            .await?;
-
-                        let response = SimpleQueryResponse::read(&mut backend).await?;
-
-                        join_all(
-                            resolvers
-                                .iter_mut()
-                                .map(|r| r.inform(&query_string, response.clone())),
-                        )
-                        .await;
-
-                        response
+                        .write_message(Message::SimpleQuery(query_string.clone()))
+                        .await?;
+    
+                        let mut fields = vec![];
+                        let mut data_rows = vec![];
+                        loop {
+                            let response = backend.read_message().await?;
+                            match response {
+                                Message::ReadyForQuery => break,
+                                Message::RowDescription { fields: mut message_fields } => {
+                                    fields.append(&mut message_fields)
+                                },
+                                Message::DataRow { field_data: _ } => {
+                                    data_rows.push(response);
+                                },
+                                Message::CommandComplete { tag: _ } => {
+                                },
+                                _ => unimplemented!(""),
+                            }
+                        };
+    
+                        simple_query_response_to_record_batch(&fields, &data_rows).await?
                     }
                 };
 
-                let messages = final_response.serialize(transformers).await?;
+                join_all(
+                    resolvers
+                        .iter_mut()
+                        .map(|r| r.inform(&query_string, record_batch.clone())),
+                )
+                .await;
 
-                for message in messages {
+                let transformed = transformers.iter().fold(record_batch, |data, transformer| transformer.transform(&data));
+
+                let row_description = serialize_record_batch_schema_to_row_description(transformed.schema());
+                frontend.write_message(row_description).await?;
+
+                let data_rows = serialize_record_batch_to_data_rows(transformed);
+                for message in data_rows {
                     frontend.write_message(message).await?;
                 }
 
+                // TODO: Fix the command complete tag
+                frontend.write_message(Message::CommandComplete { tag: "C".to_string() }).await?;
                 frontend.write_message(Message::ReadyForQuery).await?;
             }
             Message::Parse {
