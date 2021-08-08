@@ -4,12 +4,12 @@ use arrow::{
     record_batch::RecordBatch,
 };
 use postgres::{NoTls, SimpleQueryMessage};
-use proboscis::{PoolConfig, TargetConfig, Transformer};
+use proboscis::{PoolConfig, ResultTransformer, TargetConfig};
 use std::{collections::HashMap, sync::Arc};
 
 struct AnonymizeTransformer {}
 
-impl Transformer for AnonymizeTransformer {
+impl ResultTransformer for AnonymizeTransformer {
     fn transform_data(&self, data: &RecordBatch) -> RecordBatch
     where
         Self: Sized,
@@ -46,10 +46,6 @@ impl Transformer for AnonymizeTransformer {
 
         // Return updated records
         RecordBatch::try_new(data.schema(), arrays).unwrap()
-    }
-
-    fn transform_query(&self, query: String) -> String {
-        query
     }
 }
 
@@ -95,7 +91,7 @@ async fn proxy() {
 
     let transformer = AnonymizeTransformer {};
 
-    let mut app = proboscis::App::new(config.clone()).add_transformer(Box::new(transformer));
+    let mut app = proboscis::App::new(config.clone()).add_result_transformer(Box::new(transformer));
 
     app.listen("0.0.0.0:5430").await.unwrap();
 }

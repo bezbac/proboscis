@@ -5,14 +5,26 @@ use arrow::{
 };
 use harsh::Harsh;
 use postgres::{NoTls, SimpleQueryMessage};
-use proboscis::{PoolConfig, TargetConfig, Transformer};
+use proboscis::{PoolConfig, QueryAstTransformer, ResultTransformer, TargetConfig};
 use std::{collections::HashMap, sync::Arc};
 
+#[derive(Clone)]
 struct HashIdTransformer {
     hasher: Harsh,
 }
 
-impl Transformer for HashIdTransformer {
+impl QueryAstTransformer for HashIdTransformer {
+    fn transform_ast(
+        &self,
+        query: Vec<sqlparser::ast::Statement>,
+    ) -> Vec<sqlparser::ast::Statement> {
+        println!("{:?}", query);
+
+        query
+    }
+}
+
+impl ResultTransformer for HashIdTransformer {
     fn transform_data(&self, data: &RecordBatch) -> RecordBatch
     where
         Self: Sized,
@@ -108,7 +120,9 @@ async fn proxy() {
             .expect("Failed to create hasher"),
     };
 
-    let mut app = proboscis::App::new(config.clone()).add_transformer(Box::new(transformer));
+    let mut app = proboscis::App::new(config.clone())
+        .add_result_transformer(Box::new(transformer.clone()))
+        .add_query_transformer(Box::new(transformer));
 
     app.listen("0.0.0.0:5430").await.unwrap();
 }

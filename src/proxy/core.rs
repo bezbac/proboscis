@@ -6,7 +6,7 @@ use crate::{
         serialize_record_batch_schema_to_row_description, serialize_record_batch_to_data_rows,
         simple_query_response_to_record_batch,
     },
-    Transformer,
+    QueryTransformer, ResultTransformer,
 };
 use crate::{
     proxy::{
@@ -30,7 +30,8 @@ use tokio::net::TcpListener;
 
 pub struct App {
     config: Config,
-    transformers: Vec<Box<dyn Transformer>>,
+    query_transformers: Vec<Box<dyn QueryTransformer>>,
+    result_transformers: Vec<Box<dyn ResultTransformer>>,
     resolvers: Vec<Box<dyn Resolver>>,
 }
 
@@ -71,7 +72,8 @@ impl App {
             handle_connection(
                 &mut frontend_connection,
                 &pool,
-                &self.transformers,
+                &self.query_transformers,
+                &self.result_transformers,
                 &mut self.resolvers,
             )
             .await?;
@@ -81,13 +83,19 @@ impl App {
     pub fn new(config: Config) -> App {
         App {
             config,
-            transformers: vec![],
+            query_transformers: vec![],
+            result_transformers: vec![],
             resolvers: vec![],
         }
     }
 
-    pub fn add_transformer(mut self, transformer: Box<dyn Transformer>) -> App {
-        self.transformers.push(transformer);
+    pub fn add_query_transformer(mut self, transformer: Box<dyn QueryTransformer>) -> App {
+        self.query_transformers.push(transformer);
+        self
+    }
+
+    pub fn add_result_transformer(mut self, transformer: Box<dyn ResultTransformer>) -> App {
+        self.result_transformers.push(transformer);
         self
     }
 
@@ -295,7 +303,8 @@ pub async fn pass_through_query_response(
 pub async fn handle_connection(
     frontend: &mut Connection,
     pool: &ConnectionPool,
-    transformers: &Vec<Box<dyn Transformer>>,
+    query_transformers: &Vec<Box<dyn QueryTransformer>>,
+    result_transformers: &Vec<Box<dyn ResultTransformer>>,
     resolvers: &mut Vec<Box<dyn Resolver>>,
 ) -> Result<()> {
     loop {
@@ -309,7 +318,10 @@ pub async fn handle_connection(
                 break;
             }
             Message::SimpleQuery(query_string) => {
-                if transformers.len() == 0 && resolvers.len() == 0 {
+                if query_transformers.len() == 0
+                    && result_transformers.len() == 0
+                    && resolvers.len() == 0
+                {
                     backend
                         .write_message(Message::SimpleQuery(query_string.clone()))
                         .await?;
@@ -317,6 +329,12 @@ pub async fn handle_connection(
                     frontend.write_message(Message::ReadyForQuery).await?;
                     continue;
                 }
+
+                let query_string = query_transformers
+                    .iter()
+                    .fold(query_string, |query_string, t| {
+                        t.transform_query(query_string.clone())
+                    });
 
                 let resolver_responses =
                     join_all(resolvers.iter().map(|r| r.lookup(&query_string))).await;
@@ -366,9 +384,11 @@ pub async fn handle_connection(
                 )
                 .await;
 
-                let transformed = transformers.iter().fold(record_batch, |data, transformer| {
-                    transformer.transform_data(&data)
-                });
+                let transformed = result_transformers
+                    .iter()
+                    .fold(record_batch, |data, transformer| {
+                        transformer.transform_data(&data)
+                    });
 
                 let row_description =
                     serialize_record_batch_schema_to_row_description(transformed.schema());

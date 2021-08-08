@@ -24,6 +24,7 @@ deadpool = "0.7.0"
 rand = "0.8.3"
 futures = "0.3.15"
 harsh = { version = "0.2.1", optional = true }
+sqlparser = "0.9.0"
 
 [features]
 examples = ["tokio-postgres", "postgres-native-tls", "refinery", "tempdir", "harsh"]
