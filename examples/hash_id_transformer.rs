@@ -1,6 +1,6 @@
 use arrow::{
     array::{as_primitive_array, ArrayRef, GenericStringArray, Int16Array},
-    datatypes::DataType,
+    datatypes::{DataType, Field, Schema},
     record_batch::RecordBatch,
 };
 use harsh::Harsh;
@@ -48,9 +48,13 @@ impl ResultTransformer for HashIdTransformer {
             return data.clone();
         }
 
+        let mut fields = vec![];
+
         // Replace values within matched colums with their hash
         let arrays: Vec<ArrayRef> = (0..data.num_columns())
             .map(|idx| {
+                let original_field = data.schema().field(idx).clone();
+
                 if columns.contains(&idx) {
                     let values: &Int16Array = as_primitive_array(data.column(idx));
 
@@ -59,17 +63,30 @@ impl ResultTransformer for HashIdTransformer {
                         .map(|v| self.hasher.encode(&[v.unwrap() as u64]))
                         .collect();
 
-                    Arc::new(GenericStringArray::<i64>::from(
+                    let new_array = GenericStringArray::<i64>::from(
                         new_values.iter().map(|s| s.as_ref()).collect::<Vec<&str>>(),
-                    ))
+                    );
+
+                    let mut new_field = Field::new(
+                        original_field.name(),
+                        DataType::LargeUtf8,
+                        original_field.is_nullable(),
+                    );
+
+                    new_field.set_metadata(original_field.metadata().clone());
+
+                    fields.push(new_field);
+
+                    Arc::new(new_array)
                 } else {
+                    fields.push(original_field);
                     data.column(idx).clone()
                 }
             })
             .collect();
 
         // Return updated records
-        RecordBatch::try_new(data.schema(), arrays).unwrap()
+        RecordBatch::try_new(Arc::new(Schema::new(fields)), arrays).unwrap()
     }
 }
 async fn migrations() {
@@ -163,10 +180,7 @@ async fn main() {
 
     // Update
     let modified_count = client
-        .execute(
-            "UPDATE users SET name = 'Maximilian' WHERE id = '?1'",
-            &[&id],
-        )
+        .execute("UPDATE users SET name = 'Maximilian' WHERE id = $1", &[&id])
         .await
         .unwrap();
 

@@ -412,15 +412,20 @@ pub async fn handle_connection(
                 param_types,
                 statement,
             } => {
-                backend
-                    .write_message(Message::Parse {
-                        query,
-                        param_types,
-                        statement,
-                    })
-                    .await?;
+                if query_transformers.len() == 0 && result_transformers.len() == 0 {
+                    backend
+                        .write_message(Message::Parse {
+                            query,
+                            param_types,
+                            statement,
+                        })
+                        .await?;
 
-                pass_through_query_response(frontend, &mut backend).await?;
+                    pass_through_query_response(frontend, &mut backend).await?;
+                    continue;
+                }
+
+                unimplemented!()
             }
             _ => unimplemented!(),
         }
