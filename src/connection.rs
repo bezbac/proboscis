@@ -1,4 +1,4 @@
-use crate::protocol::{Message, StartupMessage};
+use crate::postgres_protocol::{Message, StartupMessage};
 use anyhow::Result;
 use async_trait::async_trait;
 use std::collections::HashMap;

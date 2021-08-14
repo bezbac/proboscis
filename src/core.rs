@@ -1,94 +1,23 @@
+use super::connection::MaybeTlsStream;
 use super::connection::{Connection, ConnectionKind};
-use super::{config::Config, connection::MaybeTlsStream};
-use crate::{Transformer, protocol::{Message, StartupMessage}, proxy::data::{serialize_record_batch_schema_to_row_description, serialize_record_batch_to_data_rows, simple_query_response_to_record_batch}};
 use crate::{
-    proxy::{
-        connection::ProtocolStream,
-        connection_pool::{ConnectionManager, ConnectionPool},
-        resolver::ResolverResult,
-        util::encode_md5_password_hash,
+    connection::ProtocolStream, connection_pool::ConnectionPool, resolver::ResolverResult,
+    util::encode_md5_password_hash, Resolver,
+};
+use crate::{
+    data::{
+        serialize_record_batch_schema_to_row_description, serialize_record_batch_to_data_rows,
+        simple_query_response_to_record_batch,
     },
-    Resolver,
+    postgres_protocol::{Message, StartupMessage},
+    Transformer,
 };
 use anyhow::Result;
 use arrow::record_batch::RecordBatch;
-use deadpool::managed::PoolConfig;
 use futures::future::join_all;
-use native_tls::Identity;
 use rand::Rng;
-use std::io::Read;
-use std::{collections::HashMap, fs::File};
+use std::collections::HashMap;
 use tokio::io::AsyncWriteExt;
-use tokio::net::TcpListener;
-
-pub struct App {
-    config: Config,
-    transformers: Vec<Box<dyn Transformer>>,
-    resolvers: Vec<Box<dyn Resolver>>,
-}
-
-impl App {
-    pub async fn listen(&mut self, address: &str) -> Result<()> {
-        let listener = TcpListener::bind(&address).await?;
-        println!("Server running on {}!", &address);
-
-        let manager = ConnectionManager::new(self.config.target_config.clone());
-
-        let pool = ConnectionPool::from_config(manager, PoolConfig::new(100));
-
-        let tls_acceptor: Option<tokio_native_tls::TlsAcceptor> = match &self.config.tls_config {
-            Some(tls_config) => {
-                let mut file = File::open(tls_config.pcks_path.clone())?;
-                let mut identity = vec![];
-                file.read_to_end(&mut identity).unwrap();
-
-                let certificate =
-                    Identity::from_pkcs12(&identity, tls_config.password.as_str()).unwrap();
-                let acceptor = tokio_native_tls::TlsAcceptor::from(
-                    native_tls::TlsAcceptor::builder(certificate).build()?,
-                );
-
-                Some(acceptor)
-            }
-            _ => None,
-        };
-
-        loop {
-            let (stream, _) = listener.accept().await?;
-            println!("New connection established!");
-
-            let mut frontend_connection = accept_frontend_connection(stream, &tls_acceptor).await?;
-
-            handle_authentication(&mut frontend_connection, &self.config.credentials).await?;
-
-            handle_connection(
-                &mut frontend_connection,
-                &pool,
-                &self.transformers,
-                &mut self.resolvers,
-            )
-            .await?;
-        }
-    }
-
-    pub fn new(config: Config) -> App {
-        App {
-            config,
-            transformers: vec![],
-            resolvers: vec![],
-        }
-    }
-
-    pub fn add_transformer(mut self, transformer: Box<dyn Transformer>) -> App {
-        self.transformers.push(transformer);
-        self
-    }
-
-    pub fn add_resolver(mut self, resolver: Box<dyn Resolver>) -> App {
-        self.resolvers.push(resolver);
-        self
-    }
-}
 
 pub async fn handle_authentication(
     frontend: &mut Connection,
@@ -304,8 +233,8 @@ pub async fn handle_connection(
             Message::SimpleQuery(query_string) => {
                 if transformers.len() == 0 && resolvers.len() == 0 {
                     backend
-                            .write_message(Message::SimpleQuery(query_string.clone()))
-                            .await?;
+                        .write_message(Message::SimpleQuery(query_string.clone()))
+                        .await?;
                     pass_through_simple_query_response(frontend, &mut backend).await?;
                     frontend.write_message(Message::ReadyForQuery).await?;
                     continue;
@@ -328,27 +257,26 @@ pub async fn handle_connection(
                         resolver_data.first().unwrap().clone()
                     } else {
                         backend
-                        .write_message(Message::SimpleQuery(query_string.clone()))
-                        .await?;
-    
+                            .write_message(Message::SimpleQuery(query_string.clone()))
+                            .await?;
+
                         let mut fields = vec![];
                         let mut data_rows = vec![];
                         loop {
                             let response = backend.read_message().await?;
                             match response {
                                 Message::ReadyForQuery => break,
-                                Message::RowDescription { fields: mut message_fields } => {
-                                    fields.append(&mut message_fields)
-                                },
+                                Message::RowDescription {
+                                    fields: mut message_fields,
+                                } => fields.append(&mut message_fields),
                                 Message::DataRow { field_data: _ } => {
                                     data_rows.push(response);
-                                },
-                                Message::CommandComplete { tag: _ } => {
-                                },
+                                }
+                                Message::CommandComplete { tag: _ } => {}
                                 _ => unimplemented!(""),
                             }
-                        };
-    
+                        }
+
                         simple_query_response_to_record_batch(&fields, &data_rows).await?
                     }
                 };
@@ -360,9 +288,12 @@ pub async fn handle_connection(
                 )
                 .await;
 
-                let transformed = transformers.iter().fold(record_batch, |data, transformer| transformer.transform(&data));
+                let transformed = transformers.iter().fold(record_batch, |data, transformer| {
+                    transformer.transform(&data)
+                });
 
-                let row_description = serialize_record_batch_schema_to_row_description(transformed.schema());
+                let row_description =
+                    serialize_record_batch_schema_to_row_description(transformed.schema());
                 frontend.write_message(row_description).await?;
 
                 let data_rows = serialize_record_batch_to_data_rows(transformed);
@@ -371,7 +302,11 @@ pub async fn handle_connection(
                 }
 
                 // TODO: Fix the command complete tag
-                frontend.write_message(Message::CommandComplete { tag: "C".to_string() }).await?;
+                frontend
+                    .write_message(Message::CommandComplete {
+                        tag: "C".to_string(),
+                    })
+                    .await?;
                 frontend.write_message(Message::ReadyForQuery).await?;
             }
             Message::Parse {

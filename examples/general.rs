@@ -47,7 +47,6 @@ async fn proxy() {
 }
 
 #[tokio::main]
-#[cfg(feature = "examples")]
 async fn main() {
     tokio::join!(migrations());
     tokio::spawn(proxy());

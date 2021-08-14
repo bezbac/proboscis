@@ -1,10 +1,8 @@
 use super::{config::TargetConfig, connection::Connection};
 use crate::{
-    protocol::{Message, StartupMessage},
-    proxy::{
-        connection::{ConnectionKind, MaybeTlsStream, ProtocolStream},
-        util::encode_md5_password_hash,
-    },
+    connection::{ConnectionKind, MaybeTlsStream, ProtocolStream},
+    postgres_protocol::{Message, StartupMessage},
+    util::encode_md5_password_hash,
 };
 use anyhow::Error;
 use anyhow::Result;

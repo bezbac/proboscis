@@ -1,8 +1,8 @@
 use arrow::record_batch::RecordBatch;
-use proboscis::{PoolConfig, TargetConfig, Resolver, ResolverResult};
+use async_trait::async_trait;
+use proboscis::{PoolConfig, Resolver, ResolverResult, TargetConfig};
 use std::collections::HashMap;
 use tokio_postgres::{NoTls, SimpleQueryMessage};
-use async_trait::async_trait;
 
 pub struct StupidCache {
     store: HashMap<String, RecordBatch>,
@@ -34,7 +34,6 @@ impl Resolver for StupidCache {
         self.store.insert(query.clone(), data);
     }
 }
-
 
 async fn migrations() {
     mod embedded {
@@ -84,7 +83,6 @@ async fn proxy() {
 }
 
 #[tokio::main]
-#[cfg(feature = "examples")]
 async fn main() {
     tokio::join!(migrations());
     tokio::spawn(proxy());
