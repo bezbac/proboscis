@@ -5,6 +5,7 @@ use async_trait::async_trait;
 #[async_trait]
 pub trait Resolver: Sync + Send {
     async fn query(&self, query: &String) -> Result<RecordBatch>;
+
     async fn inform(&mut self, query: &String, data: RecordBatch);
 }
 

@@ -10,6 +10,8 @@ use anyhow::Result;
 use arrow::record_batch::RecordBatch;
 use futures::future::join_all;
 use rand::Rng;
+use sqlparser::dialect::PostgreSqlDialect;
+use sqlparser::parser::Parser;
 use std::collections::HashMap;
 use tokio::io::AsyncWriteExt;
 
@@ -94,6 +96,9 @@ pub async fn handle_connection(
     transformers: &Vec<Box<dyn Transformer>>,
     resolvers: &mut Vec<Box<dyn Resolver>>,
 ) -> Result<()> {
+    let mut parse_cache: HashMap<String, Vec<sqlparser::ast::Statement>> = HashMap::new();
+    let mut describe_cache: HashMap<String, String> = HashMap::new();
+
     loop {
         let request = frontend.read_message().await?;
 
@@ -101,9 +106,8 @@ pub async fn handle_connection(
             Message::Terminate => {
                 break;
             }
-            Message::SimpleQuery(query_string) => {
-                let resolver_responses =
-                    join_all(resolvers.iter().map(|r| r.query(&query_string))).await;
+            Message::SimpleQuery(query) => {
+                let resolver_responses = join_all(resolvers.iter().map(|r| r.query(&query))).await;
 
                 let resolver_data: Vec<RecordBatch> = resolver_responses
                     .iter()
@@ -120,7 +124,7 @@ pub async fn handle_connection(
                 join_all(
                     resolvers
                         .iter_mut()
-                        .map(|r| r.inform(&query_string, record_batch.clone())),
+                        .map(|r| r.inform(&query, record_batch.clone())),
                 )
                 .await;
 
@@ -144,6 +148,27 @@ pub async fn handle_connection(
                     })
                     .await?;
                 frontend.write_message(Message::ReadyForQuery).await?;
+            }
+            Message::Parse {
+                statement_name,
+                query,
+                param_types,
+            } => {
+                if !parse_cache.contains_key(&statement_name) {
+                    let dialect = PostgreSqlDialect {};
+                    let ast = Parser::parse_sql(&dialect, &query)?;
+                    parse_cache.insert(statement_name, ast);
+                }
+
+                frontend.write_message(Message::ParseComplete).await?;
+            }
+            Message::Describe { kind, name } => {
+                if !parse_cache.contains_key(&name) {
+                    // TODO: Return real error
+                    panic!("Statement not found");
+                }
+
+                unimplemented!();
             }
             _ => unimplemented!(),
         }

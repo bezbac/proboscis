@@ -65,7 +65,7 @@ pub enum Message {
     },
     Terminate,
     Parse {
-        statement: String,
+        statement_name: String,
         query: String,
         param_types: Vec<u32>,
     },
@@ -229,7 +229,7 @@ impl Message {
                 }),
             ),
             Self::Parse {
-                statement,
+                statement_name: statement,
                 query,
                 param_types,
             } => write_message_with_prefixed_message_len(
@@ -535,7 +535,7 @@ impl Message {
                 }
 
                 Ok(Message::Parse {
-                    statement,
+                    statement_name: statement,
                     query,
                     param_types,
                 })
@@ -703,7 +703,7 @@ mod tests {
     #[test]
     fn parse() {
         let message = Message::Parse {
-            statement: "s0".to_string(),
+            statement_name: "s0".to_string(),
             query: "SELECT id, name FROM person".to_string(),
             param_types: vec![],
         };

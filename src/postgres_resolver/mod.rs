@@ -66,5 +66,31 @@ impl Resolver for PostgresResolver {
         Ok(data)
     }
 
+    // async fn parse(
+    //     &self,
+    //     statement_name: &String,
+    //     query: &String,
+    //     param_types: &Vec<u32>,
+    // ) -> Result<()> {
+    //     let mut backend = self.pool.get().await.map_err(|err| anyhow::anyhow!(err))?;
+
+    //     backend
+    //         .write_message(Message::Parse {
+    //             statement_name: statement_name.clone(),
+    //             query: query.clone(),
+    //             param_types: param_types.clone(),
+    //         })
+    //         .await?;
+
+    //     backend.write_message(Message::Sync).await?;
+
+    //     let response = backend.read_message().await?;
+
+    //     match response {
+    //         Message::ParseComplete => Ok(()),
+    //         _ => unimplemented!(),
+    //     }
+    // }
+
     async fn inform(&mut self, _query: &String, _data: RecordBatch) {}
 }

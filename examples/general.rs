@@ -82,4 +82,13 @@ async fn main() {
 
     let name: &str = row.get(1).unwrap();
     assert_eq!(name, "Max");
+
+    // Normal query
+    let rows = client
+        .query("SELECT id, name FROM users", &[])
+        .await
+        .unwrap();
+
+    let name: &str = rows[0].get(1);
+    assert_eq!(name, "Max");
 }
