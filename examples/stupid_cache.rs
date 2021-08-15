@@ -1,6 +1,8 @@
+use anyhow::Result;
 use arrow::record_batch::RecordBatch;
 use async_trait::async_trait;
-use proboscis::{PoolConfig, Resolver, ResolverResult, TargetConfig};
+use deadpool::managed::PoolConfig;
+use proboscis::{postgres_resolver::TargetConfig, SimpleResolver};
 use std::collections::HashMap;
 use tokio_postgres::{NoTls, SimpleQueryMessage};
 
@@ -17,15 +19,15 @@ impl StupidCache {
 }
 
 #[async_trait]
-impl Resolver for StupidCache {
-    async fn lookup(&self, query: &String) -> ResolverResult<RecordBatch> {
+impl SimpleResolver for StupidCache {
+    async fn lookup(&self, query: &String) -> Result<RecordBatch> {
         println!("Cache Lookup: {}", query);
         match self.store.get(query) {
             Some(data) => {
                 println!("Cache Hit: {}", query);
-                ResolverResult::Hit(data.clone())
+                Ok(data.clone())
             }
-            None => ResolverResult::Miss,
+            None => Err(anyhow::anyhow!("Cache Miss")),
         }
     }
 
@@ -63,23 +65,29 @@ async fn proxy() {
     credentials.insert("admin".to_string(), "password".to_string());
 
     let config = proboscis::Config {
-        target_config: TargetConfig {
+        credentials,
+        tls_config: None,
+    };
+
+    let cache_resolver = StupidCache::new();
+
+    let postres_resolver = proboscis::postgres_resolver::PostgresResolver::initialize(
+        TargetConfig {
             host: "0.0.0.0".to_string(),
             port: "5432".to_string(),
             user: "admin".to_string(),
             password: "password".to_string(),
             database: "postgres".to_string(),
         },
-        pool_config: PoolConfig { max_size: 1 },
-        credentials,
-        tls_config: None,
-    };
+        PoolConfig::new(1),
+    );
 
-    let resolver = StupidCache::new();
-
-    let mut app = proboscis::App::new(config.clone()).add_resolver(Box::new(resolver));
-
-    app.listen("0.0.0.0:5430").await.unwrap();
+    proboscis::App::new(config.clone())
+        .add_resolver(Box::new(postres_resolver))
+        .add_resolver(Box::new(cache_resolver))
+        .listen("0.0.0.0:5430")
+        .await
+        .unwrap();
 }
 
 #[tokio::main]

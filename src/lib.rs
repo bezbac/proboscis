@@ -1,19 +1,17 @@
 mod app;
 mod config;
 mod connection;
-mod connection_pool;
 mod core;
 mod data;
 mod postgres_protocol;
+pub mod postgres_resolver;
 mod resolver;
 mod transformer;
 mod util;
 
 pub use app::App;
 pub use config::Config;
-pub use config::PoolConfig;
-pub use config::TargetConfig;
 pub use config::TlsConfig;
 pub use resolver::Resolver;
-pub use resolver::ResolverResult;
+pub use resolver::SimpleResolver;
 pub use transformer::Transformer;

@@ -1,10 +1,8 @@
 use crate::{
-    connection_pool::{ConnectionManager, ConnectionPool},
     core::{accept_frontend_connection, handle_authentication, handle_connection},
     Config, Resolver, Transformer,
 };
 use anyhow::Result;
-use deadpool::managed::PoolConfig;
 use native_tls::Identity;
 use std::fs::File;
 use std::io::Read;
@@ -20,10 +18,6 @@ impl App {
     pub async fn listen(&mut self, address: &str) -> Result<()> {
         let listener = TcpListener::bind(&address).await?;
         println!("Server running on {}!", &address);
-
-        let manager = ConnectionManager::new(self.config.target_config.clone());
-
-        let pool = ConnectionPool::from_config(manager, PoolConfig::new(100));
 
         let tls_acceptor: Option<tokio_native_tls::TlsAcceptor> = match &self.config.tls_config {
             Some(tls_config) => {
@@ -52,7 +46,6 @@ impl App {
 
             handle_connection(
                 &mut frontend_connection,
-                &pool,
                 &self.transformers,
                 &mut self.resolvers,
             )

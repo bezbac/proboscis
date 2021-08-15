@@ -4,7 +4,7 @@ use arrow::{
     record_batch::RecordBatch,
 };
 use postgres::{NoTls, SimpleQueryMessage};
-use proboscis::{PoolConfig, TargetConfig, Transformer};
+use proboscis::Transformer;
 use std::{collections::HashMap, sync::Arc};
 
 struct AnnonymizeTransformer {}
@@ -77,23 +77,29 @@ async fn proxy() {
     credentials.insert("admin".to_string(), "password".to_string());
 
     let config = proboscis::Config {
-        target_config: TargetConfig {
-            host: "0.0.0.0".to_string(),
-            port: "5432".to_string(),
-            user: "admin".to_string(),
-            password: "password".to_string(),
-            database: "postgres".to_string(),
-        },
-        pool_config: PoolConfig { max_size: 1 },
         credentials,
         tls_config: None,
     };
 
     let transformer = AnnonymizeTransformer {};
 
-    let mut app = proboscis::App::new(config.clone()).add_transformer(Box::new(transformer));
+    let postgres_resolver = proboscis::postgres_resolver::PostgresResolver::initialize(
+        proboscis::postgres_resolver::TargetConfig {
+            host: "0.0.0.0".to_string(),
+            port: "5432".to_string(),
+            user: "admin".to_string(),
+            password: "password".to_string(),
+            database: "postgres".to_string(),
+        },
+        deadpool::managed::PoolConfig::new(1),
+    );
 
-    app.listen("0.0.0.0:5430").await.unwrap();
+    proboscis::App::new(config.clone())
+        .add_resolver(Box::new(postgres_resolver))
+        .add_transformer(Box::new(transformer))
+        .listen("0.0.0.0:5430")
+        .await
+        .unwrap();
 }
 
 #[tokio::main]

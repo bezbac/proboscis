@@ -1,6 +1,5 @@
-use super::{config::TargetConfig, connection::Connection};
 use crate::{
-    connection::{ConnectionKind, MaybeTlsStream, ProtocolStream},
+    connection::{Connection, ConnectionKind, MaybeTlsStream, ProtocolStream},
     postgres_protocol::{Message, StartupMessage},
     util::encode_md5_password_hash,
 };
@@ -8,6 +7,8 @@ use anyhow::Error;
 use anyhow::Result;
 use async_trait::async_trait;
 use std::collections::HashMap;
+
+use super::TargetConfig;
 
 pub struct ConnectionManager {
     target_config: TargetConfig,

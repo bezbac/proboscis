@@ -1,4 +1,3 @@
-use proboscis::{PoolConfig, TargetConfig};
 use std::collections::HashMap;
 use tokio_postgres::{NoTls, SimpleQueryMessage};
 
@@ -30,20 +29,26 @@ async fn proxy() {
     credentials.insert("admin".to_string(), "password".to_string());
 
     let config = proboscis::Config {
-        target_config: TargetConfig {
+        credentials,
+        tls_config: None,
+    };
+
+    let postgres_resolver = proboscis::postgres_resolver::PostgresResolver::initialize(
+        proboscis::postgres_resolver::TargetConfig {
             host: "0.0.0.0".to_string(),
             port: "5432".to_string(),
             user: "admin".to_string(),
             password: "password".to_string(),
             database: "postgres".to_string(),
         },
-        pool_config: PoolConfig { max_size: 1 },
-        credentials,
-        tls_config: None,
-    };
+        deadpool::managed::PoolConfig::new(1),
+    );
 
-    let mut app = proboscis::App::new(config.clone());
-    app.listen("0.0.0.0:5430").await.unwrap();
+    proboscis::App::new(config.clone())
+        .add_resolver(Box::new(postgres_resolver))
+        .listen("0.0.0.0:5430")
+        .await
+        .unwrap();
 }
 
 #[tokio::main]

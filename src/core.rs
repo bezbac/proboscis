@@ -1,14 +1,8 @@
 use super::connection::MaybeTlsStream;
 use super::connection::{Connection, ConnectionKind};
+use crate::{connection::ProtocolStream, util::encode_md5_password_hash, Resolver};
 use crate::{
-    connection::ProtocolStream, connection_pool::ConnectionPool, resolver::ResolverResult,
-    util::encode_md5_password_hash, Resolver,
-};
-use crate::{
-    data::{
-        serialize_record_batch_schema_to_row_description, serialize_record_batch_to_data_rows,
-        simple_query_response_to_record_batch,
-    },
+    data::{serialize_record_batch_schema_to_row_description, serialize_record_batch_to_data_rows},
     postgres_protocol::{Message, StartupMessage},
     Transformer,
 };
@@ -95,191 +89,33 @@ pub async fn accept_frontend_connection(
     Ok(frontend)
 }
 
-pub async fn pass_through_simple_query_response(
-    frontend: &mut Connection,
-    backend: &mut Connection,
-) -> Result<()> {
-    loop {
-        let response = backend.read_message().await?;
-        match response {
-            Message::ReadyForQuery => break,
-            Message::RowDescription { fields } => {
-                frontend
-                    .write_message(Message::RowDescription { fields })
-                    .await?;
-            }
-            Message::DataRow { field_data } => {
-                frontend
-                    .write_message(Message::DataRow { field_data })
-                    .await?;
-            }
-            Message::CommandComplete { tag } => {
-                frontend
-                    .write_message(Message::CommandComplete { tag })
-                    .await?;
-            }
-            _ => unimplemented!(""),
-        }
-    }
-
-    Ok(())
-}
-
-pub async fn pass_through_query_response(
-    frontend: &mut Connection,
-    backend: &mut Connection,
-) -> Result<()> {
-    loop {
-        let request = frontend.read_message().await?;
-
-        match request {
-            Message::Describe { kind, name } => {
-                backend
-                    .write_message(Message::Describe { kind, name })
-                    .await?;
-            }
-            Message::Sync => {
-                backend.write_message(Message::Sync).await?;
-
-                loop {
-                    let response = backend.read_message().await?;
-
-                    match response {
-                        Message::ParseComplete => {
-                            frontend.write_message(Message::ParseComplete).await?;
-                        }
-                        Message::ParameterDescription { param_types } => {
-                            frontend
-                                .write_message(Message::ParameterDescription { param_types })
-                                .await?;
-                        }
-                        Message::ReadyForQuery => {
-                            frontend.write_message(Message::ReadyForQuery).await?;
-                            break;
-                        }
-                        Message::RowDescription { fields } => {
-                            frontend
-                                .write_message(Message::RowDescription { fields })
-                                .await?;
-                        }
-                        Message::BindComplete => {
-                            frontend.write_message(Message::BindComplete).await?;
-                        }
-                        Message::DataRow { field_data } => {
-                            frontend
-                                .write_message(Message::DataRow { field_data })
-                                .await?;
-                        }
-                        Message::CommandComplete { tag } => {
-                            frontend
-                                .write_message(Message::CommandComplete { tag })
-                                .await?;
-                        }
-                        Message::CloseComplete => {
-                            frontend.write_message(Message::CloseComplete).await?;
-                        }
-                        _ => unimplemented!(""),
-                    }
-                }
-            }
-            Message::Bind {
-                portal,
-                statement,
-                formats,
-                params,
-                results,
-            } => {
-                backend
-                    .write_message(Message::Bind {
-                        portal,
-                        statement,
-                        params,
-                        formats,
-                        results,
-                    })
-                    .await?;
-            }
-            Message::Execute { portal, row_limit } => {
-                backend
-                    .write_message(Message::Execute { portal, row_limit })
-                    .await?;
-            }
-            Message::CommandComplete { tag } => {
-                backend
-                    .write_message(Message::CommandComplete { tag })
-                    .await?;
-            }
-            _ => unimplemented!(),
-        }
-    }
-}
-
 pub async fn handle_connection(
     frontend: &mut Connection,
-    pool: &ConnectionPool,
     transformers: &Vec<Box<dyn Transformer>>,
     resolvers: &mut Vec<Box<dyn Resolver>>,
 ) -> Result<()> {
     loop {
         let request = frontend.read_message().await?;
 
-        let mut backend = pool.get().await.map_err(|err| anyhow::anyhow!(err))?;
-
         match request {
             Message::Terminate => {
-                backend.write_message(Message::Terminate).await?;
                 break;
             }
             Message::SimpleQuery(query_string) => {
-                if transformers.len() == 0 && resolvers.len() == 0 {
-                    backend
-                        .write_message(Message::SimpleQuery(query_string.clone()))
-                        .await?;
-                    pass_through_simple_query_response(frontend, &mut backend).await?;
-                    frontend.write_message(Message::ReadyForQuery).await?;
-                    continue;
-                }
-
                 let resolver_responses =
-                    join_all(resolvers.iter().map(|r| r.lookup(&query_string))).await;
+                    join_all(resolvers.iter().map(|r| r.query(&query_string))).await;
 
                 let resolver_data: Vec<RecordBatch> = resolver_responses
                     .iter()
                     .filter_map(|result| match result {
-                        ResolverResult::Hit(data) => Some(data),
-                        ResolverResult::Miss => None,
+                        Ok(data) => Some(data),
+                        _ => None,
                     })
                     .cloned()
                     .collect();
 
-                let record_batch = {
-                    if resolver_data.len() != 0 {
-                        resolver_data.first().unwrap().clone()
-                    } else {
-                        backend
-                            .write_message(Message::SimpleQuery(query_string.clone()))
-                            .await?;
-
-                        let mut fields = vec![];
-                        let mut data_rows = vec![];
-                        loop {
-                            let response = backend.read_message().await?;
-                            match response {
-                                Message::ReadyForQuery => break,
-                                Message::RowDescription {
-                                    fields: mut message_fields,
-                                } => fields.append(&mut message_fields),
-                                Message::DataRow { field_data: _ } => {
-                                    data_rows.push(response);
-                                }
-                                Message::CommandComplete { tag: _ } => {}
-                                _ => unimplemented!(""),
-                            }
-                        }
-
-                        simple_query_response_to_record_batch(&fields, &data_rows).await?
-                    }
-                };
+                // TODO: Handle no results returned
+                let record_batch = resolver_data.first().unwrap().clone();
 
                 join_all(
                     resolvers
@@ -308,21 +144,6 @@ pub async fn handle_connection(
                     })
                     .await?;
                 frontend.write_message(Message::ReadyForQuery).await?;
-            }
-            Message::Parse {
-                query,
-                param_types,
-                statement,
-            } => {
-                backend
-                    .write_message(Message::Parse {
-                        query,
-                        param_types,
-                        statement,
-                    })
-                    .await?;
-
-                pass_through_query_response(frontend, &mut backend).await?;
             }
             _ => unimplemented!(),
         }
