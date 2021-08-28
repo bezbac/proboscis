@@ -11,7 +11,7 @@ use tokio::net::TcpListener;
 pub struct App {
     config: Config,
     transformers: Vec<Box<dyn Transformer>>,
-    resolvers: Vec<Box<dyn Resolver>>,
+    resolver: Box<dyn Resolver>,
 }
 
 impl App {
@@ -46,28 +46,23 @@ impl App {
 
             handle_connection(
                 &mut frontend_connection,
-                &self.transformers,
-                &mut self.resolvers,
+                &mut self.resolver,
+                &self.transformers
             )
             .await?;
         }
     }
 
-    pub fn new(config: Config) -> App {
+    pub fn new(config: Config, resolver: Box<dyn Resolver>) -> App {
         App {
             config,
+            resolver,
             transformers: vec![],
-            resolvers: vec![],
         }
     }
 
     pub fn add_transformer(mut self, transformer: Box<dyn Transformer>) -> App {
         self.transformers.push(transformer);
-        self
-    }
-
-    pub fn add_resolver(mut self, resolver: Box<dyn Resolver>) -> App {
-        self.resolvers.push(resolver);
         self
     }
 }

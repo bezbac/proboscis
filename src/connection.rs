@@ -1,5 +1,9 @@
-use crate::postgres_protocol::{Message, StartupMessage};
+use crate::{
+    data::{serialize_record_batch_schema_to_row_description, serialize_record_batch_to_data_rows},
+    postgres_protocol::{Message, StartupMessage},
+};
 use anyhow::Result;
+use arrow::record_batch::RecordBatch;
 use async_trait::async_trait;
 use std::collections::HashMap;
 use tokio::io::{AsyncRead, AsyncWrite, AsyncWriteExt};
@@ -81,6 +85,19 @@ impl Connection {
         let (_, mut wr) = tokio::io::split(&mut self.stream);
         println!("{} Writing bytes", self.kind.log_char());
         wr.write(bytes).await
+    }
+
+    pub async fn write_data(&mut self, data: RecordBatch) -> tokio::io::Result<()> {
+        let row_description = serialize_record_batch_schema_to_row_description(data.schema());
+
+        self.write_message(row_description).await?;
+
+        let data_rows = serialize_record_batch_to_data_rows(data);
+        for message in data_rows {
+            self.write_message(message).await?;
+        }
+
+        Ok(())
     }
 }
 

@@ -37,7 +37,7 @@ impl PostgresResolver {
 
 #[async_trait]
 impl Resolver for PostgresResolver {
-    async fn query(&self, query: &String) -> Result<RecordBatch> {
+    async fn query(&mut self, query: &String) -> Result<RecordBatch> {
         let mut backend = self.pool.get().await.map_err(|err| anyhow::anyhow!(err))?;
 
         backend

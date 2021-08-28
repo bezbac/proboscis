@@ -94,8 +94,7 @@ async fn proxy() {
         deadpool::managed::PoolConfig::new(1),
     );
 
-    proboscis::App::new(config.clone())
-        .add_resolver(Box::new(postgres_resolver))
+    proboscis::App::new(config.clone(), Box::new(postgres_resolver))
         .add_transformer(Box::new(transformer))
         .listen("0.0.0.0:5430")
         .await

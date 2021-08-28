@@ -2,7 +2,7 @@ use anyhow::Result;
 use arrow::record_batch::RecordBatch;
 use async_trait::async_trait;
 use deadpool::managed::PoolConfig;
-use proboscis::{postgres_resolver::TargetConfig, SimpleResolver};
+use proboscis::{postgres_resolver::TargetConfig, ResolverChain, SimpleResolver};
 use std::collections::HashMap;
 use tokio_postgres::{NoTls, SimpleQueryMessage};
 
@@ -20,7 +20,7 @@ impl StupidCache {
 
 #[async_trait]
 impl SimpleResolver for StupidCache {
-    async fn lookup(&self, query: &String) -> Result<RecordBatch> {
+    async fn lookup(&mut self, query: &String) -> Result<RecordBatch> {
         println!("Cache Lookup: {}", query);
         match self.store.get(query) {
             Some(data) => {
@@ -82,9 +82,11 @@ async fn proxy() {
         PoolConfig::new(1),
     );
 
-    proboscis::App::new(config.clone())
-        .add_resolver(Box::new(postres_resolver))
-        .add_resolver(Box::new(cache_resolver))
+    let resolver_chain = ResolverChain {
+        resolvers: vec![Box::new(cache_resolver), Box::new(postres_resolver)],
+    };
+
+    proboscis::App::new(config.clone(), Box::new(resolver_chain))
         .listen("0.0.0.0:5430")
         .await
         .unwrap();

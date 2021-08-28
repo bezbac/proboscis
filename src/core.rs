@@ -2,13 +2,10 @@ use super::connection::MaybeTlsStream;
 use super::connection::{Connection, ConnectionKind};
 use crate::{connection::ProtocolStream, util::encode_md5_password_hash, Resolver};
 use crate::{
-    data::{serialize_record_batch_schema_to_row_description, serialize_record_batch_to_data_rows},
     postgres_protocol::{Message, StartupMessage},
     Transformer,
 };
 use anyhow::Result;
-use arrow::record_batch::RecordBatch;
-use futures::future::join_all;
 use rand::Rng;
 use sqlparser::dialect::PostgreSqlDialect;
 use sqlparser::parser::Parser;
@@ -93,8 +90,8 @@ pub async fn accept_frontend_connection(
 
 pub async fn handle_connection(
     frontend: &mut Connection,
+    resolver: &mut Box<dyn Resolver>,
     transformers: &Vec<Box<dyn Transformer>>,
-    resolvers: &mut Vec<Box<dyn Resolver>>,
 ) -> Result<()> {
     let mut parse_cache: HashMap<String, Vec<sqlparser::ast::Statement>> = HashMap::new();
     let mut describe_cache: HashMap<String, String> = HashMap::new();
@@ -107,39 +104,15 @@ pub async fn handle_connection(
                 break;
             }
             Message::SimpleQuery(query) => {
-                let resolver_responses = join_all(resolvers.iter().map(|r| r.query(&query))).await;
+                let record_batch = resolver.query(&query).await?;
 
-                let resolver_data: Vec<RecordBatch> = resolver_responses
-                    .iter()
-                    .filter_map(|result| match result {
-                        Ok(data) => Some(data),
-                        _ => None,
-                    })
-                    .cloned()
-                    .collect();
-
-                // TODO: Handle no results returned
-                let record_batch = resolver_data.first().unwrap().clone();
-
-                join_all(
-                    resolvers
-                        .iter_mut()
-                        .map(|r| r.inform(&query, record_batch.clone())),
-                )
-                .await;
+                resolver.inform(&query, record_batch.clone()).await;
 
                 let transformed = transformers.iter().fold(record_batch, |data, transformer| {
                     transformer.transform(&data)
                 });
 
-                let row_description =
-                    serialize_record_batch_schema_to_row_description(transformed.schema());
-                frontend.write_message(row_description).await?;
-
-                let data_rows = serialize_record_batch_to_data_rows(transformed);
-                for message in data_rows {
-                    frontend.write_message(message).await?;
-                }
+                frontend.write_data(transformed).await?;
 
                 // TODO: Fix the command complete tag
                 frontend

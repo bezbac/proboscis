@@ -16,8 +16,6 @@ async fn main() {
         }),
     };
 
-    let app = App::new(config);
-
     let postgres_resolver = postgres_resolver::PostgresResolver::initialize(
         proboscis::postgres_resolver::TargetConfig {
             host: "0.0.0.0".to_string(),
@@ -29,7 +27,7 @@ async fn main() {
         deadpool::managed::PoolConfig::new(100),
     );
 
-    app.add_resolver(Box::new(postgres_resolver))
+    App::new(config, Box::new(postgres_resolver))
         .listen("0.0.0.0:5430")
         .await;
 }
