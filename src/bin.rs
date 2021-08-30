@@ -16,16 +16,16 @@ async fn main() {
         }),
     };
 
-    let postgres_resolver = postgres_resolver::PostgresResolver::initialize(
-        proboscis::postgres_resolver::TargetConfig {
+    let postgres_resolver =
+        postgres_resolver::PostgresResolver::new(proboscis::postgres_resolver::TargetConfig {
             host: "0.0.0.0".to_string(),
             database: "postgres".to_string(),
             port: "5432".to_string(),
             user: "admin".to_string(),
             password: "password".to_string(),
-        },
-        deadpool::managed::PoolConfig::new(100),
-    );
+        })
+        .await
+        .unwrap();
 
     App::new(config, Box::new(postgres_resolver))
         .listen("0.0.0.0:5430")

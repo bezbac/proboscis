@@ -13,6 +13,4 @@ pub use app::App;
 pub use config::Config;
 pub use config::TlsConfig;
 pub use resolver::Resolver;
-pub use resolver::SimpleResolver;
-pub use resolver::ResolverChain;
 pub use transformer::Transformer;

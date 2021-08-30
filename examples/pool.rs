@@ -33,16 +33,17 @@ async fn proxy() {
         tls_config: None,
     };
 
-    let postgres_resolver = proboscis::postgres_resolver::PostgresResolver::initialize(
+    let postgres_resolver = proboscis::postgres_resolver::PostgresResolver::new(
         proboscis::postgres_resolver::TargetConfig {
             host: "0.0.0.0".to_string(),
             port: "5432".to_string(),
             user: "admin".to_string(),
             password: "password".to_string(),
             database: "postgres".to_string(),
-        },
-        deadpool::managed::PoolConfig::new(10),
-    );
+        }
+    )
+    .await
+    .unwrap();
 
     proboscis::App::new(config.clone(), Box::new(postgres_resolver))
         .listen("0.0.0.0:5430")

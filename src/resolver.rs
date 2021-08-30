@@ -1,56 +1,39 @@
 use anyhow::Result;
 use arrow::record_batch::RecordBatch;
 use async_trait::async_trait;
-use futures::future::join_all;
+use uuid::Uuid;
+
+use crate::postgres_protocol::{DescribeKind, Message};
 
 #[async_trait]
 pub trait Resolver: Sync + Send {
-    async fn query(&mut self, query: &String) -> Result<RecordBatch>;
-    async fn inform(&mut self, query: &String, data: RecordBatch);
-}
+    async fn initialize(&mut self, client_id: Uuid) -> Result<()>;
 
-#[async_trait]
-pub trait SimpleResolver: Sync + Send {
-    async fn lookup(&mut self, query: &String) -> Result<RecordBatch>;
-    async fn inform(&mut self, query: &String, data: RecordBatch);
-}
+    async fn query(&mut self, client_id: Uuid, query: &String) -> Result<RecordBatch>;
 
-#[async_trait]
-impl<T: SimpleResolver> Resolver for T {
-    async fn query(&mut self, query: &String) -> Result<RecordBatch> {
-        self.lookup(query).await
-    }
+    async fn parse(
+        &mut self,
+        client_id: Uuid,
+        statement_name: String,
+        query: String,
+        param_types: Vec<u32>,
+    ) -> Result<()>;
 
-    async fn inform(&mut self, query: &String, data: RecordBatch) {
-        self.inform(query, data).await
-    }
-}
+    async fn describe(&mut self, client_id: Uuid, kind: DescribeKind, name: String) -> Result<()>;
 
-pub struct ResolverChain {
-    pub resolvers: Vec<Box<dyn Resolver>>,
-}
+    async fn bind(
+        &mut self,
+        client_id: Uuid,
+        statement: String,
+        portal: String,
+        params: Vec<Vec<u8>>,
+        formats: Vec<i16>,
+        results: Vec<i16>,
+    ) -> Result<()>;
 
-#[async_trait]
-impl Resolver for ResolverChain {
-    async fn query(&mut self, query: &String) -> Result<RecordBatch> {
-        for resolver in self.resolvers.iter_mut() {
-            let resolver_response = resolver.query(query).await;
+    async fn execute(&mut self, client_id: Uuid, portal: String, row_limit: i32) -> Result<()>;
 
-            match resolver_response {
-                Ok(data) => return Ok(data),
-                Err(_) => continue,
-            }
-        }
+    async fn sync(&mut self, client_id: Uuid) -> Result<Vec<Message>>;
 
-        Err(anyhow::anyhow!("No Resolver returned any data"))
-    }
-
-    async fn inform(&mut self, query: &String, data: RecordBatch) {
-        join_all(
-            self.resolvers
-                .iter_mut()
-                .map(|r| r.inform(&query, data.clone())),
-        )
-        .await;
-    }
+    async fn terminate(&mut self, client_id: Uuid) -> Result<()>;
 }

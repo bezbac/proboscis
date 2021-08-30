@@ -7,10 +7,9 @@ use crate::{
 };
 use anyhow::Result;
 use rand::Rng;
-use sqlparser::dialect::PostgreSqlDialect;
-use sqlparser::parser::Parser;
 use std::collections::HashMap;
 use tokio::io::AsyncWriteExt;
+use uuid::Uuid;
 
 pub async fn handle_authentication(
     frontend: &mut Connection,
@@ -93,20 +92,21 @@ pub async fn handle_connection(
     resolver: &mut Box<dyn Resolver>,
     transformers: &Vec<Box<dyn Transformer>>,
 ) -> Result<()> {
-    let mut parse_cache: HashMap<String, Vec<sqlparser::ast::Statement>> = HashMap::new();
-    let mut describe_cache: HashMap<String, String> = HashMap::new();
+    let client_id = Uuid::new_v4();
+
+    resolver.initialize(client_id).await?;
 
     loop {
         let request = frontend.read_message().await?;
 
         match request {
             Message::Terminate => {
+                resolver.terminate(client_id).await?;
+
                 break;
             }
             Message::SimpleQuery(query) => {
-                let record_batch = resolver.query(&query).await?;
-
-                resolver.inform(&query, record_batch.clone()).await;
+                let record_batch = resolver.query(client_id, &query).await?;
 
                 let transformed = transformers.iter().fold(record_batch, |data, transformer| {
                     transformer.transform(&data)
@@ -127,21 +127,33 @@ pub async fn handle_connection(
                 query,
                 param_types,
             } => {
-                if !parse_cache.contains_key(&statement_name) {
-                    let dialect = PostgreSqlDialect {};
-                    let ast = Parser::parse_sql(&dialect, &query)?;
-                    parse_cache.insert(statement_name, ast);
-                }
-
-                frontend.write_message(Message::ParseComplete).await?;
+                resolver
+                    .parse(client_id, statement_name, query, param_types)
+                    .await?;
             }
             Message::Describe { kind, name } => {
-                if !parse_cache.contains_key(&name) {
-                    // TODO: Return real error
-                    panic!("Statement not found");
-                }
+                resolver.describe(client_id, kind, name).await?;
+            }
+            Message::Bind {
+                statement,
+                portal,
+                params,
+                formats,
+                results,
+            } => {
+                resolver
+                    .bind(client_id, statement, portal, params, formats, results)
+                    .await?;
+            }
+            Message::Execute { portal, row_limit } => {
+                resolver.execute(client_id, portal, row_limit).await?;
+            }
+            Message::Sync => {
+                let messages = resolver.sync(client_id).await?;
 
-                unimplemented!();
+                for message in messages {
+                    frontend.write_message(message).await?;
+                }
             }
             _ => unimplemented!(),
         }
