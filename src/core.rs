@@ -1,10 +1,7 @@
 use super::connection::MaybeTlsStream;
 use super::connection::{Connection, ConnectionKind};
+use crate::postgres_protocol::{Message, StartupMessage};
 use crate::{connection::ProtocolStream, util::encode_md5_password_hash, Resolver};
-use crate::{
-    postgres_protocol::{Message, StartupMessage},
-    Transformer,
-};
 use anyhow::Result;
 use rand::Rng;
 use std::collections::HashMap;
@@ -90,7 +87,6 @@ pub async fn accept_frontend_connection(
 pub async fn handle_connection(
     frontend: &mut Connection,
     resolver: &mut Box<dyn Resolver>,
-    transformers: &Vec<Box<dyn Transformer>>,
 ) -> Result<()> {
     let client_id = Uuid::new_v4();
 
@@ -106,13 +102,9 @@ pub async fn handle_connection(
                 break;
             }
             Message::SimpleQuery(query) => {
-                let record_batch = resolver.query(client_id, &query).await?;
+                let result = resolver.query(client_id, &query).await?;
 
-                let transformed = transformers.iter().fold(record_batch, |data, transformer| {
-                    transformer.transform(&data)
-                });
-
-                frontend.write_data(transformed).await?;
+                frontend.write_data(result).await?;
 
                 // TODO: Fix the command complete tag
                 frontend

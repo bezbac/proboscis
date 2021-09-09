@@ -1,6 +1,6 @@
 use crate::{
     core::{accept_frontend_connection, handle_authentication, handle_connection},
-    Config, Resolver, Transformer,
+    Config, Resolver,
 };
 use anyhow::Result;
 use native_tls::Identity;
@@ -10,7 +10,6 @@ use tokio::net::TcpListener;
 
 pub struct App {
     config: Config,
-    transformers: Vec<Box<dyn Transformer>>,
     resolver: Box<dyn Resolver>,
 }
 
@@ -44,25 +43,11 @@ impl App {
 
             handle_authentication(&mut frontend_connection, &self.config.credentials).await?;
 
-            handle_connection(
-                &mut frontend_connection,
-                &mut self.resolver,
-                &self.transformers
-            )
-            .await?;
+            handle_connection(&mut frontend_connection, &mut self.resolver).await?;
         }
     }
 
     pub fn new(config: Config, resolver: Box<dyn Resolver>) -> App {
-        App {
-            config,
-            resolver,
-            transformers: vec![],
-        }
-    }
-
-    pub fn add_transformer(mut self, transformer: Box<dyn Transformer>) -> App {
-        self.transformers.push(transformer);
-        self
+        App { config, resolver }
     }
 }
