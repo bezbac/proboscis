@@ -9,7 +9,7 @@ use crate::postgres_protocol::{DescribeKind, Message};
 pub trait Resolver: Sync + Send {
     async fn initialize(&mut self, client_id: Uuid) -> Result<()>;
 
-    async fn query(&mut self, client_id: Uuid, query: &String) -> Result<RecordBatch>;
+    async fn query(&mut self, client_id: Uuid, query: String) -> Result<RecordBatch>;
 
     async fn parse(
         &mut self,

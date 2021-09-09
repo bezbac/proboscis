@@ -48,7 +48,7 @@ pub async fn establish_connection(target_config: &TargetConfig) -> Result<Connec
                 encode_md5_password_hash(&target_config.user, &target_config.password, &salt[..]);
 
             connection
-                .write_message(Message::MD5HashedPasswordMessage { hash })
+                .write_message(Message::MD5HashedPassword { hash })
                 .await?;
 
             let response = connection.read_message().await?;
@@ -112,12 +112,12 @@ impl PostgresResolver {
 
 #[async_trait]
 impl Resolver for PostgresResolver {
-    async fn query(&mut self, client_id: Uuid, query: &String) -> Result<RecordBatch> {
+    async fn query(&mut self, client_id: Uuid, query: String) -> Result<RecordBatch> {
         let connection = self.connections.get_mut(&client_id).unwrap();
 
         connection
             .connection
-            .write_message(Message::SimpleQuery(query.clone()))
+            .write_message(Message::SimpleQuery(query))
             .await?;
 
         let mut fields = vec![];
@@ -220,7 +220,7 @@ impl Resolver for PostgresResolver {
             .connection
             .write_message(Message::Execute {
                 portal: portal.clone(),
-                row_limit: row_limit.clone(),
+                row_limit,
             })
             .await?;
 

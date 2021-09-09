@@ -21,13 +21,13 @@ pub enum StartupMessage {
 }
 
 impl StartupMessage {
-    pub fn as_vec(self) -> Vec<u8> {
+    pub fn as_vec(&self) -> Vec<u8> {
         let mut vec = vec![];
         self.write(&mut vec).unwrap();
         vec
     }
 
-    pub fn write<T: Write>(self, buf: &mut T) -> Result<()> {
+    pub fn write<T: Write>(&self, buf: &mut T) -> Result<()> {
         match self {
             Self::Startup { params } => {
                 let mut writer = vec![];
@@ -35,19 +35,19 @@ impl StartupMessage {
                 writer.write_be(CODE_STARTUP_POSTGRESQLV3)?;
 
                 for (key, value) in params {
-                    writer.write(key.as_bytes())?;
-                    writer.write_be(0 as u8)?; // Delimiter
+                    writer.write_all(key.as_bytes())?;
+                    writer.write_be(0_u8)?; // Delimiter
 
-                    writer.write(value.as_bytes())?;
-                    writer.write_be(0 as u8)?; // Delimiter
+                    writer.write_all(value.as_bytes())?;
+                    writer.write_be(0_u8)?; // Delimiter
                 }
 
-                writer.write_be(0 as u8)?; // Delimiter
+                writer.write_be(0_u8)?; // Delimiter
 
                 let len_of_message: u32 = writer.len() as u32 + 4; // Add 4 bytes for the u32 containing the total message length
 
                 buf.write_be(len_of_message)?;
-                buf.write(&mut writer[..])?;
+                buf.write_all(&writer[..])?;
 
                 Ok(())
             }
@@ -99,7 +99,7 @@ impl StartupMessage {
 
                 for b in bytes {
                     if b == 0 {
-                        let string = std::str::from_utf8(&current.as_slice())?.to_string();
+                        let string = std::str::from_utf8(current.as_slice())?.to_string();
 
                         match &last_string {
                             Some(ls) => {

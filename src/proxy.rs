@@ -80,7 +80,7 @@ pub async fn handle_authentication(
     let response = frontend.read_message().await?;
 
     let received_hash = match response {
-        Message::MD5HashedPasswordMessage { hash } => hash,
+        Message::MD5HashedPassword { hash } => hash,
         _ => return Err(anyhow::anyhow!("Expected Password Message")),
     };
 
@@ -92,7 +92,7 @@ pub async fn handle_authentication(
 
     let password = credentials
         .get(&user.clone())
-        .expect(&format!("Password for {} not found inside config", &user));
+        .unwrap_or_else(|| panic!("Password for {} not found inside config", &user));
 
     let actual_hash = encode_md5_password_hash(&user, password, &salt[..]);
 
@@ -138,7 +138,7 @@ pub async fn accept_frontend_connection(
         _ => panic!(""),
     };
 
-    let frontend = Connection::new(frontend, ConnectionKind::Frontend, frontend_params.clone());
+    let frontend = Connection::new(frontend, ConnectionKind::Frontend, frontend_params);
 
     Ok(frontend)
 }
@@ -161,7 +161,7 @@ pub async fn handle_connection(
                 break;
             }
             Message::SimpleQuery(query) => {
-                let result = resolver.query(client_id, &query).await?;
+                let result = resolver.query(client_id, query).await?;
 
                 frontend.write_data(result).await?;
 

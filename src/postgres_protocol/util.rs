@@ -34,5 +34,5 @@ pub fn write_message_with_prefixed_message_len<T: Write>(
     written_bytes_count += buf.write_be(body.len() as i32 + 4)?;
     written_bytes_count += buf.write(&body[..])?;
 
-    return Ok(written_bytes_count);
+    Ok(written_bytes_count)
 }

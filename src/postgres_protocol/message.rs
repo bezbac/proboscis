@@ -40,7 +40,7 @@ pub enum Message {
         salt: Vec<u8>,
     },
     AuthenticationOk,
-    MD5HashedPasswordMessage {
+    MD5HashedPassword {
         hash: String,
     },
     ReadyForQuery,
@@ -97,13 +97,13 @@ pub enum Message {
 }
 
 impl Message {
-    pub fn as_vec(self) -> Vec<u8> {
+    pub fn as_vec(&self) -> Vec<u8> {
         let mut vec = vec![];
-        self.write(&mut vec).unwrap();
+        self.clone().write(&mut vec).unwrap();
         vec
     }
 
-    pub fn write<T: Write>(self: Self, buf: &mut T) -> Result<usize> {
+    pub fn write<T: Write>(self, buf: &mut T) -> Result<usize> {
         match self {
             Self::AuthenticationOk => {
                 let vec = vec![CharTag::Authentication.into(), 0, 0, 0, 8, 0, 0, 0, 0];
@@ -113,7 +113,7 @@ impl Message {
                 buf,
                 CharTag::ReadyForQuery,
                 Box::new(move |body: &mut Vec<u8>| {
-                    body.write(&[CharTag::EmptyQueryResponse.into()])?;
+                    body.write_all(&[CharTag::EmptyQueryResponse.into()])?;
                     Ok(())
                 }),
             ),
@@ -122,17 +122,17 @@ impl Message {
                     buf,
                     CharTag::Authentication,
                     Box::new(move |body| -> Result<()> {
-                        body.write_be(5 as i32)?;
-                        body.write(&salt[..])?;
+                        body.write_be(5_i32)?;
+                        body.write_all(&salt[..])?;
                         Ok(())
                     }),
                 )
             }
-            Self::MD5HashedPasswordMessage { hash } => write_message_with_prefixed_message_len(
+            Self::MD5HashedPassword { hash } => write_message_with_prefixed_message_len(
                 buf,
                 CharTag::Password,
                 Box::new(move |body| -> Result<()> {
-                    body.extend_from_slice(&hash.as_bytes());
+                    body.extend_from_slice(hash.as_bytes());
                     body.push(0);
                     Ok(())
                 }),
@@ -141,7 +141,7 @@ impl Message {
                 buf,
                 CharTag::Query,
                 Box::new(move |body| -> Result<()> {
-                    body.extend_from_slice(&query.as_bytes());
+                    body.extend_from_slice(query.as_bytes());
                     body.push(0);
                     Ok(())
                 }),
@@ -153,7 +153,7 @@ impl Message {
                     body.write_be(fields.len() as i16)?;
 
                     for field in &fields {
-                        body.write(field.name.as_bytes())?;
+                        body.write_all(field.name.as_bytes())?;
                         body.push(0);
 
                         body.write_be(field.table_oid)?;
@@ -194,7 +194,7 @@ impl Message {
                 buf,
                 CharTag::Terminate,
                 Box::new(move |body| -> Result<()> {
-                    body.write_be(0 as i32)?;
+                    body.write_be(0_i32)?;
 
                     Ok(())
                 }),
@@ -380,15 +380,15 @@ impl Message {
         match tag {
             CharTag::Query => {
                 let query_string_bytes = read_until_zero(stream)?;
-                let query_string = String::from_utf8(query_string_bytes.clone())?;
+                let query_string = String::from_utf8(query_string_bytes)?;
 
-                Ok(Self::SimpleQuery(query_string.to_string()))
+                Ok(Self::SimpleQuery(query_string))
             }
             CharTag::Authentication => {
                 let method: u32 = stream.read_be()?;
 
                 if method == 5 {
-                    let mut bytes = vec![0 as u8; 4];
+                    let mut bytes = vec![0_u8; 4];
                     bytes = stream.read_exact(&mut bytes).map(|_| bytes)?;
                     return Ok(Self::AuthenticationRequestMD5Password { salt: bytes });
                 }
@@ -401,9 +401,9 @@ impl Message {
             }
             CharTag::Password => {
                 let hash_bytes = read_until_zero(stream)?;
-                let hash = String::from_utf8(hash_bytes.clone())?;
+                let hash = String::from_utf8(hash_bytes)?;
 
-                Ok(Self::MD5HashedPasswordMessage { hash })
+                Ok(Self::MD5HashedPassword { hash })
             }
             CharTag::ParameterStatusOrSync => {
                 if remaining_bytes_len == 0 {
@@ -515,17 +515,17 @@ impl Message {
             }
             CharTag::CommandComplete => {
                 let tag_bytes = read_until_zero(stream)?;
-                let tag = String::from_utf8(tag_bytes.clone())?;
+                let tag = String::from_utf8(tag_bytes)?;
 
                 Ok(Message::CommandComplete { tag })
             }
             CharTag::Terminate => Ok(Message::Terminate),
             CharTag::Parse => {
                 let statement_bytes = read_until_zero(stream)?;
-                let statement = String::from_utf8(statement_bytes.clone())?;
+                let statement = String::from_utf8(statement_bytes)?;
 
                 let query_bytes = read_until_zero(stream)?;
-                let query = String::from_utf8(query_bytes.clone())?;
+                let query = String::from_utf8(query_bytes)?;
 
                 let mut param_types = vec![];
                 let num_param_types: u16 = stream.read_be()?;
@@ -542,7 +542,7 @@ impl Message {
             }
             CharTag::ExecuteOrError => {
                 let portal_bytes = read_until_zero(stream)?;
-                let portal = String::from_utf8(portal_bytes.clone())?;
+                let portal = String::from_utf8(portal_bytes)?;
 
                 let row_limit: i32 = stream.read_be()?;
 
@@ -564,10 +564,10 @@ impl Message {
             }
             CharTag::Bind => {
                 let portal_bytes = read_until_zero(stream)?;
-                let portal = String::from_utf8(portal_bytes.clone())?;
+                let portal = String::from_utf8(portal_bytes)?;
 
                 let statement_bytes = read_until_zero(stream)?;
-                let statement = String::from_utf8(statement_bytes.clone())?;
+                let statement = String::from_utf8(statement_bytes)?;
 
                 let mut formats = vec![];
                 let num_formats: u16 = stream.read_be()?;

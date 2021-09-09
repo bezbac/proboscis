@@ -7,7 +7,7 @@ use arrow::record_batch::RecordBatch;
 use omnom::prelude::*;
 use std::{collections::BTreeMap, sync::Arc, vec};
 
-fn column_data_to_array(data: &Vec<Vec<u8>>, data_type: &DataType) -> ArrayRef {
+fn column_data_to_array(data: &[Vec<u8>], data_type: &DataType) -> ArrayRef {
     match data_type {
         DataType::Int8 => {
             let data_array = data
@@ -60,7 +60,7 @@ fn column_data_to_array(data: &Vec<Vec<u8>>, data_type: &DataType) -> ArrayRef {
         DataType::Utf8 => {
             let data_array: Vec<String> = data
                 .iter()
-                .map(|d| String::from_utf8(d.clone()).unwrap())
+                .map(|d| String::from_utf8(d.to_vec()).unwrap())
                 .collect();
 
             Arc::new(GenericStringArray::<i32>::from(
@@ -70,7 +70,7 @@ fn column_data_to_array(data: &Vec<Vec<u8>>, data_type: &DataType) -> ArrayRef {
         DataType::LargeUtf8 => {
             let data_array: Vec<String> = data
                 .iter()
-                .map(|d| String::from_utf8(d.clone()).unwrap())
+                .map(|d| String::from_utf8(d.to_vec()).unwrap())
                 .collect();
 
             Arc::new(GenericStringArray::<i64>::from(
@@ -180,8 +180,8 @@ fn arrow_field_to_message_field(
 }
 
 pub async fn simple_query_response_to_record_batch(
-    fields: &Vec<crate::postgres_protocol::Field>,
-    data: &Vec<Message>,
+    fields: &[crate::postgres_protocol::Field],
+    data: &[Message],
 ) -> Result<RecordBatch> {
     let fields = fields
         .iter()
@@ -215,23 +215,23 @@ pub fn serialize_record_batch_to_data_rows(batch: RecordBatch) -> Vec<Message> {
                 let mut cell: Vec<u8> = vec![];
                 match column.data_type() {
                     DataType::Int8 => {
-                        let values: &Int8Array = as_primitive_array(&column);
+                        let values: &Int8Array = as_primitive_array(column);
                         let value: i8 = values.value(row_index);
 
                         value.write_be_bytes(&mut cell).unwrap();
                     }
                     DataType::Int16 => {
-                        let values: &Int16Array = as_primitive_array(&column);
+                        let values: &Int16Array = as_primitive_array(column);
                         let value: i16 = values.value(row_index);
                         value.write_be_bytes(&mut cell).unwrap();
                     }
                     DataType::Int32 => {
-                        let values: &Int32Array = as_primitive_array(&column);
+                        let values: &Int32Array = as_primitive_array(column);
                         let value: i32 = values.value(row_index);
                         value.write_be_bytes(&mut cell).unwrap();
                     }
                     DataType::Int64 => {
-                        let values: &Int64Array = as_primitive_array(&column);
+                        let values: &Int64Array = as_primitive_array(column);
                         let value: i64 = values.value(row_index);
                         value.write_be_bytes(&mut cell).unwrap();
                     }
@@ -266,7 +266,7 @@ pub fn serialize_record_batch_to_data_rows(batch: RecordBatch) -> Vec<Message> {
 pub fn serialize_record_batch_schema_to_row_description(schema: Arc<Schema>) -> Message {
     let fields: Vec<crate::postgres_protocol::Field> = schema
         .fields()
-        .into_iter()
+        .iter()
         .enumerate()
         .map(|(idx, arrow_field)| arrow_field_to_message_field(arrow_field, idx as i16))
         .collect();
