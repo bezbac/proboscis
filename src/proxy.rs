@@ -1,12 +1,71 @@
-use super::connection::MaybeTlsStream;
-use super::connection::{Connection, ConnectionKind};
-use crate::postgres_protocol::{Message, StartupMessage};
-use crate::{connection::ProtocolStream, util::encode_md5_password_hash, Resolver};
+use crate::{
+    connection::{Connection, ConnectionKind, MaybeTlsStream, ProtocolStream},
+    postgres_protocol::{Message, StartupMessage},
+    util::encode_md5_password_hash,
+    Resolver,
+};
 use anyhow::Result;
+use native_tls::Identity;
 use rand::Rng;
-use std::collections::HashMap;
-use tokio::io::AsyncWriteExt;
+use std::{collections::HashMap, fs::File, io::Read};
+use tokio::{io::AsyncWriteExt, net::TcpListener};
 use uuid::Uuid;
+
+#[derive(Clone)]
+pub struct TlsConfig {
+    pub pcks_path: String,
+    pub password: String,
+}
+
+#[derive(Clone)]
+pub struct Config {
+    pub tls_config: Option<TlsConfig>,
+    pub credentials: HashMap<String, String>,
+}
+
+pub struct Proxy {
+    config: Config,
+    resolver: Box<dyn Resolver>,
+}
+
+impl Proxy {
+    pub async fn listen(&mut self, address: &str) -> Result<()> {
+        let listener = TcpListener::bind(&address).await?;
+        println!("Server running on {}!", &address);
+
+        let tls_acceptor: Option<tokio_native_tls::TlsAcceptor> = match &self.config.tls_config {
+            Some(tls_config) => {
+                let mut file = File::open(tls_config.pcks_path.clone())?;
+                let mut identity = vec![];
+                file.read_to_end(&mut identity).unwrap();
+
+                let certificate =
+                    Identity::from_pkcs12(&identity, tls_config.password.as_str()).unwrap();
+                let acceptor = tokio_native_tls::TlsAcceptor::from(
+                    native_tls::TlsAcceptor::builder(certificate).build()?,
+                );
+
+                Some(acceptor)
+            }
+            _ => None,
+        };
+
+        loop {
+            let (stream, _) = listener.accept().await?;
+            println!("New connection established!");
+
+            let mut frontend_connection = accept_frontend_connection(stream, &tls_acceptor).await?;
+
+            handle_authentication(&mut frontend_connection, &self.config.credentials).await?;
+
+            handle_connection(&mut frontend_connection, &mut self.resolver).await?;
+        }
+    }
+
+    pub fn new(config: Config, resolver: Box<dyn Resolver>) -> Proxy {
+        Proxy { config, resolver }
+    }
+}
 
 pub async fn handle_authentication(
     frontend: &mut Connection,

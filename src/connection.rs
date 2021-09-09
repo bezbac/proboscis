@@ -1,5 +1,7 @@
 use crate::{
-    data::{serialize_record_batch_schema_to_row_description, serialize_record_batch_to_data_rows},
+    arrow::{
+        serialize_record_batch_schema_to_row_description, serialize_record_batch_to_data_rows,
+    },
     postgres_protocol::{Message, StartupMessage},
 };
 use anyhow::Result;

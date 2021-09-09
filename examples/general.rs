@@ -45,7 +45,7 @@ async fn proxy() {
     .await
     .unwrap();
 
-    proboscis::App::new(config.clone(), Box::new(postgres_resolver))
+    proboscis::Proxy::new(config.clone(), Box::new(postgres_resolver))
         .listen("0.0.0.0:5430")
         .await
         .unwrap();

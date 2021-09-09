@@ -1,14 +1,13 @@
-mod app;
-mod config;
+mod arrow;
 mod connection;
-mod core;
-mod data;
 mod postgres_protocol;
-pub mod postgres_resolver;
+mod proxy;
 mod resolver;
 mod util;
 
-pub use app::App;
-pub use config::Config;
-pub use config::TlsConfig;
+pub mod postgres_resolver;
+
+pub use proxy::Config;
+pub use proxy::Proxy;
+pub use proxy::TlsConfig;
 pub use resolver::Resolver;

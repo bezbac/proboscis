@@ -43,12 +43,12 @@ async fn proxy() {
             user: "admin".to_string(),
             password: "password".to_string(),
             database: "postgres".to_string(),
-        }
+        },
     )
     .await
     .unwrap();
 
-    proboscis::App::new(config.clone(), Box::new(postgres_resolver))
+    proboscis::Proxy::new(config.clone(), Box::new(postgres_resolver))
         .listen("0.0.0.0:5430")
         .await
         .unwrap();

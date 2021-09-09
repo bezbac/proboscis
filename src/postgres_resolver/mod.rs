@@ -6,8 +6,8 @@ use async_trait::async_trait;
 use uuid::Uuid;
 
 use crate::{
+    arrow::simple_query_response_to_record_batch,
     connection::{Connection, ConnectionKind, MaybeTlsStream, ProtocolStream},
-    data::simple_query_response_to_record_batch,
     postgres_protocol::{Message, StartupMessage},
     util::encode_md5_password_hash,
     Resolver,
