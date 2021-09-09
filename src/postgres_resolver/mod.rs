@@ -1,10 +1,3 @@
-use std::collections::HashMap;
-
-use anyhow::Result;
-use arrow::record_batch::RecordBatch;
-use async_trait::async_trait;
-use uuid::Uuid;
-
 use crate::{
     arrow::simple_query_response_to_record_batch,
     connection::{Connection, ConnectionKind, MaybeTlsStream, ProtocolStream},
@@ -12,6 +5,32 @@ use crate::{
     util::encode_md5_password_hash,
     Resolver,
 };
+use anyhow::Result;
+use arrow::record_batch::RecordBatch;
+use async_trait::async_trait;
+use deadpool::managed::RecycleResult;
+use futures::TryFutureExt;
+use std::collections::HashMap;
+use uuid::Uuid;
+
+type Pool = deadpool::managed::Pool<Manager>;
+
+pub struct Manager {
+    target_config: TargetConfig,
+}
+
+#[async_trait]
+impl deadpool::managed::Manager for Manager {
+    type Type = Connection;
+    type Error = anyhow::Error;
+    async fn create(&self) -> Result<Connection, anyhow::Error> {
+        establish_connection(&self.target_config).await
+    }
+
+    async fn recycle(&self, _conn: &mut Connection) -> RecycleResult<anyhow::Error> {
+        Ok(())
+    }
+}
 
 #[derive(Clone)]
 pub struct TargetConfig {
@@ -91,29 +110,56 @@ enum ClientOperation {
     Execute,
 }
 
-struct ConnectionWithState {
-    connection: Connection,
+struct ActiveConnection {
+    connection: deadpool::managed::Object<Manager>,
     requested_ops: Vec<ClientOperation>,
 }
 
 pub struct PostgresResolver {
-    target_config: TargetConfig,
-    connections: HashMap<Uuid, ConnectionWithState>,
+    // Active connections are remove from the pool.
+    // To add them back to the pool, drop them.
+    active_connections: HashMap<Uuid, ActiveConnection>,
+    pool: Pool,
 }
 
 impl PostgresResolver {
-    pub async fn new(target_config: TargetConfig) -> Result<PostgresResolver> {
+    pub async fn new(
+        target_config: TargetConfig,
+        max_pool_size: usize,
+    ) -> Result<PostgresResolver> {
+        let manager = Manager { target_config };
+        let pool = Pool::new(manager, max_pool_size);
+
         Ok(PostgresResolver {
-            target_config,
-            connections: HashMap::new(),
+            active_connections: HashMap::new(),
+            pool,
         })
+    }
+}
+
+impl PostgresResolver {
+    async fn get_connection(&mut self, client_id: Uuid) -> Result<&mut ActiveConnection> {
+        Ok(self.active_connections.entry(client_id).or_insert({
+            let connection = self.pool.get().map_err(|err| anyhow::anyhow!(err)).await?;
+
+            let connection_with_state = ActiveConnection {
+                connection,
+                requested_ops: vec![],
+            };
+
+            connection_with_state
+        }))
+    }
+
+    fn terminate_connection(&mut self, client_id: Uuid) {
+        self.active_connections.remove(&client_id);
     }
 }
 
 #[async_trait]
 impl Resolver for PostgresResolver {
     async fn query(&mut self, client_id: Uuid, query: String) -> Result<RecordBatch> {
-        let connection = self.connections.get_mut(&client_id).unwrap();
+        let connection = self.get_connection(client_id).await?;
 
         connection
             .connection
@@ -149,7 +195,7 @@ impl Resolver for PostgresResolver {
         query: String,
         param_types: Vec<u32>,
     ) -> Result<()> {
-        let connection = self.connections.get_mut(&client_id).unwrap();
+        let connection = self.get_connection(client_id).await?;
 
         connection
             .connection
@@ -171,7 +217,7 @@ impl Resolver for PostgresResolver {
         kind: crate::postgres_protocol::DescribeKind,
         name: String,
     ) -> Result<()> {
-        let connection = self.connections.get_mut(&client_id).unwrap();
+        let connection = self.get_connection(client_id).await?;
 
         connection
             .connection
@@ -195,7 +241,7 @@ impl Resolver for PostgresResolver {
         formats: Vec<i16>,
         results: Vec<i16>,
     ) -> Result<()> {
-        let connection = self.connections.get_mut(&client_id).unwrap();
+        let connection = self.get_connection(client_id).await?;
 
         connection
             .connection
@@ -214,7 +260,7 @@ impl Resolver for PostgresResolver {
     }
 
     async fn execute(&mut self, client_id: Uuid, portal: String, row_limit: i32) -> Result<()> {
-        let connection = self.connections.get_mut(&client_id).unwrap();
+        let connection = self.get_connection(client_id).await?;
 
         connection
             .connection
@@ -230,7 +276,7 @@ impl Resolver for PostgresResolver {
     }
 
     async fn sync(&mut self, client_id: Uuid) -> Result<Vec<Message>> {
-        let connection = self.connections.get_mut(&client_id).unwrap();
+        let mut connection = self.get_connection(client_id).await?;
 
         connection.connection.write_message(Message::Sync).await?;
 
@@ -297,28 +343,12 @@ impl Resolver for PostgresResolver {
         Ok(messages)
     }
 
-    async fn initialize(&mut self, client_id: Uuid) -> Result<()> {
-        let db = establish_connection(&self.target_config).await?;
-
-        let connection = ConnectionWithState {
-            connection: db,
-            requested_ops: vec![],
-        };
-
-        self.connections.insert(client_id, connection);
-
+    async fn initialize(&mut self, _client_id: Uuid) -> Result<()> {
         Ok(())
     }
 
     async fn terminate(&mut self, client_id: Uuid) -> Result<()> {
-        let connection = self.connections.get_mut(&client_id).unwrap();
-
-        connection
-            .connection
-            .write_message(Message::Terminate)
-            .await?;
-
-        self.connections.remove(&client_id);
+        self.terminate_connection(client_id);
 
         Ok(())
     }

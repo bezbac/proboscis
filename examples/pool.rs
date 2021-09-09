@@ -41,7 +41,7 @@ async fn proxy() {
             password: "password".to_string(),
             database: "postgres".to_string(),
         },
-        1
+        20,
     )
     .await
     .unwrap();
@@ -70,26 +70,19 @@ async fn main() {
         }
     });
 
-    // Simple query
-    let simple_query_result = client
-        .simple_query("SELECT id, name FROM users")
-        .await
-        .unwrap();
+    for _ in 0..1000 {
+        // Simple query
+        let simple_query_result = client
+            .simple_query("SELECT id, name FROM users")
+            .await
+            .unwrap();
 
-    let row = match simple_query_result.first().unwrap() {
-        SimpleQueryMessage::Row(v) => v,
-        _ => panic!("Not a row"),
-    };
+        let row = match simple_query_result.first().unwrap() {
+            SimpleQueryMessage::Row(v) => v,
+            _ => panic!("Not a row"),
+        };
 
-    let name: &str = row.get(1).unwrap();
-    assert_eq!(name, "Max");
-
-    // Normal query
-    let rows = client
-        .query("SELECT id, name FROM users", &[])
-        .await
-        .unwrap();
-
-    let name: &str = rows[0].get(1);
-    assert_eq!(name, "Max");
+        let name: &str = row.get(1).unwrap();
+        assert_eq!(name, "Max");
+    }
 }

@@ -44,6 +44,7 @@ async fn proxy() {
             password: "password".to_string(),
             database: "postgres".to_string(),
         },
+        1
     )
     .await
     .unwrap();
