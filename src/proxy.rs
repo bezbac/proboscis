@@ -29,9 +29,8 @@ pub struct Proxy {
 }
 
 impl Proxy {
-    pub async fn listen(&mut self, address: &str) -> Result<()> {
-        let listener = TcpListener::bind(&address).await?;
-        println!("Server running on {}!", &address);
+    pub async fn listen(&mut self, listener: TcpListener) -> Result<()> {
+        println!("Server running on {}!", &listener.local_addr().unwrap());
 
         let tls_acceptor: Option<tokio_native_tls::TlsAcceptor> = match &self.config.tls_config {
             Some(tls_config) => {

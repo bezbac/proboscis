@@ -1,65 +1,63 @@
-use anyhow::Result;
 use maplit::hashmap;
 use proboscis::{
     postgres_resolver::{PostgresResolver, TargetConfig},
     Config, Proxy,
 };
+use testcontainers::clients;
+use tokio::net::TcpListener;
 use tokio_postgres::{NoTls, SimpleQueryMessage};
 
-async fn migrations() {
-    mod embedded {
-        use refinery::embed_migrations;
-        embed_migrations!("examples/sql_migrations");
-    }
+mod setup;
 
-    let (mut client, connection) =
-        tokio_postgres::connect("host=0.0.0.0 port=5432 user=admin password=password", NoTls)
-            .await
-            .unwrap();
-
-    tokio::spawn(async move {
-        if let Err(e) = connection.await {
-            eprintln!("connection error: {}", e);
-        }
-    });
-
-    embedded::migrations::runner()
-        .run_async(&mut client)
-        .await
-        .expect("Migrations failed");
-}
-
-async fn proxy() -> Result<()> {
-    let postgres_resolver = PostgresResolver::new(
-        TargetConfig::from_uri("postgres://admin:password@0.0.0.0:5432/postgres")?,
-        20,
-    )
-    .await?;
+async fn run_proxy(database_connection_url: String) -> String {
+    let proxy_user = "admin";
+    let proxy_password = "password";
 
     let mut proxy = Proxy::new(
         Config {
             credentials: hashmap! {
-                "admin".to_string() => "password".to_string(),
+                proxy_user.to_string() => proxy_password.to_string(),
             },
             tls_config: None,
         },
-        Box::new(postgres_resolver),
+        Box::new(
+            PostgresResolver::new(
+                TargetConfig::from_uri(&database_connection_url).unwrap(),
+                20,
+            )
+            .await
+            .unwrap(),
+        ),
     );
 
-    proxy.listen("0.0.0.0:5430").await
+    let listener = TcpListener::bind("0.0.0.0:0").await.unwrap();
+
+    let proxy_connection_url = format!(
+        "postgres://{}:{}@localhost:{}",
+        proxy_user,
+        proxy_password,
+        listener.local_addr().unwrap().port()
+    );
+
+    tokio::spawn(async move {
+        if let Err(e) = proxy.listen(listener).await {
+            eprintln!("proxy error: {}", e);
+        }
+    });
+
+    proxy_connection_url
 }
 
 #[tokio::main]
 async fn main() {
-    tokio::join!(migrations());
-    tokio::spawn(proxy());
+    let docker = clients::Cli::default();
 
-    tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+    let (database_connection_url, _node) = setup::start_dockerized_postgres(&docker).await;
+    let proxy_connection_url = run_proxy(database_connection_url).await;
 
-    let (client, connection) =
-        tokio_postgres::connect("host=0.0.0.0 port=5430 user=admin password=password", NoTls)
-            .await
-            .unwrap();
+    let (client, connection) = tokio_postgres::connect(&proxy_connection_url, NoTls)
+        .await
+        .unwrap();
 
     tokio::spawn(async move {
         if let Err(e) = connection.await {

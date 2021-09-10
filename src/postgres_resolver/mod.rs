@@ -83,27 +83,28 @@ pub async fn establish_connection(target_config: &TargetConfig) -> Result<Connec
                 Message::AuthenticationOk => {}
                 _ => return Err(anyhow::anyhow!("Expected AuthenticationOk")),
             }
-
-            loop {
-                let response = connection.read_message().await?;
-
-                match response {
-                    Message::ReadyForQuery => break,
-                    Message::ParameterStatus { key: _, value: _ } => {
-                        // TODO: Handle this
-                    }
-                    Message::BackendKeyData {
-                        process_id: _,
-                        secret_key: _,
-                        additional: _,
-                    } => {
-                        // TODO: Handle this
-                    }
-                    _ => unimplemented!("Unexpected message"),
-                }
-            }
         }
+        Message::AuthenticationOk => {}
         _ => unimplemented!(),
+    }
+
+    loop {
+        let response = connection.read_message().await?;
+
+        match response {
+            Message::ReadyForQuery => break,
+            Message::ParameterStatus { key: _, value: _ } => {
+                // TODO: Handle this
+            }
+            Message::BackendKeyData {
+                process_id: _,
+                secret_key: _,
+                additional: _,
+            } => {
+                // TODO: Handle this
+            }
+            _ => unimplemented!("Unexpected message"),
+        }
     }
 
     Ok(connection)
