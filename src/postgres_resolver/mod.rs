@@ -1,3 +1,6 @@
+mod target_config;
+pub use target_config::TargetConfig;
+
 use crate::{
     arrow::simple_query_response_to_record_batch,
     connection::{Connection, ConnectionKind, MaybeTlsStream, ProtocolStream},
@@ -32,22 +35,17 @@ impl deadpool::managed::Manager for Manager {
     }
 }
 
-#[derive(Clone)]
-pub struct TargetConfig {
-    pub host: String,
-    pub port: String,
-    pub database: String,
-    pub user: String,
-    pub password: String,
-}
-
 pub async fn establish_connection(target_config: &TargetConfig) -> Result<Connection> {
     let stream =
         tokio::net::TcpStream::connect(&format!("{}:{}", target_config.host, target_config.port))
             .await?;
 
     let mut params: HashMap<String, String> = HashMap::new();
-    params.insert("user".to_string(), target_config.user.clone());
+
+    if let Some(user) = target_config.user.as_ref() {
+        params.insert("user".to_string(), user.to_string());
+    }
+
     params.insert("client_encoding".to_string(), "UTF8".to_string());
 
     let mut connection = Connection::new(
@@ -63,8 +61,17 @@ pub async fn establish_connection(target_config: &TargetConfig) -> Result<Connec
     let response = connection.read_message().await?;
     match response {
         Message::AuthenticationRequestMD5Password { salt } => {
-            let hash =
-                encode_md5_password_hash(&target_config.user, &target_config.password, &salt[..]);
+            let hash = encode_md5_password_hash(
+                target_config
+                    .user
+                    .as_ref()
+                    .expect("Missing username in target_config"),
+                target_config
+                    .password
+                    .as_ref()
+                    .expect("Missing password in target_config"),
+                &salt[..],
+            );
 
             connection
                 .write_message(Message::MD5HashedPassword { hash })

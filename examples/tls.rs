@@ -1,4 +1,9 @@
-use std::collections::HashMap;
+use anyhow::Result;
+use maplit::hashmap;
+use proboscis::{
+    postgres_resolver::{PostgresResolver, TargetConfig},
+    Config, Proxy,
+};
 use tokio_postgres::{NoTls, SimpleQueryMessage};
 
 async fn migrations() {
@@ -24,35 +29,27 @@ async fn migrations() {
         .expect("Migrations failed");
 }
 
-async fn proxy() {
-    let mut credentials = HashMap::new();
-    credentials.insert("admin".to_string(), "password".to_string());
-
-    let config = proboscis::Config {
-        credentials,
-        tls_config: Some(proboscis::TlsConfig {
-            pcks_path: "examples/openssl/identity.p12".to_string(),
-            password: "password".to_string(),
-        }),
-    };
-
-    let postgres_resolver = proboscis::postgres_resolver::PostgresResolver::new(
-        proboscis::postgres_resolver::TargetConfig {
-            host: "0.0.0.0".to_string(),
-            port: "5432".to_string(),
-            user: "admin".to_string(),
-            password: "password".to_string(),
-            database: "postgres".to_string(),
-        },
-        1
+async fn proxy() -> Result<()> {
+    let postgres_resolver = PostgresResolver::new(
+        TargetConfig::from_uri("postgres://admin:password@0.0.0.0:5432/postgres")?,
+        20,
     )
-    .await
-    .unwrap();
+    .await?;
 
-    proboscis::Proxy::new(config.clone(), Box::new(postgres_resolver))
-        .listen("0.0.0.0:5430")
-        .await
-        .unwrap();
+    let mut proxy = Proxy::new(
+        Config {
+            credentials: hashmap! {
+                "admin".to_string() => "password".to_string(),
+            },
+            tls_config: Some(proboscis::TlsConfig {
+                pcks_path: "examples/openssl/identity.p12".to_string(),
+                password: "password".to_string(),
+            }),
+        },
+        Box::new(postgres_resolver),
+    );
+
+    proxy.listen("0.0.0.0:5430").await
 }
 
 #[tokio::main]
