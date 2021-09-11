@@ -4,7 +4,7 @@ pub use target_config::TargetConfig;
 use crate::{
     arrow::simple_query_response_to_record_batch,
     connection::{Connection, ConnectionKind, MaybeTlsStream, ProtocolStream},
-    postgres_protocol::{Message, StartupMessage},
+    postgres_protocol::{CloseKind, Message, StartupMessage},
     util::encode_md5_password_hash,
     Resolver,
 };
@@ -349,6 +349,24 @@ impl Resolver for PostgresResolver {
         connection.requested_ops = vec![];
 
         Ok(messages)
+    }
+
+    async fn close(&mut self, client_id: Uuid, kind: CloseKind, name: String) -> Result<()> {
+        let connection = self.get_connection(client_id).await?;
+
+        connection
+            .connection
+            .write_message(Message::Close { kind, name })
+            .await?;
+
+        let read_message = connection.connection.read_message().await?;
+        match read_message {
+            _ => {
+                // TODO: Handle response
+            }
+        }
+
+        Ok(())
     }
 
     async fn initialize(&mut self, _client_id: Uuid) -> Result<()> {

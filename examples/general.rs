@@ -4,7 +4,7 @@ use proboscis::{
     Config, Proxy,
 };
 use testcontainers::clients;
-use tokio::{net::TcpListener};
+use tokio::net::TcpListener;
 use tokio_postgres::{NoTls, SimpleQueryMessage};
 
 mod setup;

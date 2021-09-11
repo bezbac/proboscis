@@ -156,7 +156,6 @@ pub async fn handle_connection(
         match request {
             Message::Terminate => {
                 resolver.terminate(client_id).await?;
-
                 break;
             }
             Message::SimpleQuery(query) => {
@@ -179,11 +178,9 @@ pub async fn handle_connection(
             } => {
                 resolver
                     .parse(client_id, statement_name, query, param_types)
-                    .await?;
+                    .await?
             }
-            Message::Describe { kind, name } => {
-                resolver.describe(client_id, kind, name).await?;
-            }
+            Message::Describe { kind, name } => resolver.describe(client_id, kind, name).await?,
             Message::Bind {
                 statement,
                 portal,
@@ -193,10 +190,10 @@ pub async fn handle_connection(
             } => {
                 resolver
                     .bind(client_id, statement, portal, params, formats, results)
-                    .await?;
+                    .await?
             }
             Message::Execute { portal, row_limit } => {
-                resolver.execute(client_id, portal, row_limit).await?;
+                resolver.execute(client_id, portal, row_limit).await?
             }
             Message::Sync => {
                 let messages = resolver.sync(client_id).await?;
@@ -204,6 +201,10 @@ pub async fn handle_connection(
                 for message in messages {
                     frontend.write_message(message).await?;
                 }
+            }
+            Message::Close { kind, name } => {
+                resolver.close(client_id, kind, name).await?;
+                frontend.write_message(Message::CloseComplete).await?;
             }
             _ => unimplemented!(),
         }

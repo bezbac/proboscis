@@ -9,7 +9,7 @@ pub enum CharTag {
     EmptyQueryResponse,
     Query,
     Password,
-    CommandComplete,
+    CommandCompleteOrClose,
     RowDescription,
     DataRowOrDescribe,
     BackendKeyData,
@@ -31,15 +31,6 @@ impl CharTag {
 
         let tag = CharTag::try_from(bytes[0]);
 
-        println!(
-            "Encountered Tag: {} ({:?})",
-            String::from_utf8(bytes)?,
-            match &tag {
-                Ok(tag) => format!("{:?}", tag),
-                Err(_) => "Error".to_string(),
-            }
-        );
-
         Ok(tag.expect("Could not read char tag"))
     }
 }
@@ -54,7 +45,7 @@ impl From<CharTag> for u8 {
             CharTag::Password => b'p',
             CharTag::RowDescription => b'T',
             CharTag::DataRowOrDescribe => b'D',
-            CharTag::CommandComplete => b'C',
+            CharTag::CommandCompleteOrClose => b'C',
             CharTag::ParameterStatusOrSync => b'S',
             CharTag::BackendKeyData => b'K',
             CharTag::Terminate => b'X',
@@ -81,7 +72,7 @@ impl TryFrom<u8> for CharTag {
             b'p' => Ok(CharTag::Password),
             b'T' => Ok(CharTag::RowDescription),
             b'D' => Ok(CharTag::DataRowOrDescribe),
-            b'C' => Ok(CharTag::CommandComplete),
+            b'C' => Ok(CharTag::CommandCompleteOrClose),
             b'S' => Ok(CharTag::ParameterStatusOrSync),
             b'K' => Ok(CharTag::BackendKeyData),
             b'X' => Ok(CharTag::Terminate),

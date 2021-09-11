@@ -55,17 +55,17 @@ async fn main() {
     let (database_connection_url, _node) = setup::start_dockerized_postgres(&docker).await;
     let proxy_connection_url = run_proxy(database_connection_url).await;
 
-    let (client, connection) = tokio_postgres::connect(&proxy_connection_url, NoTls)
-        .await
-        .unwrap();
-
-    tokio::spawn(async move {
-        if let Err(e) = connection.await {
-            eprintln!("connection error: {}", e);
-        }
-    });
-
     for _ in 0..1000 {
+        let (client, connection) = tokio_postgres::connect(&proxy_connection_url, NoTls)
+            .await
+            .unwrap();
+
+        tokio::spawn(async move {
+            if let Err(e) = connection.await {
+                eprintln!("connection error: {}", e);
+            }
+        });
+
         // Simple query
         let simple_query_result = client
             .simple_query("SELECT id, name FROM users")
@@ -78,6 +78,15 @@ async fn main() {
         };
 
         let name: &str = row.get(1).unwrap();
+        assert_eq!(name, "Max");
+
+        // Normal query
+        let rows = client
+            .query("SELECT id, name FROM users", &[])
+            .await
+            .unwrap();
+
+        let name: &str = rows[0].get(1);
         assert_eq!(name, "Max");
     }
 }

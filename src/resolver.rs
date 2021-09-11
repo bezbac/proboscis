@@ -3,7 +3,7 @@ use arrow::record_batch::RecordBatch;
 use async_trait::async_trait;
 use uuid::Uuid;
 
-use crate::postgres_protocol::{DescribeKind, Message};
+use crate::postgres_protocol::{CloseKind, DescribeKind, Message};
 
 #[async_trait]
 pub trait Resolver: Sync + Send {
@@ -34,6 +34,8 @@ pub trait Resolver: Sync + Send {
     async fn execute(&mut self, client_id: Uuid, portal: String, row_limit: i32) -> Result<()>;
 
     async fn sync(&mut self, client_id: Uuid) -> Result<Vec<Message>>;
+
+    async fn close(&mut self, client_id: Uuid, kind: CloseKind, name: String) -> Result<()>;
 
     async fn terminate(&mut self, client_id: Uuid) -> Result<()>;
 }

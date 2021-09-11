@@ -19,7 +19,7 @@ pub struct Field {
     pub format: i16,
 }
 
-#[derive(Debug, PartialEq, Clone)]
+#[derive(Debug, PartialEq, Clone, Copy)]
 pub enum DescribeKind {
     Statement,
     Portal,
@@ -30,6 +30,21 @@ impl From<DescribeKind> for u8 {
         match value {
             DescribeKind::Statement => b'S',
             DescribeKind::Portal => b'P',
+        }
+    }
+}
+
+#[derive(Debug, PartialEq, Clone, Copy)]
+pub enum CloseKind {
+    Statement,
+    Portal,
+}
+
+impl From<CloseKind> for u8 {
+    fn from(value: CloseKind) -> Self {
+        match value {
+            CloseKind::Statement => b'S',
+            CloseKind::Portal => b'P',
         }
     }
 }
@@ -81,6 +96,10 @@ pub enum Message {
     ParseComplete,
     BindComplete,
     CloseComplete,
+    Close {
+        kind: CloseKind,
+        name: String,
+    },
     Error {
         messages: HashMap<String, String>,
     },
@@ -182,7 +201,7 @@ impl Message {
             ),
             Self::CommandComplete { tag } => write_message_with_prefixed_message_len(
                 buf,
-                CharTag::CommandComplete,
+                CharTag::CommandCompleteOrClose,
                 Box::new(move |body| -> Result<()> {
                     body.extend_from_slice(tag.as_bytes());
                     body.push(0);
@@ -345,6 +364,16 @@ impl Message {
             Self::Error { messages } => {
                 unimplemented!()
             }
+            Self::Close { kind, name } => write_message_with_prefixed_message_len(
+                buf,
+                CharTag::CommandCompleteOrClose,
+                Box::new(move |body| -> Result<()> {
+                    body.push(kind.into());
+                    body.extend_from_slice(name.as_bytes());
+
+                    Ok(())
+                }),
+            ),
         }
     }
 
@@ -513,11 +542,33 @@ impl Message {
                     }
                 }
             }
-            CharTag::CommandComplete => {
+            CharTag::CommandCompleteOrClose => {
                 let tag_bytes = read_until_zero(stream)?;
                 let tag = String::from_utf8(tag_bytes)?;
 
-                Ok(Message::CommandComplete { tag })
+                if tag.contains("INSERT")
+                    || tag.contains("DELETE")
+                    || tag.contains("UPDATE")
+                    || tag.contains("SELECT")
+                    || tag.contains("MOVE")
+                    || tag.contains("FETCH")
+                    || tag.contains("COPY")
+                {
+                    Ok(Message::CommandComplete { tag })
+                } else {
+                    let kind = if tag.starts_with("S") {
+                        CloseKind::Statement
+                    } else if tag.starts_with("P") {
+                        CloseKind::Portal
+                    } else {
+                        return Err(anyhow::anyhow!(""));
+                    };
+
+                    Ok(Message::Close {
+                        kind,
+                        name: tag[1..].to_string(),
+                    })
+                }
             }
             CharTag::Terminate => Ok(Message::Terminate),
             CharTag::Parse => {
