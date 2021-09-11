@@ -6,6 +6,7 @@ use proboscis::{
 use testcontainers::clients;
 use tokio::net::TcpListener;
 use tokio_postgres::SimpleQueryMessage;
+use tracing_subscriber::EnvFilter;
 
 mod setup;
 
@@ -53,6 +54,10 @@ async fn run_proxy(database_connection_url: String) -> String {
 
 #[tokio::main]
 async fn main() {
+    tracing_subscriber::fmt()
+        .with_env_filter(EnvFilter::default().add_directive("proboscis=trace".parse().unwrap()))
+        .init();
+
     let docker = clients::Cli::default();
 
     let (database_connection_url, _node) = setup::start_dockerized_postgres(&docker).await;

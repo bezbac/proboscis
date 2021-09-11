@@ -3,7 +3,7 @@ pub use target_config::TargetConfig;
 
 use crate::{
     arrow::simple_query_response_to_record_batch,
-    connection::{Connection, ConnectionKind, MaybeTlsStream, ProtocolStream},
+    connection::{Connection, MaybeTlsStream, ProtocolStream},
     postgres_protocol::{CloseKind, Message, StartupMessage},
     util::encode_md5_password_hash,
     Resolver,
@@ -18,6 +18,7 @@ use uuid::Uuid;
 
 type Pool = deadpool::managed::Pool<Manager>;
 
+#[derive(Debug)]
 pub struct Manager {
     target_config: TargetConfig,
 }
@@ -48,11 +49,7 @@ pub async fn establish_connection(target_config: &TargetConfig) -> Result<Connec
 
     params.insert("client_encoding".to_string(), "UTF8".to_string());
 
-    let mut connection = Connection::new(
-        MaybeTlsStream::Left(stream),
-        ConnectionKind::Backend,
-        params.clone(),
-    );
+    let mut connection = Connection::new(MaybeTlsStream::Left(stream), params.clone());
 
     connection
         .write_startup_message(StartupMessage::Startup { params })
@@ -143,9 +140,7 @@ impl PostgresResolver {
             pool,
         })
     }
-}
 
-impl PostgresResolver {
     async fn get_connection(&mut self, client_id: Uuid) -> Result<&mut ActiveConnection> {
         Ok(self.active_connections.entry(client_id).or_insert({
             let connection = self.pool.get().map_err(|err| anyhow::anyhow!(err)).await?;

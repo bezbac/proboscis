@@ -1,5 +1,5 @@
 use crate::{
-    connection::{Connection, ConnectionKind, MaybeTlsStream, ProtocolStream},
+    connection::{Connection, MaybeTlsStream, ProtocolStream},
     postgres_protocol::{Message, StartupMessage},
     util::encode_md5_password_hash,
     Resolver,
@@ -9,6 +9,7 @@ use native_tls::Identity;
 use rand::Rng;
 use std::{collections::HashMap, fs::File, io::Read};
 use tokio::{io::AsyncWriteExt, net::TcpListener};
+use tracing::{info, trace_span, Instrument};
 use uuid::Uuid;
 
 #[derive(Clone)]
@@ -30,7 +31,7 @@ pub struct Proxy {
 
 impl Proxy {
     pub async fn listen(&mut self, listener: TcpListener) -> Result<()> {
-        println!("Server running on {}!", &listener.local_addr().unwrap());
+        info!("Listening on: {}", &listener.local_addr().unwrap());
 
         let tls_acceptor: Option<tokio_native_tls::TlsAcceptor> = match &self.config.tls_config {
             Some(tls_config) => {
@@ -50,14 +51,28 @@ impl Proxy {
         };
 
         loop {
-            let (stream, _) = listener.accept().await?;
-            println!("New connection established!");
+            let (stream, client_addr) = listener.accept().await?;
+            let client_id = Uuid::new_v4();
 
-            let mut frontend_connection = accept_frontend_connection(stream, &tls_acceptor).await?;
+            let span =
+                trace_span!("connection", client.addr = %client_addr, client.id = %client_id);
 
-            handle_authentication(&mut frontend_connection, &self.config.credentials).await?;
+            info!(parent: &span, "connection established");
 
-            handle_connection(&mut frontend_connection, &mut self.resolver).await?;
+            let mut frontend_connection = accept_frontend_connection(stream, &tls_acceptor)
+                .instrument(tracing::info_span!(
+                    parent: &span,
+                    "accept_frontend_connection"
+                ))
+                .await?;
+
+            handle_authentication(&mut frontend_connection, &self.config.credentials)
+                .instrument(tracing::info_span!(parent: &span, "handle_authentication"))
+                .await?;
+
+            handle_connection(client_id, &mut frontend_connection, &mut self.resolver)
+                .instrument(span)
+                .await?;
         }
     }
 
@@ -137,17 +152,16 @@ pub async fn accept_frontend_connection(
         _ => panic!(""),
     };
 
-    let frontend = Connection::new(frontend, ConnectionKind::Frontend, frontend_params);
+    let frontend = Connection::new(frontend, frontend_params);
 
     Ok(frontend)
 }
 
 pub async fn handle_connection(
+    client_id: Uuid,
     frontend: &mut Connection,
     resolver: &mut Box<dyn Resolver>,
 ) -> Result<()> {
-    let client_id = Uuid::new_v4();
-
     resolver.initialize(client_id).await?;
 
     loop {
@@ -155,32 +169,70 @@ pub async fn handle_connection(
 
         match request {
             Message::Terminate => {
-                resolver.terminate(client_id).await?;
+                async {
+                    resolver
+                        .terminate(client_id)
+                        .instrument(tracing::trace_span!("resolver"))
+                        .await?;
+
+                    Ok::<(), anyhow::Error>(())
+                }
+                .instrument(tracing::trace_span!("terminate"))
+                .await?;
+
                 break;
             }
             Message::SimpleQuery(query) => {
-                let result = resolver.query(client_id, query).await?;
+                async {
+                    let result = resolver
+                        .query(client_id, query)
+                        .instrument(tracing::trace_span!("resolver"))
+                        .await?;
 
-                frontend.write_data(result).await?;
+                    frontend.write_data(result).await?;
 
-                // TODO: Fix the command complete tag
-                frontend
-                    .write_message(Message::CommandComplete {
-                        tag: "C".to_string(),
-                    })
-                    .await?;
-                frontend.write_message(Message::ReadyForQuery).await?;
+                    // TODO: Fix the command complete tag
+                    frontend
+                        .write_message(Message::CommandComplete {
+                            tag: "C".to_string(),
+                        })
+                        .await?;
+
+                    frontend.write_message(Message::ReadyForQuery).await?;
+
+                    Ok::<(), anyhow::Error>(())
+                }
+                .instrument(tracing::trace_span!("query"))
+                .await?;
             }
             Message::Parse {
                 statement_name,
                 query,
                 param_types,
             } => {
-                resolver
-                    .parse(client_id, statement_name, query, param_types)
-                    .await?
+                async {
+                    resolver
+                        .parse(client_id, statement_name, query, param_types)
+                        .instrument(tracing::trace_span!("resolver"))
+                        .await?;
+
+                    Ok::<(), anyhow::Error>(())
+                }
+                .instrument(tracing::trace_span!("parse"))
+                .await?;
             }
-            Message::Describe { kind, name } => resolver.describe(client_id, kind, name).await?,
+            Message::Describe { kind, name } => {
+                async {
+                    resolver
+                        .describe(client_id, kind, name)
+                        .instrument(tracing::trace_span!("resolver"))
+                        .await?;
+
+                    Ok::<(), anyhow::Error>(())
+                }
+                .instrument(tracing::trace_span!("describe"))
+                .await?;
+            }
             Message::Bind {
                 statement,
                 portal,
@@ -188,23 +240,58 @@ pub async fn handle_connection(
                 formats,
                 results,
             } => {
-                resolver
-                    .bind(client_id, statement, portal, params, formats, results)
-                    .await?
+                async {
+                    resolver
+                        .bind(client_id, statement, portal, params, formats, results)
+                        .instrument(tracing::trace_span!("resolver"))
+                        .await?;
+
+                    Ok::<(), anyhow::Error>(())
+                }
+                .instrument(tracing::trace_span!("bind"))
+                .await?;
             }
             Message::Execute { portal, row_limit } => {
-                resolver.execute(client_id, portal, row_limit).await?
+                async {
+                    resolver
+                        .execute(client_id, portal, row_limit)
+                        .instrument(tracing::trace_span!("resolver"))
+                        .await?;
+
+                    Ok::<(), anyhow::Error>(())
+                }
+                .instrument(tracing::trace_span!("execute"))
+                .await?;
             }
             Message::Sync => {
-                let messages = resolver.sync(client_id).await?;
+                async {
+                    let messages = resolver
+                        .sync(client_id)
+                        .instrument(tracing::trace_span!("resolver"))
+                        .await?;
 
-                for message in messages {
-                    frontend.write_message(message).await?;
+                    for message in messages {
+                        frontend.write_message(message).await?;
+                    }
+
+                    Ok::<(), anyhow::Error>(())
                 }
+                .instrument(tracing::trace_span!("sync"))
+                .await?;
             }
             Message::Close { kind, name } => {
-                resolver.close(client_id, kind, name).await?;
-                frontend.write_message(Message::CloseComplete).await?;
+                async {
+                    let messages = resolver
+                        .close(client_id, kind, name)
+                        .instrument(tracing::trace_span!("resolver"))
+                        .await?;
+
+                    frontend.write_message(Message::CloseComplete).await?;
+
+                    Ok::<(), anyhow::Error>(())
+                }
+                .instrument(tracing::trace_span!("close"))
+                .await?;
             }
             _ => unimplemented!(),
         }
