@@ -29,21 +29,19 @@ impl TargetConfig {
             _ => 5432,
         };
 
-        let database = match url.path_segments().iter().next() {
-            Some(database) => Some(database.clone().collect::<String>()),
-            _ => None,
-        };
+        let database = url
+            .path_segments()
+            .iter()
+            .next()
+            .map(|database| database.clone().collect::<String>());
 
-        let user = if url.username().len() > 0 {
+        let user = if !url.username().is_empty() {
             Some(url.username().to_string())
         } else {
             None
         };
 
-        let password = match url.password() {
-            Some(password) => Some(password.to_string()),
-            _ => None,
-        };
+        let password = url.password().map(|password| password.to_string());
 
         let config = TargetConfig {
             host,

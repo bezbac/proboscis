@@ -281,7 +281,7 @@ pub async fn handle_connection(
             }
             Message::Close { kind, name } => {
                 async {
-                    let messages = resolver
+                    resolver
                         .close(client_id, kind, name)
                         .instrument(tracing::trace_span!("resolver"))
                         .await?;

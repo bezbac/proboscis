@@ -274,7 +274,7 @@ impl Message {
                 buf,
                 CharTag::DataRowOrDescribe,
                 Box::new(move |body| -> Result<()> {
-                    body.push(kind.clone().into());
+                    body.push(kind.into());
 
                     body.extend_from_slice(name.as_bytes());
                     body.push(0);
@@ -556,9 +556,9 @@ impl Message {
                 {
                     Ok(Message::CommandComplete { tag })
                 } else {
-                    let kind = if tag.starts_with("S") {
+                    let kind = if tag.starts_with('S') {
                         CloseKind::Statement
-                    } else if tag.starts_with("P") {
+                    } else if tag.starts_with('P') {
                         CloseKind::Portal
                     } else {
                         return Err(anyhow::anyhow!(""));

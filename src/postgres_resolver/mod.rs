@@ -145,12 +145,10 @@ impl PostgresResolver {
         Ok(self.active_connections.entry(client_id).or_insert({
             let connection = self.pool.get().map_err(|err| anyhow::anyhow!(err)).await?;
 
-            let connection_with_state = ActiveConnection {
+            ActiveConnection {
                 connection,
                 requested_ops: vec![],
-            };
-
-            connection_with_state
+            }
         }))
     }
 
@@ -225,7 +223,7 @@ impl Resolver for PostgresResolver {
         connection
             .connection
             .write_message(Message::Describe {
-                kind: kind.clone(),
+                kind,
                 name: name.clone(),
             })
             .await?;
@@ -354,12 +352,8 @@ impl Resolver for PostgresResolver {
             .write_message(Message::Close { kind, name })
             .await?;
 
-        let read_message = connection.connection.read_message().await?;
-        match read_message {
-            _ => {
-                // TODO: Handle response
-            }
-        }
+        let _read_message = connection.connection.read_message().await?;
+        // TODO: Handle response
 
         Ok(())
     }
