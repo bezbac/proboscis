@@ -66,7 +66,7 @@ impl TransformingResolver {
         let field_transformations = self
             .transformations
             .entry(target_field.to_string())
-            .or_insert(vec![]);
+            .or_default();
 
         field_transformations.push(transformation);
 
@@ -159,10 +159,7 @@ impl Resolver for TransformingResolver {
             .parse(client_id, statement_name, query.clone(), param_types)
             .await?;
 
-        let parse_vec = self
-            .parse_cache
-            .entry(client_id)
-            .or_insert(VecDeque::from(vec![]));
+        let parse_vec = self.parse_cache.entry(client_id).or_default();
 
         parse_vec.push_back(query);
 
@@ -213,10 +210,7 @@ impl Resolver for TransformingResolver {
         for message in messages {
             match message {
                 Message::RowDescription { fields } => {
-                    let description_vec = self
-                        .description_cache
-                        .entry(client_id)
-                        .or_insert(VecDeque::new());
+                    let description_vec = self.description_cache.entry(client_id).or_default();
 
                     description_vec.push_back(Message::RowDescription {
                         fields: fields.to_vec(),
@@ -228,7 +222,7 @@ impl Resolver for TransformingResolver {
                 }
                 Message::DataRow { field_data } => group.push(Message::DataRow { field_data }),
                 Message::CommandComplete { tag: _ } => {
-                    if group.len() > 0 {
+                    if !group.is_empty() {
                         grouped_messages.push(group);
                         group = vec![];
                     }
@@ -242,15 +236,9 @@ impl Resolver for TransformingResolver {
         let mut final_messages: Vec<Message> = vec![];
         for group in grouped_messages {
             if let Some(Message::DataRow { field_data: _ }) = group.first() {
-                let parse_vec = self
-                    .parse_cache
-                    .entry(client_id)
-                    .or_insert(VecDeque::from(vec![]));
+                let parse_vec = self.parse_cache.entry(client_id).or_default();
 
-                let description_vec = self
-                    .description_cache
-                    .entry(client_id)
-                    .or_insert(VecDeque::from(vec![]));
+                let description_vec = self.description_cache.entry(client_id).or_default();
 
                 let query = parse_vec.pop_front().unwrap();
                 let row_description = description_vec.pop_front();
@@ -339,7 +327,7 @@ fn get_schema_fields(ast: &Statement) -> anyhow::Result<Vec<String>> {
                 if select.from.len() == 1 {
                     match select.from.first().unwrap().clone().relation {
                         TableFactor::Table {
-                            name: ObjectName(name_identifiers),
+                            name: ObjectName(mut name_identifiers),
                             alias,
                             args: _,
                             with_hints: _,
@@ -348,7 +336,7 @@ fn get_schema_fields(ast: &Statement) -> anyhow::Result<Vec<String>> {
                                 unimplemented!()
                             }
 
-                            let original_name = name_identifiers.clone().pop().unwrap().value;
+                            let original_name = name_identifiers.pop().unwrap().value;
 
                             match alias {
                                 Some(TableAlias {
