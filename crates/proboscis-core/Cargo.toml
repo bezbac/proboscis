@@ -1,0 +1,22 @@
+[package]
+name = "proboscis-core"
+version = "0.1.0"
+edition = "2018"
+
+[dependencies]
+anyhow = "1.0"
+omnom = "3.0.0"
+md-5 = "0.9.1"
+tokio = { version = "1.4.0", features = ["full"] }
+arrow = "3.0.0"
+native-tls = "0.2.7"
+tokio-native-tls = "0.3.0"
+tokio-util = "0.6.6"
+async-trait = "0.1.50"
+rand = "0.8.3"
+postgres = "0.19.1"
+uuid = { version = "0.8", features = ["v4"] }
+url = "2.2.2"
+tracing = "0.1"
+
+postgres-protocol = { version = "0.0.0", path = "../postgres-protocol" }

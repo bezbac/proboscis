@@ -8,7 +8,7 @@ use testcontainers::{
 pub async fn apply_migrations(address: &str) {
     mod embedded {
         use refinery::embed_migrations;
-        embed_migrations!("examples/setup/sql_migrations");
+        embed_migrations!("setup/sql_migrations");
     }
 
     let (mut client, connection) = tokio_postgres::connect(address, NoTls).await.unwrap();

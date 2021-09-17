@@ -1,12 +1,10 @@
-use super::{
-    arrow::{
-        serialize_record_batch_schema_to_row_description, serialize_record_batch_to_data_rows,
-    },
+use crate::utils::arrow::{
+    serialize_record_batch_schema_to_row_description, serialize_record_batch_to_data_rows,
 };
-use crate::postgres_protocol::{Message, StartupMessage};
 use anyhow::Result;
 use arrow::record_batch::RecordBatch;
 use async_trait::async_trait;
+use postgres_protocol::{Message, StartupMessage};
 use std::collections::HashMap;
 use tokio::io::{AsyncRead, AsyncWrite, AsyncWriteExt};
 use tracing::debug;

@@ -1,9 +1,8 @@
 use anyhow::Result;
 use arrow::record_batch::RecordBatch;
 use async_trait::async_trait;
+use postgres_protocol::{CloseKind, DescribeKind, Message};
 use uuid::Uuid;
-
-use crate::postgres_protocol::{CloseKind, DescribeKind, Message};
 
 #[async_trait]
 pub trait Resolver: Sync + Send {

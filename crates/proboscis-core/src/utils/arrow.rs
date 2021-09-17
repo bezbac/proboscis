@@ -1,10 +1,10 @@
-use crate::postgres_protocol::Message;
 use anyhow::Result;
 use arrow::array::as_primitive_array;
 use arrow::array::{ArrayRef, GenericStringArray, Int16Array, Int32Array, Int64Array, Int8Array};
 use arrow::datatypes::{DataType, Field, Schema};
 use arrow::record_batch::RecordBatch;
 use omnom::prelude::*;
+use postgres_protocol::Message;
 use std::{collections::BTreeMap, sync::Arc, vec};
 
 fn column_data_to_array(data: &[Vec<u8>], data_type: &DataType) -> ArrayRef {
@@ -107,7 +107,7 @@ fn protocol_rows_to_arrow_columns(
     Ok(result)
 }
 
-fn message_field_to_arrow_field(value: &crate::postgres_protocol::Field) -> Field {
+fn message_field_to_arrow_field(value: &postgres_protocol::Field) -> Field {
     let postgres_type = postgres::types::Type::from_oid(value.type_oid as u32).unwrap();
 
     let arrow_type = match postgres_type {
@@ -135,10 +135,7 @@ fn message_field_to_arrow_field(value: &crate::postgres_protocol::Field) -> Fiel
     field
 }
 
-fn arrow_field_to_message_field(
-    value: &Field,
-    column_number: i16,
-) -> crate::postgres_protocol::Field {
+fn arrow_field_to_message_field(value: &Field, column_number: i16) -> postgres_protocol::Field {
     let postgres_type = match value.data_type() {
         DataType::Boolean => postgres::types::Type::BOOL,
         DataType::Int8 => postgres::types::Type::INT2,
@@ -168,7 +165,7 @@ fn arrow_field_to_message_field(
         .parse()
         .unwrap();
 
-    crate::postgres_protocol::Field {
+    postgres_protocol::Field {
         type_oid: postgres_type.oid() as i32,
         name: value.name().clone(),
         column_number,
@@ -180,7 +177,7 @@ fn arrow_field_to_message_field(
 }
 
 pub async fn simple_query_response_to_record_batch(
-    fields: &[crate::postgres_protocol::Field],
+    fields: &[postgres_protocol::Field],
     data: &[Message],
 ) -> Result<RecordBatch> {
     let fields = fields
@@ -264,7 +261,7 @@ pub fn serialize_record_batch_to_data_rows(batch: RecordBatch) -> Vec<Message> {
 }
 
 pub fn serialize_record_batch_schema_to_row_description(schema: Arc<Schema>) -> Message {
-    let fields: Vec<crate::postgres_protocol::Field> = schema
+    let fields: Vec<postgres_protocol::Field> = schema
         .fields()
         .iter()
         .enumerate()

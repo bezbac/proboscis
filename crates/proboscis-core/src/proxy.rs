@@ -1,11 +1,11 @@
-use super::{
-    connection::{Connection, MaybeTlsStream, ProtocolStream},
+use crate::{
     resolver::Resolver,
-    util::encode_md5_password_hash
+    utils::connection::{Connection, MaybeTlsStream, ProtocolStream},
+    utils::password::encode_md5_password_hash,
 };
-use crate::postgres_protocol::{Message, StartupMessage};
 use anyhow::Result;
 use native_tls::Identity;
+use postgres_protocol::{Message, StartupMessage};
 use rand::Rng;
 use std::{collections::HashMap, fs::File, io::Read};
 use tokio::{io::AsyncWriteExt, net::TcpListener};

@@ -235,6 +235,24 @@ dependencies = [
 ]
 
 [[package]]
+name = "examples"
+version = "0.0.0"
+dependencies = [
+ "maplit",
+ "native-tls",
+ "postgres",
+ "postgres-native-tls",
+ "proboscis-core",
+ "proboscis-resolver-postgres",
+ "refinery",
+ "tempdir",
+ "testcontainers",
+ "tokio",
+ "tokio-postgres",
+ "tracing-subscriber",
+]
+
+[[package]]
 name = "fallible-iterator"
 version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -853,6 +871,17 @@ dependencies = [
 
 [[package]]
 name = "postgres-protocol"
+version = "0.0.0"
+dependencies = [
+ "anyhow",
+ "byteorder",
+ "bytes",
+ "omnom",
+ "tokio",
+]
+
+[[package]]
+name = "postgres-protocol"
 version = "0.6.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ff3e0f70d32e20923cabf2df02913be7c1842d4c772db8065c00fcfdd1d1bff3"
@@ -877,7 +906,7 @@ checksum = "430f4131e1b7657b0cd9a2b0c3408d77c9a43a042d300b8c77f981dffcc43a2f"
 dependencies = [
  "bytes",
  "fallible-iterator",
- "postgres-protocol",
+ "postgres-protocol 0.6.1",
 ]
 
 [[package]]
@@ -887,33 +916,40 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ac74c624d6b2d21f425f752262f42188365d7b8ff1aff74c82e45136510a4857"
 
 [[package]]
-name = "proboscis"
+name = "proboscis-core"
 version = "0.1.0"
 dependencies = [
  "anyhow",
  "arrow",
  "async-trait",
- "byteorder",
- "bytes",
- "deadpool",
- "futures",
- "maplit",
  "md-5",
  "native-tls",
  "omnom",
  "postgres",
- "postgres-native-tls",
+ "postgres-protocol 0.0.0",
  "rand 0.8.3",
- "refinery",
- "sqlparser",
- "tempdir",
- "testcontainers",
  "tokio",
  "tokio-native-tls",
- "tokio-postgres",
  "tokio-util",
  "tracing",
- "tracing-subscriber",
+ "url",
+ "uuid",
+]
+
+[[package]]
+name = "proboscis-resolver-postgres"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "arrow",
+ "async-trait",
+ "deadpool",
+ "futures",
+ "omnom",
+ "postgres-protocol 0.0.0",
+ "proboscis-core",
+ "tokio",
+ "tracing",
  "url",
  "uuid",
 ]
@@ -1312,15 +1348,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "sqlparser"
-version = "0.9.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4fa863a2dfc4879a35647c51dadf495a2ad53745eaf3723fda27006e745fb0ba"
-dependencies = [
- "log",
-]
-
-[[package]]
 name = "static_assertions"
 version = "1.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1503,7 +1530,7 @@ dependencies = [
  "percent-encoding",
  "phf",
  "pin-project-lite",
- "postgres-protocol",
+ "postgres-protocol 0.6.1",
  "postgres-types",
  "socket2 0.4.0",
  "tokio",
@@ -1558,9 +1585,9 @@ dependencies = [
 
 [[package]]
 name = "tracing-core"
-version = "0.1.19"
+version = "0.1.20"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2ca517f43f0fb96e0c3072ed5c275fe5eece87e8cb52f4a77b69226d3b1c9df8"
+checksum = "46125608c26121c81b0c6d693eab5a420e416da7e43c426d2e8f7df8da8a3acf"
 dependencies = [
  "lazy_static",
 ]
@@ -1588,9 +1615,9 @@ dependencies = [
 
 [[package]]
 name = "tracing-subscriber"
-version = "0.2.20"
+version = "0.2.23"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b9cbe87a2fa7e35900ce5de20220a582a9483a7063811defce79d7cbd59d4cfe"
+checksum = "56c42e73a9d277d4d2b6a88389a137ccf3c58599660b17e8f5fc39305e490669"
 dependencies = [
  "ansi_term",
  "chrono",

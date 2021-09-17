@@ -1,8 +1,6 @@
 use maplit::hashmap;
-use proboscis::{
-    postgres_resolver::{PostgresResolver, TargetConfig},
-    Config, Proxy,
-};
+use proboscis_core::{Config, Proxy};
+use proboscis_resolver_postgres::{PostgresResolver, TargetConfig};
 use testcontainers::clients;
 use tokio::net::TcpListener;
 use tokio_postgres::SimpleQueryMessage;
@@ -19,7 +17,7 @@ async fn run_proxy(database_connection_url: String) -> String {
             credentials: hashmap! {
                 "admin".to_string() => "password".to_string(),
             },
-            tls_config: Some(proboscis::TlsConfig {
+            tls_config: Some(proboscis_core::TlsConfig {
                 pcks_path: "examples/openssl/identity.p12".to_string(),
                 password: "password".to_string(),
             }),

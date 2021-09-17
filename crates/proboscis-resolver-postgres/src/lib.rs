@@ -1,19 +1,18 @@
 mod target_config;
-pub use target_config::TargetConfig;
-
-use crate::core::{
-    arrow::simple_query_response_to_record_batch,
-    connection::{Connection, MaybeTlsStream, ProtocolStream},
-    resolver::Resolver,
-    util::encode_md5_password_hash,
+use proboscis_core::{
+    Resolver,
+    utils::arrow::simple_query_response_to_record_batch,
+    utils::connection::{Connection, MaybeTlsStream, ProtocolStream},
+    utils::password::encode_md5_password_hash,
 };
-use crate::postgres_protocol::{CloseKind, Message, StartupMessage};
 use anyhow::Result;
 use arrow::record_batch::RecordBatch;
 use async_trait::async_trait;
 use deadpool::managed::RecycleResult;
 use futures::TryFutureExt;
+use postgres_protocol::{CloseKind, Message, StartupMessage};
 use std::collections::HashMap;
+pub use target_config::TargetConfig;
 use uuid::Uuid;
 
 type Pool = deadpool::managed::Pool<Manager>;
@@ -215,7 +214,7 @@ impl Resolver for PostgresResolver {
     async fn describe(
         &mut self,
         client_id: Uuid,
-        kind: crate::postgres_protocol::DescribeKind,
+        kind: postgres_protocol::DescribeKind,
         name: String,
     ) -> Result<()> {
         let connection = self.get_connection(client_id).await?;

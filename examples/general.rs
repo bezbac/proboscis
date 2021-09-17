@@ -1,8 +1,6 @@
 use maplit::hashmap;
-use proboscis::{
-    postgres_resolver::{PostgresResolver, TargetConfig},
-    Config, Proxy,
-};
+use proboscis_core::{Config, Proxy};
+use proboscis_resolver_postgres::{PostgresResolver, TargetConfig};
 use testcontainers::clients;
 use tokio::net::TcpListener;
 use tokio_postgres::{NoTls, SimpleQueryMessage};
