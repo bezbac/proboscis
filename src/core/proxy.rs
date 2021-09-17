@@ -1,9 +1,9 @@
-use crate::{
+use super::{
     connection::{Connection, MaybeTlsStream, ProtocolStream},
-    postgres_protocol::{Message, StartupMessage},
-    util::encode_md5_password_hash,
-    Resolver,
+    resolver::Resolver,
+    util::encode_md5_password_hash
 };
+use crate::postgres_protocol::{Message, StartupMessage};
 use anyhow::Result;
 use native_tls::Identity;
 use rand::Rng;

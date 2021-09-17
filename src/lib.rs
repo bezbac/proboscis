@@ -1,13 +1,9 @@
-mod arrow;
-mod connection;
+mod core;
 mod postgres_protocol;
-mod proxy;
-mod resolver;
-mod util;
 
 pub mod postgres_resolver;
 
-pub use proxy::Config;
-pub use proxy::Proxy;
-pub use proxy::TlsConfig;
-pub use resolver::Resolver;
+pub use crate::core::proxy::Config;
+pub use crate::core::proxy::Proxy;
+pub use crate::core::proxy::TlsConfig;
+pub use crate::core::resolver::Resolver;

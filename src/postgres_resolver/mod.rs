@@ -1,13 +1,13 @@
 mod target_config;
 pub use target_config::TargetConfig;
 
-use crate::{
+use crate::core::{
     arrow::simple_query_response_to_record_batch,
     connection::{Connection, MaybeTlsStream, ProtocolStream},
-    postgres_protocol::{CloseKind, Message, StartupMessage},
+    resolver::Resolver,
     util::encode_md5_password_hash,
-    Resolver,
 };
+use crate::postgres_protocol::{CloseKind, Message, StartupMessage};
 use anyhow::Result;
 use arrow::record_batch::RecordBatch;
 use async_trait::async_trait;

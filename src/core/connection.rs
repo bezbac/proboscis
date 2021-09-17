@@ -1,9 +1,9 @@
-use crate::{
+use super::{
     arrow::{
         serialize_record_batch_schema_to_row_description, serialize_record_batch_to_data_rows,
     },
-    postgres_protocol::{Message, StartupMessage},
 };
+use crate::postgres_protocol::{Message, StartupMessage};
 use anyhow::Result;
 use arrow::record_batch::RecordBatch;
 use async_trait::async_trait;
