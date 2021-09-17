@@ -325,43 +325,52 @@ fn get_schema_fields(ast: &Statement) -> anyhow::Result<Vec<String>> {
                     .collect();
 
                 if select.from.len() == 1 {
-                    match select.from.first().unwrap().clone().relation {
-                        TableFactor::Table {
-                            name: ObjectName(mut name_identifiers),
-                            alias,
-                            args: _,
-                            with_hints: _,
-                        } => {
-                            if name_identifiers.len() != 1 {
-                                unimplemented!()
-                            }
+                    let mut tables: Vec<TableFactor> =
+                        vec![select.from.first().unwrap().clone().relation];
 
-                            let original_name = name_identifiers.pop().unwrap().value;
+                    for joined in select.from.first().unwrap().clone().joins {
+                        tables.push(joined.relation)
+                    }
 
-                            match alias {
-                                Some(TableAlias {
-                                    name: aliased_name,
-                                    columns: _,
-                                }) => {
-                                    fields = fields
-                                        .iter()
-                                        .map(|field| {
-                                            field.replace(
-                                                format!("{}.", aliased_name.value).as_str(),
-                                                format!("{}.", original_name).as_str(),
-                                            )
-                                        })
-                                        .collect()
+                    for table in tables {
+                        match table {
+                            TableFactor::Table {
+                                name: ObjectName(mut name_identifiers),
+                                alias,
+                                args: _,
+                                with_hints: _,
+                            } => {
+                                if name_identifiers.len() != 1 {
+                                    unimplemented!()
                                 }
-                                None => {
-                                    fields = fields
-                                        .iter()
-                                        .map(|field| format!("{}.{}", original_name, field))
-                                        .collect()
+
+                                let original_name = name_identifiers.pop().unwrap().value;
+
+                                match alias {
+                                    Some(TableAlias {
+                                        name: aliased_name,
+                                        columns: _,
+                                    }) => {
+                                        fields = fields
+                                            .iter()
+                                            .map(|field| {
+                                                field.replace(
+                                                    format!("{}.", aliased_name.value).as_str(),
+                                                    format!("{}.", original_name).as_str(),
+                                                )
+                                            })
+                                            .collect()
+                                    }
+                                    None => {
+                                        fields = fields
+                                            .iter()
+                                            .map(|field| format!("{}.{}", original_name, field))
+                                            .collect()
+                                    }
                                 }
                             }
+                            _ => unimplemented!(),
                         }
-                        _ => unimplemented!(),
                     }
                 } else {
                     unimplemented!()
