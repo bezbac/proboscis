@@ -244,6 +244,7 @@ dependencies = [
  "postgres-native-tls",
  "proboscis-core",
  "proboscis-resolver-postgres",
+ "proboscis-resolver-transformer",
  "refinery",
  "tempdir",
  "testcontainers",
@@ -951,6 +952,19 @@ dependencies = [
  "tokio",
  "tracing",
  "url",
+ "uuid",
+]
+
+[[package]]
+name = "proboscis-resolver-transformer"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "arrow",
+ "async-trait",
+ "postgres-protocol 0.0.0",
+ "proboscis-core",
+ "sqlparser",
  "uuid",
 ]
 

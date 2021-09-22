@@ -1,22 +1,21 @@
-use std::{
-    collections::{HashMap, VecDeque},
-    sync::Arc,
-};
-
-use crate::{
-    core::arrow::{serialize_record_batch_to_data_rows, simple_query_response_to_record_batch},
-    postgres_protocol::Message,
-    Resolver,
-};
 use arrow::{
     array::{ArrayRef, LargeStringArray},
     record_batch::RecordBatch,
 };
 use async_trait::async_trait;
+use postgres_protocol::Message;
+use proboscis_core::{
+    utils::arrow::{serialize_record_batch_to_data_rows, simple_query_response_to_record_batch},
+    Resolver,
+};
 use sqlparser::{
     ast::{Expr, Ident, ObjectName, SelectItem, SetExpr, Statement, TableAlias, TableFactor},
     dialect::PostgreSqlDialect,
     parser::Parser,
+};
+use std::{
+    collections::{HashMap, VecDeque},
+    sync::Arc,
 };
 use uuid::Uuid;
 
@@ -169,7 +168,7 @@ impl Resolver for TransformingResolver {
     async fn describe(
         &mut self,
         client_id: uuid::Uuid,
-        kind: crate::postgres_protocol::DescribeKind,
+        kind: postgres_protocol::DescribeKind,
         name: String,
     ) -> anyhow::Result<()> {
         self.resolver.describe(client_id, kind, name).await
@@ -201,7 +200,7 @@ impl Resolver for TransformingResolver {
     async fn sync(
         &mut self,
         client_id: uuid::Uuid,
-    ) -> anyhow::Result<Vec<crate::postgres_protocol::Message>> {
+    ) -> anyhow::Result<Vec<postgres_protocol::Message>> {
         let messages = self.resolver.sync(client_id).await?;
 
         let mut grouped_messages = vec![];
@@ -282,7 +281,7 @@ impl Resolver for TransformingResolver {
     async fn close(
         &mut self,
         client_id: uuid::Uuid,
-        kind: crate::postgres_protocol::CloseKind,
+        kind: postgres_protocol::CloseKind,
         name: String,
     ) -> anyhow::Result<()> {
         self.resolver.close(client_id, kind, name).await
