@@ -18,6 +18,7 @@ native-tls = "0.2.7"
 
 proboscis-core = { version = "0.1.0", path = "../crates/proboscis-core" }
 proboscis-resolver-postgres = { version = "0.1.0", path = "../crates/proboscis-resolver-postgres" }
+proboscis-resolver-transformer = { version = "0.1.0", path = "../crates/proboscis-resolver-transformer" }
 
 [[example]]
 name = "general"
@@ -30,3 +31,7 @@ path = "pool.rs"
 [[example]]
 name = "tls"
 path = "tls.rs"
+
+[[example]]
+name = "transformer"
+path = "transformer.rs"

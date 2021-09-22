@@ -244,6 +244,7 @@ dependencies = [
  "postgres-native-tls",
  "proboscis-core",
  "proboscis-resolver-postgres",
+ "proboscis-resolver-transformer",
  "refinery",
  "tempdir",
  "testcontainers",
@@ -955,6 +956,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "proboscis-resolver-transformer"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "arrow",
+ "async-trait",
+ "postgres-protocol 0.0.0",
+ "proboscis-core",
+ "sqlparser",
+ "uuid",
+]
+
+[[package]]
 name = "proc-macro-hack"
 version = "0.5.19"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1345,6 +1359,15 @@ checksum = "9e3dfc207c526015c632472a77be09cf1b6e46866581aecae5cc38fb4235dea2"
 dependencies = [
  "libc",
  "winapi",
+]
+
+[[package]]
+name = "sqlparser"
+version = "0.9.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4fa863a2dfc4879a35647c51dadf495a2ad53745eaf3723fda27006e745fb0ba"
+dependencies = [
+ "log",
 ]
 
 [[package]]
