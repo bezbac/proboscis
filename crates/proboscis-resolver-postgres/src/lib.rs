@@ -1,6 +1,6 @@
 mod target_config;
 use anyhow::Result;
-use arrow::record_batch::RecordBatch;
+use arrow::{datatypes::Schema, record_batch::RecordBatch};
 use async_trait::async_trait;
 use deadpool::managed::RecycleResult;
 use futures::TryFutureExt;
@@ -13,14 +13,16 @@ use postgres_protocol::{
 };
 use proboscis_core::{
     resolver::Resolver,
-    resolver::SyncResponse,
-    utils::arrow::{protocol_fields_to_schema, simple_query_response_to_record_batch},
+    resolver::{ClientId, SyncResponse},
+    utils::arrow::{
+        protocol_fields_to_schema, serialize_record_batch_schema_to_row_description,
+        simple_query_response_to_record_batch,
+    },
     utils::connection::{Connection, MaybeTlsStream, ProtocolStream},
     utils::password::encode_md5_password_hash,
 };
 use std::collections::{HashMap, VecDeque};
 pub use target_config::TargetConfig;
-use uuid::Uuid;
 
 type Pool = deadpool::managed::Pool<Manager>;
 
@@ -96,10 +98,10 @@ pub async fn establish_connection(target_config: &TargetConfig) -> Result<Connec
 
         match response {
             Message::ReadyForQuery => break,
-            Message::ParameterStatus(parameter_status) => {
+            Message::ParameterStatus(_) => {
                 // TODO: Handle this
             }
-            Message::BackendKeyData(backend_key_data) => {
+            Message::BackendKeyData(_) => {
                 // TODO: Handle this
             }
             _ => unimplemented!("Unexpected message"),
@@ -125,11 +127,10 @@ struct ActiveConnection {
 pub struct PostgresResolver {
     // Active connections are remove from the pool.
     // To add them back to the pool, drop them.
-    active_connections: HashMap<Uuid, ActiveConnection>,
+    active_connections: HashMap<ClientId, ActiveConnection>,
     pool: Pool,
 
-    // Maps a client_id to a vec of Message::RowDescription
-    description_cache: HashMap<Uuid, VecDeque<RowDescription>>,
+    schema_cache: HashMap<ClientId, VecDeque<Schema>>,
 }
 
 impl PostgresResolver {
@@ -143,11 +144,11 @@ impl PostgresResolver {
         Ok(PostgresResolver {
             active_connections: HashMap::new(),
             pool,
-            description_cache: HashMap::new(),
+            schema_cache: HashMap::new(),
         })
     }
 
-    async fn get_connection(&mut self, client_id: Uuid) -> Result<&mut ActiveConnection> {
+    async fn get_connection(&mut self, client_id: ClientId) -> Result<&mut ActiveConnection> {
         Ok(self.active_connections.entry(client_id).or_insert({
             let connection = self.pool.get().map_err(|err| anyhow::anyhow!(err)).await?;
 
@@ -158,14 +159,14 @@ impl PostgresResolver {
         }))
     }
 
-    fn terminate_connection(&mut self, client_id: Uuid) {
+    fn terminate_connection(&mut self, client_id: ClientId) {
         self.active_connections.remove(&client_id);
     }
 }
 
 #[async_trait]
 impl Resolver for PostgresResolver {
-    async fn query(&mut self, client_id: Uuid, query: String) -> Result<RecordBatch> {
+    async fn query(&mut self, client_id: ClientId, query: String) -> Result<RecordBatch> {
         let connection = self.get_connection(client_id).await?;
 
         connection
@@ -185,7 +186,9 @@ impl Resolver for PostgresResolver {
                 Message::DataRow(data_row) => {
                     data_rows.push(data_row);
                 }
-                Message::CommandComplete(CommandCompleteTag(tag)) => {}
+                Message::CommandComplete(CommandCompleteTag(_)) => {
+                    // TODO: Handle this
+                }
                 _ => unimplemented!(""),
             }
         }
@@ -195,7 +198,7 @@ impl Resolver for PostgresResolver {
         Ok(data)
     }
 
-    async fn parse(&mut self, client_id: Uuid, parse: Parse) -> Result<()> {
+    async fn parse(&mut self, client_id: ClientId, parse: Parse) -> Result<()> {
         let connection = self.get_connection(client_id).await?;
 
         connection
@@ -208,7 +211,7 @@ impl Resolver for PostgresResolver {
         Ok(())
     }
 
-    async fn describe(&mut self, client_id: Uuid, describe: Describe) -> Result<()> {
+    async fn describe(&mut self, client_id: ClientId, describe: Describe) -> Result<()> {
         let connection = self.get_connection(client_id).await?;
 
         connection
@@ -221,7 +224,7 @@ impl Resolver for PostgresResolver {
         Ok(())
     }
 
-    async fn bind(&mut self, client_id: Uuid, bind: Bind) -> Result<()> {
+    async fn bind(&mut self, client_id: ClientId, bind: Bind) -> Result<()> {
         let connection = self.get_connection(client_id).await?;
 
         connection
@@ -234,7 +237,7 @@ impl Resolver for PostgresResolver {
         Ok(())
     }
 
-    async fn execute(&mut self, client_id: Uuid, execute: Execute) -> Result<()> {
+    async fn execute(&mut self, client_id: ClientId, execute: Execute) -> Result<()> {
         let connection = self.get_connection(client_id).await?;
 
         connection
@@ -247,19 +250,21 @@ impl Resolver for PostgresResolver {
         Ok(())
     }
 
-    async fn sync(&mut self, client_id: Uuid) -> Result<Vec<SyncResponse>> {
+    async fn sync(&mut self, client_id: ClientId) -> Result<Vec<SyncResponse>> {
+        let mut schema_cache = self.schema_cache.entry(client_id).or_default().clone();
+
         let mut connection = self.get_connection(client_id).await?;
 
         connection.connection.write_message(Message::Sync).await?;
 
-        let mut messages = vec![];
+        let mut responses = vec![];
         for operation in &connection.requested_ops {
             match operation {
                 ClientOperation::Parse => {
                     let read_message = connection.connection.read_message().await?;
 
                     match read_message {
-                        Message::ParseComplete => messages.push(read_message),
+                        Message::ParseComplete => responses.push(SyncResponse::ParseComplete),
                         _ => todo!(),
                     }
                 }
@@ -267,13 +272,17 @@ impl Resolver for PostgresResolver {
                     let read_message = connection.connection.read_message().await?;
 
                     match read_message {
-                        Message::RowDescription(row_description) => {
-                            messages.push(Message::RowDescription(row_description));
+                        Message::RowDescription(RowDescription { fields }) => {
+                            let schema = protocol_fields_to_schema(&fields);
+
+                            responses.push(SyncResponse::Schema(schema.clone()));
+
+                            schema_cache.push_back(schema);
+
                             break;
                         }
-                        Message::ParameterDescription(parameter_description) => {
-                            messages.push(Message::ParameterDescription(parameter_description))
-                        }
+                        Message::ParameterDescription(parameter_description) => responses
+                            .push(SyncResponse::ParameterDescription(parameter_description)),
                         _ => todo!(),
                     }
                 },
@@ -281,103 +290,62 @@ impl Resolver for PostgresResolver {
                     let read_message = connection.connection.read_message().await?;
 
                     match read_message {
-                        Message::BindComplete => messages.push(read_message),
+                        Message::BindComplete => responses.push(SyncResponse::BindComplete),
                         _ => todo!(),
                     }
                 }
                 ClientOperation::Execute => {
                     let mut data_rows: Vec<DataRow> = vec![];
+                    let command_complete_tag;
 
                     loop {
                         let read_message = connection.connection.read_message().await?;
 
                         match read_message {
-                            Message::DataRow(data_row) => data_rows.push(Message::DataRow(data_row)),
+                            Message::DataRow(data_row) => data_rows.push(data_row),
                             Message::CommandComplete(tag) => {
-
-                                
-
-                                messages.push(Message::CommandComplete(tag));
+                                command_complete_tag = tag;
                                 break;
                             }
                             _ => todo!(),
                         }
                     }
 
-                    
-                },
+                    let schema = schema_cache.pop_front();
+
+                    match schema {
+                        Some(schema) => {
+                            let RowDescription { fields } =
+                                serialize_record_batch_schema_to_row_description(&schema);
+
+                            let record_batch =
+                                simple_query_response_to_record_batch(&fields, &data_rows)?;
+
+                            responses.push(SyncResponse::Records(record_batch))
+                        }
+                        _ => todo!(),
+                    }
+
+                    responses.push(SyncResponse::CommandComplete(command_complete_tag));
+                }
             }
         }
 
         let read_message = connection.connection.read_message().await?;
         match read_message {
-            Message::ReadyForQuery => messages.push(read_message),
+            Message::ReadyForQuery => SyncResponse::ReadyForQuery,
             _ => todo!(),
-        }
+        };
+        responses.push(SyncResponse::ReadyForQuery);
 
         connection.requested_ops = vec![];
 
-        let mut responses: Vec<SyncResponse> = vec![];
-        
-        for message in messages {
-            match message {
-                Message::RowDescription(row_description) => {
-                    self.description_cache
-                        .entry(client_id)
-                        .or_default()
-                        .push_back(row_description);
-
-                    responses.push(SyncResponse::Schema(protocol_fields_to_schema(
-                        &row_description.fields,
-                    )));
-                }
-                Message::DataRow(data_row) => group.push(message),
-                Message::CommandComplete(tag) => {
-                    if !group.is_empty() {
-                        grouped_messages.push(group);
-                        group = vec![];
-                    }
-
-                    grouped_messages.push(vec![message]);
-                }
-                _ => grouped_messages.push(vec![message]),
-            }
-        }
-
-        let responses = grouped_messages
-            .iter()
-            .map(|group| {
-                let first_message = group.first().unwrap();
-                match first_message {
-                    Message::DataRow(_) => {
-                        let description_vec = self.description_cache.entry(client_id).or_default();
-                        let row_description = description_vec.pop_front();
-
-                        match row_description {
-                            Some(RowDescription { fields }) => {
-                                let record_batch =
-                                    simple_query_response_to_record_batch(&fields, group)?;
-
-                                let transformed_message =
-                                    serialize_record_batch_to_data_rows(&transformed);
-
-                                for message in transformed_message {
-                                    final_messages.push(message)
-                                }
-                            }
-                            _ => todo!(),
-                        }
-                    }
-                    Message::RowDescription(_) => todo!(),
-                    _ => todo!(),
-                }
-            })
-            .collect();
+        self.schema_cache.insert(client_id, schema_cache);
 
         Ok(responses)
     }
 
-    async fn close(&mut self, client_id: Uuid, close: Close) -> Result<()> {
+    async fn close(&mut self, client_id: ClientId, close: Close) -> Result<()> {
         let connection = self.get_connection(client_id).await?;
 
         connection
@@ -391,11 +359,11 @@ impl Resolver for PostgresResolver {
         Ok(())
     }
 
-    async fn initialize(&mut self, _client_id: Uuid) -> Result<()> {
+    async fn initialize(&mut self, _client_id: ClientId) -> Result<()> {
         Ok(())
     }
 
-    async fn terminate(&mut self, client_id: Uuid) -> Result<()> {
+    async fn terminate(&mut self, client_id: ClientId) -> Result<()> {
         self.terminate_connection(client_id);
 
         Ok(())

@@ -258,7 +258,7 @@ impl Resolver for TransformingResolver {
         let responses = self.resolver.sync(client_id).await?;
 
         let transformed_responses = responses
-            .iter()
+            .into_iter()
             .map(|response| match response {
                 SyncResponse::Schema(_) => todo!(),
                 SyncResponse::Records(record_batch) => {
@@ -280,6 +280,7 @@ impl Resolver for TransformingResolver {
 
                     SyncResponse::Records(transformed)
                 }
+                _ => response,
             })
             .collect();
 
