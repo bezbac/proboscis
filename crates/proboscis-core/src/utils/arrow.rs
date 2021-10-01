@@ -185,9 +185,7 @@ pub fn protocol_fields_to_schema(fields: &[postgres_protocol::message::Field]) -
         .map(|message_field| message_field_to_arrow_field(message_field))
         .collect::<Vec<Field>>();
 
-    let schema = Schema::new(fields);
-
-    schema
+    Schema::new(fields)
 }
 
 pub fn simple_query_response_to_record_batch(
