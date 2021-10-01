@@ -114,14 +114,23 @@ pub async fn establish_connection(target_config: &TargetConfig) -> Result<Connec
 #[derive(Debug)]
 enum ClientOperation {
     Parse,
-    Bind,
-    Describe,
-    Execute,
+    Bind { statement: String, portal: String },
+    Describe { statement: String },
+    Execute { portal: String },
 }
 
 struct ActiveConnection {
     connection: deadpool::managed::Object<Manager>,
-    requested_ops: Vec<ClientOperation>,
+    requested_ops: VecDeque<ClientOperation>,
+}
+
+impl ActiveConnection {
+    fn new(connection: deadpool::managed::Object<Manager>) -> ActiveConnection {
+        ActiveConnection {
+            connection,
+            requested_ops: VecDeque::new(),
+        }
+    }
 }
 
 pub struct PostgresResolver {
@@ -130,7 +139,11 @@ pub struct PostgresResolver {
     active_connections: HashMap<ClientId, ActiveConnection>,
     pool: Pool,
 
-    schema_cache: HashMap<ClientId, VecDeque<Schema>>,
+    // Maps a statement to a schema
+    statement_cache: HashMap<String, Schema>,
+
+    // Maps a portal to a statement
+    portal_cache: HashMap<String, String>,
 }
 
 impl PostgresResolver {
@@ -144,19 +157,9 @@ impl PostgresResolver {
         Ok(PostgresResolver {
             active_connections: HashMap::new(),
             pool,
-            schema_cache: HashMap::new(),
+            statement_cache: HashMap::new(),
+            portal_cache: HashMap::new(),
         })
-    }
-
-    async fn get_connection(&mut self, client_id: ClientId) -> Result<&mut ActiveConnection> {
-        Ok(self.active_connections.entry(client_id).or_insert({
-            let connection = self.pool.get().map_err(|err| anyhow::anyhow!(err)).await?;
-
-            ActiveConnection {
-                connection,
-                requested_ops: vec![],
-            }
-        }))
     }
 
     fn terminate_connection(&mut self, client_id: ClientId) {
@@ -167,7 +170,10 @@ impl PostgresResolver {
 #[async_trait]
 impl Resolver for PostgresResolver {
     async fn query(&mut self, client_id: ClientId, query: String) -> Result<RecordBatch> {
-        let connection = self.get_connection(client_id).await?;
+        let connection = self.active_connections.entry(client_id).or_insert({
+            let connection = self.pool.get().map_err(|err| anyhow::anyhow!(err)).await?;
+            ActiveConnection::new(connection)
+        });
 
         connection
             .connection
@@ -199,66 +205,92 @@ impl Resolver for PostgresResolver {
     }
 
     async fn parse(&mut self, client_id: ClientId, parse: Parse) -> Result<()> {
-        let connection = self.get_connection(client_id).await?;
+        let connection = self.active_connections.entry(client_id).or_insert({
+            let connection = self.pool.get().map_err(|err| anyhow::anyhow!(err)).await?;
+            ActiveConnection::new(connection)
+        });
 
         connection
             .connection
             .write_message(Message::Parse(parse))
             .await?;
 
-        connection.requested_ops.push(ClientOperation::Parse);
+        connection.requested_ops.push_back(ClientOperation::Parse);
 
         Ok(())
     }
 
     async fn describe(&mut self, client_id: ClientId, describe: Describe) -> Result<()> {
-        let connection = self.get_connection(client_id).await?;
+        let connection = self.active_connections.entry(client_id).or_insert({
+            let connection = self.pool.get().map_err(|err| anyhow::anyhow!(err)).await?;
+            ActiveConnection::new(connection)
+        });
+
+        let statement = describe.name.clone();
 
         connection
             .connection
             .write_message(Message::Describe(describe))
             .await?;
 
-        connection.requested_ops.push(ClientOperation::Describe);
+        connection
+            .requested_ops
+            .push_back(ClientOperation::Describe { statement });
 
         Ok(())
     }
 
     async fn bind(&mut self, client_id: ClientId, bind: Bind) -> Result<()> {
-        let connection = self.get_connection(client_id).await?;
+        let connection = self.active_connections.entry(client_id).or_insert({
+            let connection = self.pool.get().map_err(|err| anyhow::anyhow!(err)).await?;
+            ActiveConnection::new(connection)
+        });
+
+        let statement = bind.statement.clone();
+        let portal = bind.portal.clone();
 
         connection
             .connection
             .write_message(Message::Bind(bind))
             .await?;
 
-        connection.requested_ops.push(ClientOperation::Bind);
+        connection
+            .requested_ops
+            .push_back(ClientOperation::Bind { statement, portal });
 
         Ok(())
     }
 
     async fn execute(&mut self, client_id: ClientId, execute: Execute) -> Result<()> {
-        let connection = self.get_connection(client_id).await?;
+        let connection = self.active_connections.entry(client_id).or_insert({
+            let connection = self.pool.get().map_err(|err| anyhow::anyhow!(err)).await?;
+            ActiveConnection::new(connection)
+        });
+
+        let portal = execute.portal.clone();
 
         connection
             .connection
             .write_message(Message::Execute(execute))
             .await?;
 
-        connection.requested_ops.push(ClientOperation::Execute);
+        connection
+            .requested_ops
+            .push_back(ClientOperation::Execute { portal });
 
         Ok(())
     }
 
     async fn sync(&mut self, client_id: ClientId) -> Result<Vec<SyncResponse>> {
-        let mut schema_cache = self.schema_cache.entry(client_id).or_default().clone();
-
-        let mut connection = self.get_connection(client_id).await?;
+        let connection = self.active_connections.entry(client_id).or_insert({
+            let connection = self.pool.get().map_err(|err| anyhow::anyhow!(err)).await?;
+            ActiveConnection::new(connection)
+        });
 
         connection.connection.write_message(Message::Sync).await?;
 
         let mut responses = vec![];
-        for operation in &connection.requested_ops {
+        while let Some(operation) = &connection.requested_ops.pop_front() {
             match operation {
                 ClientOperation::Parse => {
                     let read_message = connection.connection.read_message().await?;
@@ -268,7 +300,7 @@ impl Resolver for PostgresResolver {
                         _ => todo!(),
                     }
                 }
-                ClientOperation::Describe => loop {
+                ClientOperation::Describe { statement } => loop {
                     let read_message = connection.connection.read_message().await?;
 
                     match read_message {
@@ -277,7 +309,8 @@ impl Resolver for PostgresResolver {
 
                             responses.push(SyncResponse::Schema(schema.clone()));
 
-                            schema_cache.push_back(schema);
+                            self.statement_cache
+                                .insert(statement.clone(), schema.clone());
 
                             break;
                         }
@@ -286,15 +319,17 @@ impl Resolver for PostgresResolver {
                         _ => todo!(),
                     }
                 },
-                ClientOperation::Bind => {
+                ClientOperation::Bind { statement, portal } => {
                     let read_message = connection.connection.read_message().await?;
+
+                    self.portal_cache.insert(portal.clone(), statement.clone());
 
                     match read_message {
                         Message::BindComplete => responses.push(SyncResponse::BindComplete),
                         _ => todo!(),
                     }
                 }
-                ClientOperation::Execute => {
+                ClientOperation::Execute { portal } => {
                     let mut data_rows: Vec<DataRow> = vec![];
                     let command_complete_tag;
 
@@ -311,20 +346,15 @@ impl Resolver for PostgresResolver {
                         }
                     }
 
-                    let schema = schema_cache.pop_front();
+                    let statement = self.portal_cache.get(portal).unwrap();
+                    let schema = self.statement_cache.get(statement).unwrap();
 
-                    match schema {
-                        Some(schema) => {
-                            let RowDescription { fields } =
-                                serialize_record_batch_schema_to_row_description(&schema);
+                    let RowDescription { fields } =
+                        serialize_record_batch_schema_to_row_description(schema);
 
-                            let record_batch =
-                                simple_query_response_to_record_batch(&fields, &data_rows)?;
+                    let record_batch = simple_query_response_to_record_batch(&fields, &data_rows)?;
 
-                            responses.push(SyncResponse::Records(record_batch))
-                        }
-                        _ => todo!(),
-                    }
+                    responses.push(SyncResponse::Records(record_batch));
 
                     responses.push(SyncResponse::CommandComplete(command_complete_tag));
                 }
@@ -338,15 +368,14 @@ impl Resolver for PostgresResolver {
         };
         responses.push(SyncResponse::ReadyForQuery);
 
-        connection.requested_ops = vec![];
-
-        self.schema_cache.insert(client_id, schema_cache);
-
         Ok(responses)
     }
 
     async fn close(&mut self, client_id: ClientId, close: Close) -> Result<()> {
-        let connection = self.get_connection(client_id).await?;
+        let connection = self.active_connections.entry(client_id).or_insert({
+            let connection = self.pool.get().map_err(|err| anyhow::anyhow!(err)).await?;
+            ActiveConnection::new(connection)
+        });
 
         connection
             .connection
