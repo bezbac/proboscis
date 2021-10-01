@@ -66,13 +66,14 @@ impl Connection {
     }
 
     pub async fn write_data(&mut self, data: RecordBatch) -> tokio::io::Result<()> {
-        let row_description = serialize_record_batch_schema_to_row_description(data.schema());
+        let row_description = serialize_record_batch_schema_to_row_description(&data.schema());
 
-        self.write_message(row_description).await?;
+        self.write_message(Message::RowDescription(row_description))
+            .await?;
 
-        let data_rows = serialize_record_batch_to_data_rows(data);
+        let data_rows = serialize_record_batch_to_data_rows(&data);
         for message in data_rows {
-            self.write_message(message).await?;
+            self.write_message(Message::DataRow(message)).await?;
         }
 
         Ok(())

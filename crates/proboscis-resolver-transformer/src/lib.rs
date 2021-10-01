@@ -3,10 +3,8 @@ use arrow::{
     record_batch::RecordBatch,
 };
 use async_trait::async_trait;
-use postgres_protocol::Message;
-use proboscis_core::{
-    utils::arrow::{serialize_record_batch_to_data_rows, simple_query_response_to_record_batch},
-    Resolver,
+use proboscis_core::resolver::{
+    Bind, ClientId, Close, Describe, Execute, Parse, Resolver, SyncResponse,
 };
 use sqlparser::{
     ast::{Expr, Ident, ObjectName, SelectItem, SetExpr, Statement, TableAlias, TableFactor},
@@ -17,7 +15,6 @@ use std::{
     collections::{HashMap, VecDeque},
     sync::Arc,
 };
-use uuid::Uuid;
 
 pub trait Transformation: Send + Sync {
     fn apply(&self, data: ArrayRef) -> ArrayRef;
@@ -40,11 +37,8 @@ pub struct TransformingResolver {
     resolver: Box<dyn Resolver>,
     transformations: HashMap<String, Vec<Box<dyn Transformation>>>,
 
-    // Maps a client_id to a vec of Message::RowDescription
-    description_cache: HashMap<Uuid, VecDeque<Message>>,
-
     // Maps a client_id to a vec of string queries
-    parse_cache: HashMap<Uuid, VecDeque<String>>,
+    parse_cache: HashMap<ClientId, VecDeque<Parse>>,
 }
 
 impl TransformingResolver {
@@ -52,7 +46,6 @@ impl TransformingResolver {
         TransformingResolver {
             resolver,
             transformations: HashMap::new(),
-            description_cache: HashMap::new(),
             parse_cache: HashMap::new(),
         }
     }
@@ -96,200 +89,6 @@ fn transform_record_batch(
         .collect();
 
     RecordBatch::try_new(data.schema(), arrays).unwrap()
-}
-
-impl TransformingResolver {
-    fn get_column_transformations(
-        &self,
-        statement: &Statement,
-        data: &RecordBatch,
-    ) -> HashMap<usize, &Vec<Box<dyn Transformation>>> {
-        let normalized_field_names = get_schema_fields(statement).unwrap();
-
-        data.schema()
-            .fields()
-            .iter()
-            .zip(normalized_field_names.iter())
-            .enumerate()
-            .filter_map(|(index, (_, normalized_field_name))| {
-                self.transformations
-                    .get(normalized_field_name)
-                    .map(|transformations| (index, transformations))
-            })
-            .collect()
-    }
-}
-
-#[async_trait]
-impl Resolver for TransformingResolver {
-    async fn initialize(&mut self, client_id: uuid::Uuid) -> anyhow::Result<()> {
-        self.resolver.initialize(client_id).await
-    }
-
-    async fn query(
-        &mut self,
-        client_id: uuid::Uuid,
-        query: String,
-    ) -> anyhow::Result<arrow::record_batch::RecordBatch> {
-        let dialect = PostgreSqlDialect {};
-        let query_ast = Parser::parse_sql(&dialect, &query).unwrap();
-
-        if query_ast.len() != 1 {
-            todo!("Mismatched number of statements");
-        }
-
-        let result = self.resolver.query(client_id, query).await;
-        result.map(|data| {
-            let column_transformations =
-                self.get_column_transformations(query_ast.first().unwrap(), &data);
-            transform_record_batch(data, column_transformations)
-        })
-    }
-
-    async fn parse(
-        &mut self,
-        client_id: uuid::Uuid,
-        statement_name: String,
-        query: String,
-        param_types: Vec<u32>,
-    ) -> anyhow::Result<()> {
-        let result = self
-            .resolver
-            .parse(client_id, statement_name, query.clone(), param_types)
-            .await?;
-
-        let parse_vec = self.parse_cache.entry(client_id).or_default();
-
-        parse_vec.push_back(query);
-
-        Ok(result)
-    }
-
-    async fn describe(
-        &mut self,
-        client_id: uuid::Uuid,
-        kind: postgres_protocol::DescribeKind,
-        name: String,
-    ) -> anyhow::Result<()> {
-        self.resolver.describe(client_id, kind, name).await
-    }
-
-    async fn bind(
-        &mut self,
-        client_id: uuid::Uuid,
-        statement: String,
-        portal: String,
-        params: Vec<Vec<u8>>,
-        formats: Vec<i16>,
-        results: Vec<i16>,
-    ) -> anyhow::Result<()> {
-        self.resolver
-            .bind(client_id, statement, portal, params, formats, results)
-            .await
-    }
-
-    async fn execute(
-        &mut self,
-        client_id: uuid::Uuid,
-        portal: String,
-        row_limit: i32,
-    ) -> anyhow::Result<()> {
-        self.resolver.execute(client_id, portal, row_limit).await
-    }
-
-    async fn sync(
-        &mut self,
-        client_id: uuid::Uuid,
-    ) -> anyhow::Result<Vec<postgres_protocol::Message>> {
-        let messages = self.resolver.sync(client_id).await?;
-
-        let mut grouped_messages = vec![];
-
-        let mut group = vec![];
-        for message in messages {
-            match message {
-                Message::RowDescription { fields } => {
-                    let description_vec = self.description_cache.entry(client_id).or_default();
-
-                    description_vec.push_back(Message::RowDescription {
-                        fields: fields.to_vec(),
-                    });
-
-                    grouped_messages.push(vec![Message::RowDescription {
-                        fields: fields.to_vec(),
-                    }])
-                }
-                Message::DataRow { field_data } => group.push(Message::DataRow { field_data }),
-                Message::CommandComplete { tag: _ } => {
-                    if !group.is_empty() {
-                        grouped_messages.push(group);
-                        group = vec![];
-                    }
-
-                    grouped_messages.push(vec![message]);
-                }
-                _ => grouped_messages.push(vec![message]),
-            }
-        }
-
-        let mut final_messages: Vec<Message> = vec![];
-        for group in grouped_messages {
-            if let Some(Message::DataRow { field_data: _ }) = group.first() {
-                let parse_vec = self.parse_cache.entry(client_id).or_default();
-
-                let description_vec = self.description_cache.entry(client_id).or_default();
-
-                let query = parse_vec.pop_front().unwrap();
-                let row_description = description_vec.pop_front();
-
-                match row_description {
-                    Some(Message::RowDescription { fields }) => {
-                        let dialect = PostgreSqlDialect {};
-                        let query_ast = Parser::parse_sql(&dialect, &query).unwrap();
-
-                        if query_ast.len() != 1 {
-                            todo!("Mismatched number of statements");
-                        }
-
-                        let record_batch =
-                            simple_query_response_to_record_batch(&fields, &group).await?;
-
-                        let column_transformations = self
-                            .get_column_transformations(query_ast.first().unwrap(), &record_batch);
-
-                        let transformed =
-                            transform_record_batch(record_batch, column_transformations);
-
-                        let transformed_message = serialize_record_batch_to_data_rows(transformed);
-
-                        for message in transformed_message {
-                            final_messages.push(message)
-                        }
-                    }
-                    _ => todo!(),
-                }
-            } else {
-                for message in group {
-                    final_messages.push(message)
-                }
-            }
-        }
-
-        Ok(final_messages)
-    }
-
-    async fn close(
-        &mut self,
-        client_id: uuid::Uuid,
-        kind: postgres_protocol::CloseKind,
-        name: String,
-    ) -> anyhow::Result<()> {
-        self.resolver.close(client_id, kind, name).await
-    }
-
-    async fn terminate(&mut self, client_id: uuid::Uuid) -> anyhow::Result<()> {
-        self.resolver.terminate(client_id).await
-    }
 }
 
 fn get_schema_fields(ast: &Statement) -> anyhow::Result<Vec<String>> {
@@ -380,6 +179,119 @@ fn get_schema_fields(ast: &Statement) -> anyhow::Result<Vec<String>> {
             _ => unimplemented!(),
         },
         _ => unimplemented!(),
+    }
+}
+
+impl TransformingResolver {
+    fn get_column_transformations(
+        &self,
+        statement: &Statement,
+        data: &RecordBatch,
+    ) -> HashMap<usize, &Vec<Box<dyn Transformation>>> {
+        let normalized_field_names = get_schema_fields(statement).unwrap();
+
+        data.schema()
+            .fields()
+            .iter()
+            .zip(normalized_field_names.iter())
+            .enumerate()
+            .filter_map(|(index, (_, normalized_field_name))| {
+                self.transformations
+                    .get(normalized_field_name)
+                    .map(|transformations| (index, transformations))
+            })
+            .collect()
+    }
+}
+
+#[async_trait]
+impl Resolver for TransformingResolver {
+    async fn initialize(&mut self, client_id: ClientId) -> anyhow::Result<()> {
+        self.resolver.initialize(client_id).await
+    }
+
+    async fn query(
+        &mut self,
+        client_id: ClientId,
+        query: String,
+    ) -> anyhow::Result<arrow::record_batch::RecordBatch> {
+        let dialect = PostgreSqlDialect {};
+        let query_ast = Parser::parse_sql(&dialect, &query).unwrap();
+
+        if query_ast.len() != 1 {
+            todo!("Mismatched number of statements");
+        }
+
+        let result = self.resolver.query(client_id, query).await;
+        result.map(|data| {
+            let column_transformations =
+                self.get_column_transformations(query_ast.first().unwrap(), &data);
+            transform_record_batch(data, column_transformations)
+        })
+    }
+
+    async fn parse(&mut self, client_id: ClientId, parse: Parse) -> anyhow::Result<()> {
+        self.resolver
+            .parse(client_id, parse.clone())
+            .await
+            .map(|_| {
+                self.parse_cache
+                    .entry(client_id)
+                    .or_default()
+                    .push_back(parse)
+            })
+    }
+
+    async fn describe(&mut self, client_id: ClientId, describe: Describe) -> anyhow::Result<()> {
+        self.resolver.describe(client_id, describe).await
+    }
+
+    async fn bind(&mut self, client_id: ClientId, bind: Bind) -> anyhow::Result<()> {
+        self.resolver.bind(client_id, bind).await
+    }
+
+    async fn execute(&mut self, client_id: ClientId, execute: Execute) -> anyhow::Result<()> {
+        self.resolver.execute(client_id, execute).await
+    }
+
+    async fn sync(&mut self, client_id: ClientId) -> anyhow::Result<Vec<SyncResponse>> {
+        let responses = self.resolver.sync(client_id).await?;
+
+        let transformed_responses = responses
+            .iter()
+            .map(|response| match response {
+                SyncResponse::Schema(_) => todo!(),
+                SyncResponse::Records(record_batch) => {
+                    let parse_vec = self.parse_cache.entry(client_id).or_default();
+                    let Parse {
+                        query,
+                        statement_name: _,
+                        param_types: _,
+                    } = parse_vec.pop_front().unwrap();
+
+                    let dialect = PostgreSqlDialect {};
+                    let query_ast = Parser::parse_sql(&dialect, &query).unwrap();
+
+                    let column_transformations =
+                        self.get_column_transformations(query_ast.first().unwrap(), &record_batch);
+
+                    let transformed =
+                        transform_record_batch(record_batch.clone(), column_transformations);
+
+                    SyncResponse::Records(transformed)
+                }
+            })
+            .collect();
+
+        Ok(transformed_responses)
+    }
+
+    async fn close(&mut self, client_id: ClientId, close: Close) -> anyhow::Result<()> {
+        self.resolver.close(client_id, close).await
+    }
+
+    async fn terminate(&mut self, client_id: ClientId) -> anyhow::Result<()> {
+        self.resolver.terminate(client_id).await
     }
 }
 

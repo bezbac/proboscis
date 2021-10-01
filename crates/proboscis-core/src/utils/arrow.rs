@@ -4,7 +4,7 @@ use arrow::array::{ArrayRef, GenericStringArray, Int16Array, Int32Array, Int64Ar
 use arrow::datatypes::{DataType, Field, Schema};
 use arrow::record_batch::RecordBatch;
 use omnom::prelude::*;
-use postgres_protocol::Message;
+use postgres_protocol::message::{DataRow, RowDescription};
 use std::{collections::BTreeMap, sync::Arc, vec};
 
 fn column_data_to_array(data: &[Vec<u8>], data_type: &DataType) -> ArrayRef {
@@ -107,7 +107,7 @@ fn protocol_rows_to_arrow_columns(
     Ok(result)
 }
 
-fn message_field_to_arrow_field(value: &postgres_protocol::Field) -> Field {
+fn message_field_to_arrow_field(value: &postgres_protocol::message::Field) -> Field {
     let postgres_type = postgres::types::Type::from_oid(value.type_oid as u32).unwrap();
 
     let arrow_type = match postgres_type {
@@ -135,7 +135,10 @@ fn message_field_to_arrow_field(value: &postgres_protocol::Field) -> Field {
     field
 }
 
-fn arrow_field_to_message_field(value: &Field, column_number: i16) -> postgres_protocol::Field {
+fn arrow_field_to_message_field(
+    value: &Field,
+    column_number: i16,
+) -> postgres_protocol::message::Field {
     let postgres_type = match value.data_type() {
         DataType::Boolean => postgres::types::Type::BOOL,
         DataType::Int8 => postgres::types::Type::INT2,
@@ -165,7 +168,7 @@ fn arrow_field_to_message_field(value: &Field, column_number: i16) -> postgres_p
         .parse()
         .unwrap();
 
-    postgres_protocol::Field {
+    postgres_protocol::message::Field {
         type_oid: postgres_type.oid() as i32,
         name: value.name().clone(),
         column_number,
@@ -176,10 +179,7 @@ fn arrow_field_to_message_field(value: &Field, column_number: i16) -> postgres_p
     }
 }
 
-pub async fn simple_query_response_to_record_batch(
-    fields: &[postgres_protocol::Field],
-    data: &[Message],
-) -> Result<RecordBatch> {
+pub fn protocol_fields_to_schema(fields: &[postgres_protocol::message::Field]) -> Schema {
     let fields = fields
         .iter()
         .map(|message_field| message_field_to_arrow_field(message_field))
@@ -187,15 +187,18 @@ pub async fn simple_query_response_to_record_batch(
 
     let schema = Schema::new(fields);
 
+    schema
+}
+
+pub fn simple_query_response_to_record_batch(
+    fields: &[postgres_protocol::message::Field],
+    data: &[DataRow],
+) -> Result<RecordBatch> {
+    let schema = protocol_fields_to_schema(fields);
+
     let protocol_row_data = data
         .iter()
-        .map(|message| {
-            if let Message::DataRow { field_data } = message {
-                field_data.clone()
-            } else {
-                panic!()
-            }
-        })
+        .map(|DataRow { field_data }| field_data.clone())
         .collect();
 
     let columns = protocol_rows_to_arrow_columns(&schema, protocol_row_data)?;
@@ -203,7 +206,7 @@ pub async fn simple_query_response_to_record_batch(
     RecordBatch::try_new(Arc::new(schema), columns).map_err(|err| anyhow::anyhow!(err))
 }
 
-pub fn serialize_record_batch_to_data_rows(batch: RecordBatch) -> Vec<Message> {
+pub fn serialize_record_batch_to_data_rows(batch: &RecordBatch) -> Vec<DataRow> {
     (0..batch.num_rows())
         .map(|row_index| {
             let mut row_data = vec![];
@@ -253,19 +256,19 @@ pub fn serialize_record_batch_to_data_rows(batch: RecordBatch) -> Vec<Message> {
                 row_data.push(cell)
             }
 
-            Message::DataRow {
+            DataRow {
                 field_data: row_data,
             }
         })
         .collect()
 }
 
-pub fn serialize_record_batch_schema_to_row_description(schema: Arc<Schema>) -> Message {
-    let fields: Vec<postgres_protocol::Field> = schema
+pub fn serialize_record_batch_schema_to_row_description(schema: &Schema) -> RowDescription {
+    let fields: Vec<postgres_protocol::message::Field> = schema
         .fields()
         .iter()
         .enumerate()
         .map(|(idx, arrow_field)| arrow_field_to_message_field(arrow_field, idx as i16))
         .collect();
-    Message::RowDescription { fields }
+    RowDescription { fields }
 }
