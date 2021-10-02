@@ -1,4 +1,7 @@
-use crate::{column_transformations::{ColumnTransformation, ColumnTransformationOutput}, traits::Transformer};
+use crate::{
+    column_transformations::{ColumnTransformation, ColumnTransformationOutput},
+    traits::Transformer,
+};
 use arrow::{
     datatypes::{Field, Schema},
     record_batch::RecordBatch,
@@ -99,17 +102,12 @@ fn get_schema_fields(ast: &Statement) -> anyhow::Result<Vec<String>> {
     }
 }
 
+#[derive(Default)]
 pub struct TableColumnTransformer {
     transformations: HashMap<String, Vec<Box<dyn ColumnTransformation>>>,
 }
 
 impl TableColumnTransformer {
-    pub fn new() -> TableColumnTransformer {
-        TableColumnTransformer {
-            transformations: HashMap::new(),
-        }
-    }
-
     pub fn add_transformation(
         mut self,
         target_column: &str,
@@ -167,13 +165,13 @@ impl Transformer for TableColumnTransformer {
 
         let new_fields = schema
             .fields()
-            .into_iter()
+            .iter()
             .enumerate()
             .map(|(index, field)| match column_transformations.get(&index) {
                 Some(transformations) => transformations
                     .iter()
                     .fold(field.clone(), |field, transformation| {
-                        transform_field(&field, transformation).clone()
+                        transform_field(&field, transformation)
                     }),
                 None => field.clone(),
             })
@@ -193,7 +191,7 @@ impl Transformer for TableColumnTransformer {
         let (new_fields, new_data) = data
             .schema()
             .fields()
-            .into_iter()
+            .iter()
             .enumerate()
             .map(|(idx, field)| {
                 let column_data = data.column(idx).clone();

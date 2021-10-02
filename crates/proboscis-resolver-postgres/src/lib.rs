@@ -140,7 +140,10 @@ pub struct PostgresResolver {
     pool: Pool,
 
     // Maps a statement to a schema
-    statement_cache: HashMap<String, Schema>,
+    statement_schema_cache: HashMap<String, Schema>,
+
+    // Maps a statement to an sql string
+    statement_query_cache: HashMap<String, String>,
 
     // Maps a portal to a statement
     portal_cache: HashMap<String, String>,
@@ -157,8 +160,9 @@ impl PostgresResolver {
         Ok(PostgresResolver {
             active_connections: HashMap::new(),
             pool,
-            statement_cache: HashMap::new(),
+            statement_schema_cache: HashMap::new(),
             portal_cache: HashMap::new(),
+            statement_query_cache: HashMap::new(),
         })
     }
 
@@ -210,12 +214,18 @@ impl Resolver for PostgresResolver {
             ActiveConnection::new(connection)
         });
 
+        let statement_name = parse.statement_name.clone();
+        let query = parse.query.clone();
+
         connection
             .connection
             .write_message(Message::Parse(parse))
             .await?;
 
         connection.requested_ops.push_back(ClientOperation::Parse);
+
+        self.statement_query_cache
+            .insert(statement_name, query);
 
         Ok(())
     }
@@ -307,9 +317,12 @@ impl Resolver for PostgresResolver {
                         Message::RowDescription(RowDescription { fields }) => {
                             let schema = protocol_fields_to_schema(&fields);
 
-                            responses.push(SyncResponse::Schema(schema.clone()));
+                            responses.push(SyncResponse::Schema {
+                                schema: schema.clone(),
+                                query: self.statement_query_cache.get(statement).unwrap().clone(),
+                            });
 
-                            self.statement_cache
+                            self.statement_schema_cache
                                 .insert(statement.clone(), schema.clone());
 
                             break;
@@ -347,14 +360,17 @@ impl Resolver for PostgresResolver {
                     }
 
                     let statement = self.portal_cache.get(portal).unwrap();
-                    let schema = self.statement_cache.get(statement).unwrap();
+                    let schema = self.statement_schema_cache.get(statement).unwrap();
 
                     let RowDescription { fields } =
                         serialize_record_batch_schema_to_row_description(schema);
 
                     let record_batch = simple_query_response_to_record_batch(&fields, &data_rows)?;
 
-                    responses.push(SyncResponse::Records(record_batch));
+                    responses.push(SyncResponse::Records {
+                        data: record_batch,
+                        query: self.statement_query_cache.get(statement).unwrap().clone(),
+                    });
 
                     responses.push(SyncResponse::CommandComplete(command_complete_tag));
                 }

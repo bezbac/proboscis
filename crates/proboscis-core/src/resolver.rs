@@ -14,11 +14,11 @@ pub type ClientId = Uuid;
 impl SyncResponse {
     pub fn as_messages(self) -> Vec<Message> {
         match self {
-            SyncResponse::Schema(schema) => {
+            SyncResponse::Schema { schema, query: _ } => {
                 let row_description = serialize_record_batch_schema_to_row_description(&schema);
                 vec![Message::RowDescription(row_description)]
             }
-            SyncResponse::Records(data) => {
+            SyncResponse::Records { data, query: _ } => {
                 let messages = serialize_record_batch_to_data_rows(&data)
                     .iter()
                     .map(|data_row| Message::DataRow(data_row.clone()))
@@ -38,8 +38,8 @@ impl SyncResponse {
 }
 
 pub enum SyncResponse {
-    Schema(Schema),
-    Records(RecordBatch),
+    Schema { schema: Schema, query: String },
+    Records { data: RecordBatch, query: String },
     CommandComplete(CommandCompleteTag),
     BindComplete,
     ParseComplete,

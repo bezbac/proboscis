@@ -5,15 +5,10 @@ use proboscis_core::resolver::{
     Bind, ClientId, Close, Describe, Execute, Parse, Resolver, SyncResponse,
 };
 use sqlparser::{ast::Statement, dialect::PostgreSqlDialect, parser::Parser};
-use std::collections::{HashMap, VecDeque};
 
 pub struct TransformingResolver {
     resolver: Box<dyn Resolver>,
     transformers: Vec<Box<dyn Transformer>>,
-
-    // TODO: This information should be contained in the SyncResponse::Schema and SyncResponse::Records
-    // Maps a client_id to a vec of string queries
-    parse_cache: HashMap<ClientId, VecDeque<Parse>>,
 }
 
 impl TransformingResolver {
@@ -21,7 +16,6 @@ impl TransformingResolver {
         TransformingResolver {
             resolver,
             transformers: Vec::new(),
-            parse_cache: HashMap::new(),
         }
     }
 
@@ -34,18 +28,7 @@ impl TransformingResolver {
 impl TransformingResolver {
     fn parse_sql(&self, query: &str) -> Result<Vec<Statement>> {
         let dialect = PostgreSqlDialect {};
-        Ok(Parser::parse_sql(&dialect, &query)?)
-    }
-
-    fn get_parsed_query(&mut self, client_id: &ClientId) -> Result<Vec<Statement>> {
-        let parse_vec = self.parse_cache.entry(client_id.clone()).or_default();
-        let Parse {
-            query,
-            statement_name: _,
-            param_types: _,
-        } = parse_vec.pop_front().unwrap();
-
-        self.parse_sql(&query)
+        Ok(Parser::parse_sql(&dialect, query)?)
     }
 }
 
@@ -75,15 +58,7 @@ impl Resolver for TransformingResolver {
     }
 
     async fn parse(&mut self, client_id: ClientId, parse: Parse) -> anyhow::Result<()> {
-        self.resolver
-            .parse(client_id, parse.clone())
-            .await
-            .map(|_| {
-                self.parse_cache
-                    .entry(client_id)
-                    .or_default()
-                    .push_back(parse)
-            })
+        self.resolver.parse(client_id, parse).await
     }
 
     async fn describe(&mut self, client_id: ClientId, describe: Describe) -> anyhow::Result<()> {
@@ -104,8 +79,8 @@ impl Resolver for TransformingResolver {
         let transformed_responses = responses
             .into_iter()
             .map(|response| match response {
-                SyncResponse::Schema(schema) => {
-                    let query_ast = self.get_parsed_query(&client_id).unwrap();
+                SyncResponse::Schema { schema, query } => {
+                    let query_ast = self.parse_sql(&query).unwrap();
 
                     let transformed = self
                         .transformers
@@ -114,16 +89,22 @@ impl Resolver for TransformingResolver {
                             transformer.transform_schema(&query_ast, &schema)
                         });
 
-                    SyncResponse::Schema(transformed)
+                    SyncResponse::Schema {
+                        schema: transformed,
+                        query,
+                    }
                 }
-                SyncResponse::Records(data) => {
-                    let query_ast = self.get_parsed_query(&client_id).unwrap();
+                SyncResponse::Records { data, query } => {
+                    let query_ast = self.parse_sql(&query).unwrap();
 
                     let transformed = self.transformers.iter().fold(data, |data, transformer| {
                         transformer.transform_records(&query_ast, &data)
                     });
 
-                    SyncResponse::Records(transformed)
+                    SyncResponse::Records {
+                        data: transformed,
+                        query,
+                    }
                 }
                 _ => response,
             })

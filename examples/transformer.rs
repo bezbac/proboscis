@@ -32,7 +32,7 @@ async fn run_proxy(database_connection_url: String) -> String {
                 .unwrap(),
             ))
             .add_transformer(Box::new(
-                TableColumnTransformer::new().add_transformation(
+                TableColumnTransformer::default().add_transformation(
                     "users.name",
                     Box::new(ReplaceString {
                         new_string: String::from("Anon"),
