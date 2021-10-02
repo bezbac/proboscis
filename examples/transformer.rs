@@ -1,7 +1,9 @@
 use maplit::hashmap;
 use proboscis_core::{Config, Proxy};
 use proboscis_resolver_postgres::{PostgresResolver, TargetConfig};
-use proboscis_resolver_transformer::{ReplaceString, TransformingResolver};
+use proboscis_resolver_transformer::{
+    column_transformations::ReplaceString, TableColumnTransformer, TransformingResolver,
+};
 use testcontainers::clients;
 use tokio::net::TcpListener;
 use tokio_postgres::{NoTls, SimpleQueryMessage};
@@ -29,12 +31,14 @@ async fn run_proxy(database_connection_url: String) -> String {
                 .await
                 .unwrap(),
             ))
-            .add_transformation(
-                "users.name",
-                Box::new(ReplaceString {
-                    new_string: String::from("Anon"),
-                }),
-            ),
+            .add_transformer(Box::new(
+                TableColumnTransformer::new().add_transformation(
+                    "users.name",
+                    Box::new(ReplaceString {
+                        new_string: String::from("Anon"),
+                    }),
+                ),
+            )),
         ),
     );
 
