@@ -4,7 +4,9 @@ use crate::utils::arrow::{
 use anyhow::Result;
 use arrow::{datatypes::Schema, record_batch::RecordBatch};
 use async_trait::async_trait;
-use postgres_protocol::message::{CommandCompleteTag, Message, ParameterDescription};
+use postgres_protocol::message::{
+    BackendMessage, CommandCompleteTag, ParameterDescription,
+};
 use uuid::Uuid;
 
 pub use postgres_protocol::message::{Bind, Close, Describe, Execute, Parse};
@@ -12,27 +14,27 @@ pub use postgres_protocol::message::{Bind, Close, Describe, Execute, Parse};
 pub type ClientId = Uuid;
 
 impl SyncResponse {
-    pub fn as_messages(self) -> Vec<Message> {
+    pub fn as_messages(self) -> Vec<BackendMessage> {
         match self {
             SyncResponse::Schema { schema, query: _ } => {
                 let row_description = serialize_record_batch_schema_to_row_description(&schema);
-                vec![Message::RowDescription(row_description)]
+                vec![BackendMessage::RowDescription(row_description)]
             }
             SyncResponse::Records { data, query: _ } => {
                 let messages = serialize_record_batch_to_data_rows(&data)
                     .iter()
-                    .map(|data_row| Message::DataRow(data_row.clone()))
+                    .map(|data_row| BackendMessage::DataRow(data_row.clone()))
                     .collect();
 
                 messages
             }
-            SyncResponse::CommandComplete(tag) => vec![Message::CommandComplete(tag)],
+            SyncResponse::CommandComplete(tag) => vec![BackendMessage::CommandComplete(tag)],
             SyncResponse::ParameterDescription(parameter_description) => {
-                vec![Message::ParameterDescription(parameter_description)]
+                vec![BackendMessage::ParameterDescription(parameter_description)]
             }
-            SyncResponse::BindComplete => vec![Message::BindComplete],
-            SyncResponse::ParseComplete => vec![Message::ParseComplete],
-            SyncResponse::ReadyForQuery => vec![Message::ReadyForQuery],
+            SyncResponse::BindComplete => vec![BackendMessage::BindComplete],
+            SyncResponse::ParseComplete => vec![BackendMessage::ParseComplete],
+            SyncResponse::ReadyForQuery => vec![BackendMessage::ReadyForQuery],
         }
     }
 }

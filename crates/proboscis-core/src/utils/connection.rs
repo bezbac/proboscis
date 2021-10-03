@@ -4,7 +4,10 @@ use crate::utils::arrow::{
 use anyhow::Result;
 use arrow::record_batch::RecordBatch;
 use async_trait::async_trait;
-use postgres_protocol::{Message, StartupMessage};
+use postgres_protocol::{
+    message::{BackendMessage, FrontendMessage},
+    Message, StartupMessage,
+};
 use std::collections::HashMap;
 use tokio::io::{AsyncRead, AsyncWrite, AsyncWriteExt};
 use tracing::debug;
@@ -18,7 +21,8 @@ pub type MaybeTlsStream = tokio_util::either::Either<
 pub trait ProtocolStream {
     async fn write_message(&mut self, message: Message) -> tokio::io::Result<usize>;
     async fn write_startup_message(&mut self, message: StartupMessage) -> tokio::io::Result<usize>;
-    async fn read_message(&mut self) -> Result<Message>;
+    async fn read_frontend_message(&mut self) -> Result<FrontendMessage>;
+    async fn read_backend_message(&mut self) -> Result<BackendMessage>;
     async fn read_startup_message(&mut self) -> Result<StartupMessage>;
 }
 
@@ -37,8 +41,13 @@ where
         wr.write(&message.as_vec()[..]).await
     }
 
-    async fn read_message(&mut self) -> Result<Message> {
-        let result = Message::read_async(&mut self).await?;
+    async fn read_frontend_message(&mut self) -> Result<FrontendMessage> {
+        let result = FrontendMessage::read_async(&mut self).await?;
+        Ok(result)
+    }
+
+    async fn read_backend_message(&mut self) -> Result<BackendMessage> {
+        let result = BackendMessage::read_async(&mut self).await?;
         Ok(result)
     }
 
@@ -68,12 +77,13 @@ impl Connection {
     pub async fn write_data(&mut self, data: RecordBatch) -> tokio::io::Result<()> {
         let row_description = serialize_record_batch_schema_to_row_description(&data.schema());
 
-        self.write_message(Message::RowDescription(row_description))
+        self.write_message(BackendMessage::RowDescription(row_description).into())
             .await?;
 
         let data_rows = serialize_record_batch_to_data_rows(&data);
         for message in data_rows {
-            self.write_message(Message::DataRow(message)).await?;
+            self.write_message(BackendMessage::DataRow(message).into())
+                .await?;
         }
 
         Ok(())
@@ -92,9 +102,15 @@ impl ProtocolStream for Connection {
         self.stream.write_startup_message(message).await
     }
 
-    async fn read_message(&mut self) -> Result<Message> {
-        let message = self.stream.read_message().await;
-        debug!(message = ?message, "read message");
+    async fn read_frontend_message(&mut self) -> Result<FrontendMessage> {
+        let message = self.stream.read_frontend_message().await;
+        debug!(message = ?message, "read frontend message");
+        message
+    }
+
+    async fn read_backend_message(&mut self) -> Result<BackendMessage> {
+        let message = self.stream.read_backend_message().await;
+        debug!(message = ?message, "read backend message");
         message
     }
 

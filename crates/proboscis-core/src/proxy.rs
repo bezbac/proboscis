@@ -6,8 +6,8 @@ use crate::{
 use anyhow::Result;
 use native_tls::Identity;
 use postgres_protocol::{
-    message::{CommandCompleteTag, MD5Hash, MD5Salt},
-    Message, StartupMessage,
+    message::{BackendMessage, CommandCompleteTag, FrontendMessage, MD5Hash, MD5Salt},
+    StartupMessage,
 };
 use rand::Rng;
 use std::{collections::HashMap, fs::File, io::Read};
@@ -91,15 +91,15 @@ pub async fn handle_authentication(
     let salt = rand::thread_rng().gen::<[u8; 4]>().to_vec();
 
     frontend
-        .write_message(Message::AuthenticationRequestMD5Password(MD5Salt(
-            salt.clone(),
-        )))
+        .write_message(
+            BackendMessage::AuthenticationRequestMD5Password(MD5Salt(salt.clone())).into(),
+        )
         .await?;
 
-    let response = frontend.read_message().await?;
+    let response = frontend.read_frontend_message().await?;
 
     let received_hash = match response {
-        Message::MD5HashedPassword(MD5Hash(hash)) => hash,
+        FrontendMessage::MD5HashedPassword(MD5Hash(hash)) => hash,
         _ => return Err(anyhow::anyhow!("Expected Password Message")),
     };
 
@@ -119,8 +119,12 @@ pub async fn handle_authentication(
         return Err(anyhow::anyhow!("Incorrect password"));
     }
 
-    frontend.write_message(Message::AuthenticationOk).await?;
-    frontend.write_message(Message::ReadyForQuery).await?;
+    frontend
+        .write_message(BackendMessage::AuthenticationOk.into())
+        .await?;
+    frontend
+        .write_message(BackendMessage::ReadyForQuery.into())
+        .await?;
 
     Ok(())
 }
@@ -170,10 +174,10 @@ pub async fn handle_connection(
     resolver.initialize(client_id).await?;
 
     loop {
-        let request = frontend.read_message().await?;
+        let request = frontend.read_frontend_message().await?;
 
         match request {
-            Message::Terminate => {
+            FrontendMessage::Terminate => {
                 async {
                     resolver
                         .terminate(client_id)
@@ -187,7 +191,7 @@ pub async fn handle_connection(
 
                 break;
             }
-            Message::SimpleQuery(query) => {
+            FrontendMessage::SimpleQuery(query) => {
                 async {
                     let result = resolver
                         .query(client_id, query)
@@ -198,19 +202,22 @@ pub async fn handle_connection(
 
                     // TODO: Fix the command complete tag
                     frontend
-                        .write_message(Message::CommandComplete(CommandCompleteTag(
-                            "C".to_string(),
-                        )))
+                        .write_message(
+                            BackendMessage::CommandComplete(CommandCompleteTag("C".to_string()))
+                                .into(),
+                        )
                         .await?;
 
-                    frontend.write_message(Message::ReadyForQuery).await?;
+                    frontend
+                        .write_message(BackendMessage::ReadyForQuery.into())
+                        .await?;
 
                     Ok::<(), anyhow::Error>(())
                 }
                 .instrument(tracing::trace_span!("query"))
                 .await?;
             }
-            Message::Parse(parse) => {
+            FrontendMessage::Parse(parse) => {
                 async {
                     resolver
                         .parse(client_id, parse)
@@ -222,7 +229,7 @@ pub async fn handle_connection(
                 .instrument(tracing::trace_span!("parse"))
                 .await?;
             }
-            Message::Describe(describe) => {
+            FrontendMessage::Describe(describe) => {
                 async {
                     resolver
                         .describe(client_id, describe)
@@ -234,7 +241,7 @@ pub async fn handle_connection(
                 .instrument(tracing::trace_span!("describe"))
                 .await?;
             }
-            Message::Bind(bind) => {
+            FrontendMessage::Bind(bind) => {
                 async {
                     resolver
                         .bind(client_id, bind)
@@ -246,7 +253,7 @@ pub async fn handle_connection(
                 .instrument(tracing::trace_span!("bind"))
                 .await?;
             }
-            Message::Execute(execute) => {
+            FrontendMessage::Execute(execute) => {
                 async {
                     resolver
                         .execute(client_id, execute)
@@ -258,7 +265,7 @@ pub async fn handle_connection(
                 .instrument(tracing::trace_span!("execute"))
                 .await?;
             }
-            Message::Sync => {
+            FrontendMessage::Sync => {
                 async {
                     let responses = resolver
                         .sync(client_id)
@@ -267,7 +274,7 @@ pub async fn handle_connection(
 
                     for response in responses {
                         for message in response.as_messages() {
-                            frontend.write_message(message).await?;
+                            frontend.write_message(message.into()).await?;
                         }
                     }
 
@@ -276,14 +283,16 @@ pub async fn handle_connection(
                 .instrument(tracing::trace_span!("sync"))
                 .await?;
             }
-            Message::Close(close) => {
+            FrontendMessage::Close(close) => {
                 async {
                     resolver
                         .close(client_id, close)
                         .instrument(tracing::trace_span!("resolver"))
                         .await?;
 
-                    frontend.write_message(Message::CloseComplete).await?;
+                    frontend
+                        .write_message(BackendMessage::CloseComplete.into())
+                        .await?;
 
                     Ok::<(), anyhow::Error>(())
                 }

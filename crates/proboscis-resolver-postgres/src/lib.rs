@@ -6,10 +6,10 @@ use deadpool::managed::RecycleResult;
 use futures::TryFutureExt;
 use postgres_protocol::{
     message::{
-        Bind, Close, CommandCompleteTag, DataRow, Describe, Execute, MD5Hash, MD5Salt, Parse,
-        RowDescription,
+        BackendMessage, Bind, Close, CommandCompleteTag, DataRow, Describe, Execute,
+        FrontendMessage, MD5Hash, MD5Salt, Parse, RowDescription,
     },
-    Message, StartupMessage,
+    StartupMessage,
 };
 use proboscis_core::{
     resolver::Resolver,
@@ -63,9 +63,9 @@ pub async fn establish_connection(target_config: &TargetConfig) -> Result<Connec
         .write_startup_message(StartupMessage::Startup { params })
         .await?;
 
-    let response = connection.read_message().await?;
+    let response = connection.read_backend_message().await?;
     match response {
-        Message::AuthenticationRequestMD5Password(MD5Salt(salt)) => {
+        BackendMessage::AuthenticationRequestMD5Password(MD5Salt(salt)) => {
             let hash = encode_md5_password_hash(
                 target_config
                     .user
@@ -79,29 +79,29 @@ pub async fn establish_connection(target_config: &TargetConfig) -> Result<Connec
             );
 
             connection
-                .write_message(Message::MD5HashedPassword(MD5Hash(hash)))
+                .write_message(FrontendMessage::MD5HashedPassword(MD5Hash(hash)).into())
                 .await?;
 
-            let response = connection.read_message().await?;
+            let response = connection.read_backend_message().await?;
 
             match response {
-                Message::AuthenticationOk => {}
+                BackendMessage::AuthenticationOk => {}
                 _ => return Err(anyhow::anyhow!("Expected AuthenticationOk")),
             }
         }
-        Message::AuthenticationOk => {}
+        BackendMessage::AuthenticationOk => {}
         _ => unimplemented!(),
     }
 
     loop {
-        let response = connection.read_message().await?;
+        let response = connection.read_backend_message().await?;
 
         match response {
-            Message::ReadyForQuery => break,
-            Message::ParameterStatus(_) => {
+            BackendMessage::ReadyForQuery => break,
+            BackendMessage::ParameterStatus(_) => {
                 // TODO: Handle this
             }
-            Message::BackendKeyData(_) => {
+            BackendMessage::BackendKeyData(_) => {
                 // TODO: Handle this
             }
             _ => unimplemented!("Unexpected message"),
@@ -181,22 +181,22 @@ impl Resolver for PostgresResolver {
 
         connection
             .connection
-            .write_message(Message::SimpleQuery(query))
+            .write_message(FrontendMessage::SimpleQuery(query).into())
             .await?;
 
         let mut fields = vec![];
         let mut data_rows = vec![];
         loop {
-            let response = connection.connection.read_message().await?;
+            let response = connection.connection.read_backend_message().await?;
             match response {
-                Message::ReadyForQuery => break,
-                Message::RowDescription(RowDescription {
+                BackendMessage::ReadyForQuery => break,
+                BackendMessage::RowDescription(RowDescription {
                     fields: mut message_fields,
                 }) => fields.append(&mut message_fields),
-                Message::DataRow(data_row) => {
+                BackendMessage::DataRow(data_row) => {
                     data_rows.push(data_row);
                 }
-                Message::CommandComplete(CommandCompleteTag(_)) => {
+                BackendMessage::CommandComplete(CommandCompleteTag(_)) => {
                     // TODO: Handle this
                 }
                 _ => unimplemented!(""),
@@ -219,13 +219,12 @@ impl Resolver for PostgresResolver {
 
         connection
             .connection
-            .write_message(Message::Parse(parse))
+            .write_message(FrontendMessage::Parse(parse).into())
             .await?;
 
         connection.requested_ops.push_back(ClientOperation::Parse);
 
-        self.statement_query_cache
-            .insert(statement_name, query);
+        self.statement_query_cache.insert(statement_name, query);
 
         Ok(())
     }
@@ -240,7 +239,7 @@ impl Resolver for PostgresResolver {
 
         connection
             .connection
-            .write_message(Message::Describe(describe))
+            .write_message(FrontendMessage::Describe(describe).into())
             .await?;
 
         connection
@@ -261,7 +260,7 @@ impl Resolver for PostgresResolver {
 
         connection
             .connection
-            .write_message(Message::Bind(bind))
+            .write_message(FrontendMessage::Bind(bind).into())
             .await?;
 
         connection
@@ -281,7 +280,7 @@ impl Resolver for PostgresResolver {
 
         connection
             .connection
-            .write_message(Message::Execute(execute))
+            .write_message(FrontendMessage::Execute(execute).into())
             .await?;
 
         connection
@@ -297,24 +296,29 @@ impl Resolver for PostgresResolver {
             ActiveConnection::new(connection)
         });
 
-        connection.connection.write_message(Message::Sync).await?;
+        connection
+            .connection
+            .write_message(FrontendMessage::Sync.into())
+            .await?;
 
         let mut responses = vec![];
         while let Some(operation) = &connection.requested_ops.pop_front() {
             match operation {
                 ClientOperation::Parse => {
-                    let read_message = connection.connection.read_message().await?;
+                    let read_message = connection.connection.read_backend_message().await?;
 
                     match read_message {
-                        Message::ParseComplete => responses.push(SyncResponse::ParseComplete),
+                        BackendMessage::ParseComplete => {
+                            responses.push(SyncResponse::ParseComplete)
+                        }
                         _ => todo!(),
                     }
                 }
                 ClientOperation::Describe { statement } => loop {
-                    let read_message = connection.connection.read_message().await?;
+                    let read_message = connection.connection.read_backend_message().await?;
 
                     match read_message {
-                        Message::RowDescription(RowDescription { fields }) => {
+                        BackendMessage::RowDescription(RowDescription { fields }) => {
                             let schema = protocol_fields_to_schema(&fields);
 
                             responses.push(SyncResponse::Schema {
@@ -327,18 +331,18 @@ impl Resolver for PostgresResolver {
 
                             break;
                         }
-                        Message::ParameterDescription(parameter_description) => responses
+                        BackendMessage::ParameterDescription(parameter_description) => responses
                             .push(SyncResponse::ParameterDescription(parameter_description)),
                         _ => todo!(),
                     }
                 },
                 ClientOperation::Bind { statement, portal } => {
-                    let read_message = connection.connection.read_message().await?;
+                    let read_message = connection.connection.read_backend_message().await?;
 
                     self.portal_cache.insert(portal.clone(), statement.clone());
 
                     match read_message {
-                        Message::BindComplete => responses.push(SyncResponse::BindComplete),
+                        BackendMessage::BindComplete => responses.push(SyncResponse::BindComplete),
                         _ => todo!(),
                     }
                 }
@@ -347,11 +351,11 @@ impl Resolver for PostgresResolver {
                     let command_complete_tag;
 
                     loop {
-                        let read_message = connection.connection.read_message().await?;
+                        let read_message = connection.connection.read_backend_message().await?;
 
                         match read_message {
-                            Message::DataRow(data_row) => data_rows.push(data_row),
-                            Message::CommandComplete(tag) => {
+                            BackendMessage::DataRow(data_row) => data_rows.push(data_row),
+                            BackendMessage::CommandComplete(tag) => {
                                 command_complete_tag = tag;
                                 break;
                             }
@@ -377,9 +381,9 @@ impl Resolver for PostgresResolver {
             }
         }
 
-        let read_message = connection.connection.read_message().await?;
+        let read_message = connection.connection.read_backend_message().await?;
         match read_message {
-            Message::ReadyForQuery => SyncResponse::ReadyForQuery,
+            BackendMessage::ReadyForQuery => SyncResponse::ReadyForQuery,
             _ => todo!(),
         };
         responses.push(SyncResponse::ReadyForQuery);
@@ -395,10 +399,10 @@ impl Resolver for PostgresResolver {
 
         connection
             .connection
-            .write_message(Message::Close(close))
+            .write_message(FrontendMessage::Close(close).into())
             .await?;
 
-        let _read_message = connection.connection.read_message().await?;
+        let _read_message = connection.connection.read_backend_message().await?;
         // TODO: Handle response
 
         Ok(())

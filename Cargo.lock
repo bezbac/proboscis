@@ -875,6 +875,7 @@ name = "postgres-protocol"
 version = "0.0.0"
 dependencies = [
  "anyhow",
+ "async-trait",
  "byteorder",
  "bytes",
  "omnom",
