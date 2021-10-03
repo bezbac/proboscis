@@ -5,7 +5,10 @@ use crate::{
 };
 use anyhow::Result;
 use native_tls::Identity;
-use postgres_protocol::{Message, StartupMessage};
+use postgres_protocol::{
+    message::{CommandCompleteTag, MD5Hash, MD5Salt},
+    Message, StartupMessage,
+};
 use rand::Rng;
 use std::{collections::HashMap, fs::File, io::Read};
 use tokio::{io::AsyncWriteExt, net::TcpListener};
@@ -88,13 +91,15 @@ pub async fn handle_authentication(
     let salt = rand::thread_rng().gen::<[u8; 4]>().to_vec();
 
     frontend
-        .write_message(Message::AuthenticationRequestMD5Password { salt: salt.clone() })
+        .write_message(Message::AuthenticationRequestMD5Password(MD5Salt(
+            salt.clone(),
+        )))
         .await?;
 
     let response = frontend.read_message().await?;
 
     let received_hash = match response {
-        Message::MD5HashedPassword { hash } => hash,
+        Message::MD5HashedPassword(MD5Hash(hash)) => hash,
         _ => return Err(anyhow::anyhow!("Expected Password Message")),
     };
 
@@ -193,9 +198,9 @@ pub async fn handle_connection(
 
                     // TODO: Fix the command complete tag
                     frontend
-                        .write_message(Message::CommandComplete {
-                            tag: "C".to_string(),
-                        })
+                        .write_message(Message::CommandComplete(CommandCompleteTag(
+                            "C".to_string(),
+                        )))
                         .await?;
 
                     frontend.write_message(Message::ReadyForQuery).await?;
@@ -205,14 +210,10 @@ pub async fn handle_connection(
                 .instrument(tracing::trace_span!("query"))
                 .await?;
             }
-            Message::Parse {
-                statement_name,
-                query,
-                param_types,
-            } => {
+            Message::Parse(parse) => {
                 async {
                     resolver
-                        .parse(client_id, statement_name, query, param_types)
+                        .parse(client_id, parse)
                         .instrument(tracing::trace_span!("resolver"))
                         .await?;
 
@@ -221,10 +222,10 @@ pub async fn handle_connection(
                 .instrument(tracing::trace_span!("parse"))
                 .await?;
             }
-            Message::Describe { kind, name } => {
+            Message::Describe(describe) => {
                 async {
                     resolver
-                        .describe(client_id, kind, name)
+                        .describe(client_id, describe)
                         .instrument(tracing::trace_span!("resolver"))
                         .await?;
 
@@ -233,16 +234,10 @@ pub async fn handle_connection(
                 .instrument(tracing::trace_span!("describe"))
                 .await?;
             }
-            Message::Bind {
-                statement,
-                portal,
-                params,
-                formats,
-                results,
-            } => {
+            Message::Bind(bind) => {
                 async {
                     resolver
-                        .bind(client_id, statement, portal, params, formats, results)
+                        .bind(client_id, bind)
                         .instrument(tracing::trace_span!("resolver"))
                         .await?;
 
@@ -251,10 +246,10 @@ pub async fn handle_connection(
                 .instrument(tracing::trace_span!("bind"))
                 .await?;
             }
-            Message::Execute { portal, row_limit } => {
+            Message::Execute(execute) => {
                 async {
                     resolver
-                        .execute(client_id, portal, row_limit)
+                        .execute(client_id, execute)
                         .instrument(tracing::trace_span!("resolver"))
                         .await?;
 
@@ -265,13 +260,15 @@ pub async fn handle_connection(
             }
             Message::Sync => {
                 async {
-                    let messages = resolver
+                    let responses = resolver
                         .sync(client_id)
                         .instrument(tracing::trace_span!("resolver"))
                         .await?;
 
-                    for message in messages {
-                        frontend.write_message(message).await?;
+                    for response in responses {
+                        for message in response.as_messages() {
+                            frontend.write_message(message).await?;
+                        }
                     }
 
                     Ok::<(), anyhow::Error>(())
@@ -279,10 +276,10 @@ pub async fn handle_connection(
                 .instrument(tracing::trace_span!("sync"))
                 .await?;
             }
-            Message::Close { kind, name } => {
+            Message::Close(close) => {
                 async {
                     resolver
-                        .close(client_id, kind, name)
+                        .close(client_id, close)
                         .instrument(tracing::trace_span!("resolver"))
                         .await?;
 

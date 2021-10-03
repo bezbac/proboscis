@@ -952,7 +952,6 @@ dependencies = [
  "tokio",
  "tracing",
  "url",
- "uuid",
 ]
 
 [[package]]
@@ -962,10 +961,8 @@ dependencies = [
  "anyhow",
  "arrow",
  "async-trait",
- "postgres-protocol 0.0.0",
  "proboscis-core",
  "sqlparser",
- "uuid",
 ]
 
 [[package]]

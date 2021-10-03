@@ -50,69 +50,107 @@ impl From<CloseKind> for u8 {
 }
 
 #[derive(Debug, PartialEq, Clone)]
+pub struct DataRow {
+    pub field_data: Vec<Vec<u8>>,
+}
+
+#[derive(Debug, PartialEq, Clone)]
+pub struct RowDescription {
+    pub fields: Vec<Field>,
+}
+
+#[derive(Debug, PartialEq, Clone)]
+pub struct CommandCompleteTag(pub String);
+
+#[derive(Debug, PartialEq, Clone)]
+pub struct BackendKeyData {
+    pub process_id: u32,
+    pub secret_key: u32,
+    pub additional: Vec<u8>,
+}
+
+#[derive(Debug, PartialEq, Clone)]
+
+pub struct MD5Hash(pub String);
+
+#[derive(Debug, PartialEq, Clone)]
+
+pub struct MD5Salt(pub Vec<u8>);
+
+#[derive(Debug, PartialEq, Clone)]
+pub struct ParameterStatus {
+    pub key: String,
+    pub value: String,
+}
+
+#[derive(Debug, PartialEq, Clone)]
+pub struct Parse {
+    pub statement_name: String,
+    pub query: String,
+    pub param_types: Vec<u32>,
+}
+
+#[derive(Debug, PartialEq, Clone)]
+pub struct Describe {
+    pub kind: DescribeKind,
+    pub name: String,
+}
+
+#[derive(Debug, PartialEq, Clone)]
+pub struct Execute {
+    pub portal: String,
+    pub row_limit: i32,
+}
+
+#[derive(Debug, PartialEq, Clone)]
+pub struct Close {
+    pub kind: CloseKind,
+    pub name: String,
+}
+
+#[derive(Debug, PartialEq, Clone)]
+pub struct Bind {
+    pub statement: String,
+    pub portal: String,
+    pub formats: Vec<i16>,
+    pub params: Vec<Vec<u8>>,
+    pub results: Vec<i16>,
+}
+
+#[derive(Debug, PartialEq, Clone)]
+pub struct ParameterDescription {
+    pub types: Vec<u32>,
+}
+
+#[derive(Debug, PartialEq, Clone)]
+pub struct Error {
+    pub messages: HashMap<String, String>,
+}
+
+#[derive(Debug, PartialEq, Clone)]
 pub enum Message {
-    AuthenticationRequestMD5Password {
-        salt: Vec<u8>,
-    },
+    AuthenticationRequestMD5Password(MD5Salt),
     AuthenticationOk,
-    MD5HashedPassword {
-        hash: String,
-    },
+    MD5HashedPassword(MD5Hash),
     ReadyForQuery,
     SimpleQuery(String),
-    ParameterStatus {
-        key: String,
-        value: String,
-    },
-    BackendKeyData {
-        process_id: u32,
-        secret_key: u32,
-        additional: Vec<u8>,
-    },
-    RowDescription {
-        fields: Vec<Field>,
-    },
-    DataRow {
-        field_data: Vec<Vec<u8>>,
-    },
-    CommandComplete {
-        tag: String,
-    },
+    ParameterStatus(ParameterStatus),
+    BackendKeyData(BackendKeyData),
+    RowDescription(RowDescription),
+    DataRow(DataRow),
+    CommandComplete(CommandCompleteTag),
     Terminate,
-    Parse {
-        statement_name: String,
-        query: String,
-        param_types: Vec<u32>,
-    },
-    Describe {
-        kind: DescribeKind,
-        name: String,
-    },
-    Execute {
-        portal: String,
-        row_limit: i32,
-    },
+    Parse(Parse),
+    Describe(Describe),
+    Execute(Execute),
     Sync,
     ParseComplete,
     BindComplete,
     CloseComplete,
-    Close {
-        kind: CloseKind,
-        name: String,
-    },
-    Error {
-        messages: HashMap<String, String>,
-    },
-    ParameterDescription {
-        param_types: Vec<u32>,
-    },
-    Bind {
-        statement: String,
-        portal: String,
-        formats: Vec<i16>,
-        params: Vec<Vec<u8>>,
-        results: Vec<i16>,
-    },
+    Close(Close),
+    Error(Error),
+    ParameterDescription(ParameterDescription),
+    Bind(Bind),
 }
 
 impl Message {
@@ -136,7 +174,7 @@ impl Message {
                     Ok(())
                 }),
             ),
-            Self::AuthenticationRequestMD5Password { salt } => {
+            Self::AuthenticationRequestMD5Password(MD5Salt(salt)) => {
                 write_message_with_prefixed_message_len(
                     buf,
                     CharTag::Authentication,
@@ -147,7 +185,7 @@ impl Message {
                     }),
                 )
             }
-            Self::MD5HashedPassword { hash } => write_message_with_prefixed_message_len(
+            Self::MD5HashedPassword(MD5Hash(hash)) => write_message_with_prefixed_message_len(
                 buf,
                 CharTag::Password,
                 Box::new(move |body| -> Result<()> {
@@ -165,27 +203,29 @@ impl Message {
                     Ok(())
                 }),
             ),
-            Self::RowDescription { fields } => write_message_with_prefixed_message_len(
-                buf,
-                CharTag::RowDescription,
-                Box::new(move |body| -> Result<()> {
-                    body.write_be(fields.len() as i16)?;
+            Self::RowDescription(RowDescription { fields }) => {
+                write_message_with_prefixed_message_len(
+                    buf,
+                    CharTag::RowDescription,
+                    Box::new(move |body| -> Result<()> {
+                        body.write_be(fields.len() as i16)?;
 
-                    for field in &fields {
-                        body.write_all(field.name.as_bytes())?;
-                        body.push(0);
+                        for field in &fields {
+                            body.write_all(field.name.as_bytes())?;
+                            body.push(0);
 
-                        body.write_be(field.table_oid)?;
-                        body.write_be(field.column_number)?;
-                        body.write_be(field.type_oid)?;
-                        body.write_be(field.type_length)?;
-                        body.write_be(field.type_modifier)?;
-                        body.write_be(field.format)?;
-                    }
-                    Ok(())
-                }),
-            ),
-            Self::DataRow { field_data } => write_message_with_prefixed_message_len(
+                            body.write_be(field.table_oid)?;
+                            body.write_be(field.column_number)?;
+                            body.write_be(field.type_oid)?;
+                            body.write_be(field.type_length)?;
+                            body.write_be(field.type_modifier)?;
+                            body.write_be(field.format)?;
+                        }
+                        Ok(())
+                    }),
+                )
+            }
+            Self::DataRow(DataRow { field_data }) => write_message_with_prefixed_message_len(
                 buf,
                 CharTag::DataRowOrDescribe,
                 Box::new(move |body| -> Result<()> {
@@ -199,16 +239,18 @@ impl Message {
                     Ok(())
                 }),
             ),
-            Self::CommandComplete { tag } => write_message_with_prefixed_message_len(
-                buf,
-                CharTag::CommandCompleteOrClose,
-                Box::new(move |body| -> Result<()> {
-                    body.extend_from_slice(tag.as_bytes());
-                    body.push(0);
+            Self::CommandComplete(CommandCompleteTag(tag)) => {
+                write_message_with_prefixed_message_len(
+                    buf,
+                    CharTag::CommandCompleteOrClose,
+                    Box::new(move |body| -> Result<()> {
+                        body.extend_from_slice(tag.as_bytes());
+                        body.push(0);
 
-                    Ok(())
-                }),
-            ),
+                        Ok(())
+                    }),
+                )
+            }
             Self::Terminate => write_message_with_prefixed_message_len(
                 buf,
                 CharTag::Terminate,
@@ -219,24 +261,26 @@ impl Message {
                 }),
             ),
 
-            Self::ParameterStatus { key, value } => write_message_with_prefixed_message_len(
-                buf,
-                CharTag::ParameterStatusOrSync,
-                Box::new(move |body| -> Result<()> {
-                    body.extend_from_slice(key.as_bytes());
-                    body.push(0);
+            Self::ParameterStatus(ParameterStatus { key, value }) => {
+                write_message_with_prefixed_message_len(
+                    buf,
+                    CharTag::ParameterStatusOrSync,
+                    Box::new(move |body| -> Result<()> {
+                        body.extend_from_slice(key.as_bytes());
+                        body.push(0);
 
-                    body.extend_from_slice(value.as_bytes());
-                    body.push(0);
+                        body.extend_from_slice(value.as_bytes());
+                        body.push(0);
 
-                    Ok(())
-                }),
-            ),
-            Self::BackendKeyData {
+                        Ok(())
+                    }),
+                )
+            }
+            Self::BackendKeyData(BackendKeyData {
                 process_id,
                 secret_key,
                 additional,
-            } => write_message_with_prefixed_message_len(
+            }) => write_message_with_prefixed_message_len(
                 buf,
                 CharTag::BackendKeyData,
                 Box::new(move |body| -> Result<()> {
@@ -247,11 +291,11 @@ impl Message {
                     Ok(())
                 }),
             ),
-            Self::Parse {
+            Self::Parse(Parse {
                 statement_name: statement,
                 query,
                 param_types,
-            } => write_message_with_prefixed_message_len(
+            }) => write_message_with_prefixed_message_len(
                 buf,
                 CharTag::Parse,
                 Box::new(move |body| -> Result<()> {
@@ -270,7 +314,7 @@ impl Message {
                     Ok(())
                 }),
             ),
-            Self::Describe { name, kind } => write_message_with_prefixed_message_len(
+            Self::Describe(Describe { name, kind }) => write_message_with_prefixed_message_len(
                 buf,
                 CharTag::DataRowOrDescribe,
                 Box::new(move |body| -> Result<()> {
@@ -282,18 +326,20 @@ impl Message {
                     Ok(())
                 }),
             ),
-            Self::Execute { portal, row_limit } => write_message_with_prefixed_message_len(
-                buf,
-                CharTag::ExecuteOrError,
-                Box::new(move |body| -> Result<()> {
-                    body.extend_from_slice(portal.as_bytes());
-                    body.push(0);
+            Self::Execute(Execute { portal, row_limit }) => {
+                write_message_with_prefixed_message_len(
+                    buf,
+                    CharTag::ExecuteOrError,
+                    Box::new(move |body| -> Result<()> {
+                        body.extend_from_slice(portal.as_bytes());
+                        body.push(0);
 
-                    body.write_be(row_limit)?;
+                        body.write_be(row_limit)?;
 
-                    Ok(())
-                }),
-            ),
+                        Ok(())
+                    }),
+                )
+            }
             Self::Sync => write_message_with_prefixed_message_len(
                 buf,
                 CharTag::ParameterStatusOrSync,
@@ -309,26 +355,28 @@ impl Message {
                 CharTag::BindComplete,
                 Box::new(move |_| -> Result<()> { Ok(()) }),
             ),
-            Self::ParameterDescription { param_types } => write_message_with_prefixed_message_len(
-                buf,
-                CharTag::ParameterDescription,
-                Box::new(move |body| -> Result<()> {
-                    body.write_be((&param_types).len() as i16)?;
+            Self::ParameterDescription(ParameterDescription { types }) => {
+                write_message_with_prefixed_message_len(
+                    buf,
+                    CharTag::ParameterDescription,
+                    Box::new(move |body| -> Result<()> {
+                        body.write_be((&types).len() as i16)?;
 
-                    for param in &param_types {
-                        body.write_be(*param)?;
-                    }
+                        for param in &types {
+                            body.write_be(*param)?;
+                        }
 
-                    Ok(())
-                }),
-            ),
-            Self::Bind {
+                        Ok(())
+                    }),
+                )
+            }
+            Self::Bind(Bind {
                 portal,
                 statement,
                 params,
                 formats,
                 results,
-            } => write_message_with_prefixed_message_len(
+            }) => write_message_with_prefixed_message_len(
                 buf,
                 CharTag::Bind,
                 Box::new(move |body| -> Result<()> {
@@ -361,10 +409,10 @@ impl Message {
                 CharTag::CloseComplete,
                 Box::new(move |_| -> Result<()> { Ok(()) }),
             ),
-            Self::Error { messages } => {
+            Self::Error(messages) => {
                 unimplemented!()
             }
-            Self::Close { kind, name } => write_message_with_prefixed_message_len(
+            Self::Close(Close { kind, name }) => write_message_with_prefixed_message_len(
                 buf,
                 CharTag::CommandCompleteOrClose,
                 Box::new(move |body| -> Result<()> {
@@ -419,7 +467,7 @@ impl Message {
                 if method == 5 {
                     let mut bytes = vec![0_u8; 4];
                     bytes = stream.read_exact(&mut bytes).map(|_| bytes)?;
-                    return Ok(Self::AuthenticationRequestMD5Password { salt: bytes });
+                    return Ok(Self::AuthenticationRequestMD5Password(MD5Salt(bytes)));
                 }
 
                 if method == 0 {
@@ -432,7 +480,7 @@ impl Message {
                 let hash_bytes = read_until_zero(stream)?;
                 let hash = String::from_utf8(hash_bytes)?;
 
-                Ok(Self::MD5HashedPassword { hash })
+                Ok(Self::MD5HashedPassword(MD5Hash(hash)))
             }
             CharTag::ParameterStatusOrSync => {
                 if remaining_bytes_len == 0 {
@@ -445,7 +493,7 @@ impl Message {
                 let value_bytes = read_until_zero(stream)?;
                 let value = String::from_utf8(value_bytes)?;
 
-                Ok(Self::ParameterStatus { key, value })
+                Ok(Self::ParameterStatus(ParameterStatus { key, value }))
             }
             CharTag::BackendKeyData => {
                 let process_id: u32 = stream.read_be()?;
@@ -456,11 +504,11 @@ impl Message {
                 let mut bytes = vec![0; remaining_bytes as usize];
                 bytes = stream.read_exact(&mut bytes).map(|_| bytes)?;
 
-                Ok(Self::BackendKeyData {
+                Ok(Self::BackendKeyData(BackendKeyData {
                     process_id,
                     secret_key,
                     additional: bytes,
-                })
+                }))
             }
             CharTag::ReadyForQuery => {
                 let mut bytes = vec![0; remaining_bytes_len as usize];
@@ -499,7 +547,7 @@ impl Message {
                     fields.push(field);
                 }
 
-                Ok(Message::RowDescription { fields })
+                Ok(Message::RowDescription(RowDescription { fields }))
             }
             CharTag::DataRowOrDescribe => {
                 let mut bytes: Vec<u8> = vec![0; remaining_bytes_len as usize];
@@ -520,7 +568,7 @@ impl Message {
                         let name_bytes = read_until_zero(&mut cursor)?;
                         let name = String::from_utf8(name_bytes)?;
 
-                        Ok(Message::Describe { kind, name })
+                        Ok(Message::Describe(Describe { kind, name }))
                     }
                     _ => {
                         let mut cursor = std::io::Cursor::new(bytes);
@@ -538,7 +586,7 @@ impl Message {
                             fields.push(field_bytes[..].to_vec())
                         }
 
-                        Ok(Message::DataRow { field_data: fields })
+                        Ok(Message::DataRow(DataRow { field_data: fields }))
                     }
                 }
             }
@@ -554,7 +602,7 @@ impl Message {
                     || tag.contains("FETCH")
                     || tag.contains("COPY")
                 {
-                    Ok(Message::CommandComplete { tag })
+                    Ok(Message::CommandComplete(CommandCompleteTag(tag)))
                 } else {
                     let kind = if tag.starts_with('S') {
                         CloseKind::Statement
@@ -564,10 +612,10 @@ impl Message {
                         return Err(anyhow::anyhow!(""));
                     };
 
-                    Ok(Message::Close {
+                    Ok(Message::Close(Close {
                         kind,
                         name: tag[1..].to_string(),
-                    })
+                    }))
                 }
             }
             CharTag::Terminate => Ok(Message::Terminate),
@@ -585,11 +633,11 @@ impl Message {
                     param_types.push(param_oid)
                 }
 
-                Ok(Message::Parse {
+                Ok(Message::Parse(Parse {
                     statement_name: statement,
                     query,
                     param_types,
-                })
+                }))
             }
             CharTag::ExecuteOrError => {
                 let portal_bytes = read_until_zero(stream)?;
@@ -597,21 +645,23 @@ impl Message {
 
                 let row_limit: i32 = stream.read_be()?;
 
-                Ok(Message::Execute { portal, row_limit })
+                Ok(Message::Execute(Execute { portal, row_limit }))
             }
             CharTag::ParseComplete => Ok(Message::ParseComplete),
             CharTag::BindComplete => Ok(Message::BindComplete),
             CharTag::ParameterDescription => {
                 let num_param_types: u16 = stream.read_be()?;
 
-                let mut param_types = vec![];
+                let mut types = vec![];
 
-                while param_types.len() < num_param_types as usize {
+                while types.len() < num_param_types as usize {
                     let param_oid: u32 = stream.read_be()?;
-                    param_types.push(param_oid)
+                    types.push(param_oid)
                 }
 
-                Ok(Message::ParameterDescription { param_types })
+                Ok(Message::ParameterDescription(ParameterDescription {
+                    types,
+                }))
             }
             CharTag::Bind => {
                 let portal_bytes = read_until_zero(stream)?;
@@ -644,13 +694,13 @@ impl Message {
                     results.push(result_format)
                 }
 
-                Ok(Message::Bind {
+                Ok(Message::Bind(Bind {
                     portal,
                     statement,
                     formats,
                     params,
                     results,
-                })
+                }))
             }
             CharTag::CloseComplete => Ok(Message::CloseComplete),
             CharTag::EmptyQueryResponse => unimplemented!(),
@@ -678,21 +728,21 @@ mod tests {
 
     #[test]
     fn parameter_status() {
-        let message = Message::ParameterStatus {
+        let message = Message::ParameterStatus (ParameterStatus{
             key: "Test Key".to_string(),
             value: "Test Value".to_string(),
-        };
+        });
 
         test_symmetric_serialization_deserialization(message);
     }
 
     #[test]
     fn empty_backend_key_data() {
-        let message = Message::BackendKeyData {
+        let message = Message::BackendKeyData(BackendKeyData {
             process_id: 1,
             secret_key: 1,
             additional: vec![],
-        };
+        });
 
         test_symmetric_serialization_deserialization(message);
     }
@@ -706,7 +756,7 @@ mod tests {
 
     #[test]
     fn row_description() {
-        let message = Message::RowDescription {
+        let message = Message::RowDescription(RowDescription {
             fields: vec![Field {
                 name: "test".to_string(),
                 column_number: 1,
@@ -716,48 +766,48 @@ mod tests {
                 type_oid: -1,
                 format: -1,
             }],
-        };
+        });
 
         test_symmetric_serialization_deserialization(message);
     }
 
     #[test]
     fn describe_statement() {
-        let message = Message::Describe {
+        let message = Message::Describe(Describe {
             kind: DescribeKind::Statement,
             name: "Test".to_string(),
-        };
+        });
 
         test_symmetric_serialization_deserialization(message);
     }
 
     #[test]
     fn describe_portal() {
-        let message = Message::Describe {
+        let message = Message::Describe(Describe {
             kind: DescribeKind::Portal,
             name: "Test".to_string(),
-        };
+        });
 
         test_symmetric_serialization_deserialization(message);
     }
 
     #[test]
     fn execute() {
-        let message = Message::Execute {
+        let message = Message::Execute(Execute {
             portal: "Test".to_string(),
             row_limit: 0,
-        };
+        });
 
         test_symmetric_serialization_deserialization(message);
     }
 
     #[test]
     fn parse() {
-        let message = Message::Parse {
+        let message = Message::Parse(Parse {
             statement_name: "s0".to_string(),
             query: "SELECT id, name FROM person".to_string(),
             param_types: vec![],
-        };
+        });
 
         test_symmetric_serialization_deserialization(message);
     }
