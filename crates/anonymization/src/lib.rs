@@ -5,14 +5,17 @@ use arrow::{
 };
 use polars::prelude::{DataFrame, UInt32Chunked};
 use polars::prelude::{NewChunkedArray, Series};
-use std::{collections::HashSet, iter::FromIterator, ops::Range, sync::Arc};
+use std::{collections::HashSet, convert::TryFrom, iter::FromIterator, ops::Range, sync::Arc};
 
 fn get_span(series: &Series) -> i64 {
     match series.dtype() {
-        &polars::prelude::DataType::UInt8
-        | &polars::prelude::DataType::UInt16
-        | &polars::prelude::DataType::Int32 => {
-            (series.arg_max().unwrap() - series.arg_min().unwrap()) as i64
+        &polars::prelude::DataType::UInt8 => {
+            let max = series.max::<u8>().unwrap() - series.min::<u8>().unwrap();
+            max as i64
+        }
+        &polars::prelude::DataType::Int32 => {
+            let max = series.max::<i32>().unwrap() - series.min::<i32>().unwrap();
+            max as i64
         }
         &polars::prelude::DataType::Utf8 => series.arg_unique().unwrap().len() as i64,
         _ => todo!(),
@@ -33,7 +36,37 @@ fn get_spans(df: &DataFrame, partition: &[u32]) -> Vec<i64> {
 }
 
 fn record_batch_to_data_frame(data: &RecordBatch) -> DataFrame {
-    todo!();
+    use polars::prelude::*;
+
+    let series: Vec<Series> = data
+        .columns()
+        .iter()
+        .zip(data.schema().fields())
+        .map(|(column, field)| match column.data_type() {
+            arrow::datatypes::DataType::Int32 => Series::new(
+                field.name(),
+                column
+                    .as_any()
+                    .downcast_ref::<Int32Array>()
+                    .unwrap()
+                    .iter()
+                    .collect::<Vec<Option<i32>>>(),
+            ),
+            arrow::datatypes::DataType::Utf8 => Series::new(
+                field.name(),
+                column
+                    .as_any()
+                    .downcast_ref::<StringArray>()
+                    .unwrap()
+                    .iter()
+                    .map(|val| val.map(|v| v.to_string()))
+                    .collect::<Vec<Option<String>>>(),
+            ),
+            _ => todo!(),
+        })
+        .collect();
+
+    DataFrame::new(series).unwrap()
 }
 
 #[cfg(test)]
@@ -44,7 +77,7 @@ mod tests {
         datatypes::{DataType, Field, Schema},
         record_batch::RecordBatch,
     };
-    use std::{convert::TryFrom, sync::Arc};
+    use std::sync::Arc;
 
     #[test]
     fn it_works() {
