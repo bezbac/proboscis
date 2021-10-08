@@ -17,7 +17,7 @@ fn main() -> anyhow::Result<()> {
     let anonymized = anonymize(
         &df,
         &quasi_identifiers,
-        AnonymizationCriteria::KAnonymous { k: 5 },
+        &[AnonymizationCriteria::KAnonymous { k: 3 }],
     );
 
     println!("{:?}", anonymized.head(None));

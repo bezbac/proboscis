@@ -307,14 +307,30 @@ pub fn is_k_anonymous(partition: &[u32], k: usize) -> bool {
     return true;
 }
 
+pub fn is_l_diverse(df: &DataFrame, partition: &[u32], sensitive_column: &str, l: usize) -> bool {
+    df.column(sensitive_column)
+        .unwrap()
+        .take(&UInt32Chunked::new_from_slice("idx", partition))
+        .unwrap()
+        .unique()
+        .unwrap()
+        .len()
+        >= l
+}
+
 pub enum AnonymizationCriteria {
     KAnonymous { k: usize },
+    LDiverse { l: usize, sensitive_column: String },
 }
 
 impl AnonymizationCriteria {
     fn is_anonymous(&self, df: &DataFrame, partition: &[u32]) -> bool {
         match self {
             Self::KAnonymous { k } => is_k_anonymous(partition, *k),
+            Self::LDiverse {
+                l,
+                sensitive_column,
+            } => is_l_diverse(df, partition, &sensitive_column, *l),
         }
     }
 }
@@ -322,11 +338,16 @@ impl AnonymizationCriteria {
 pub fn anonymize(
     df: &DataFrame,
     quasi_identifiers: &[&str],
-    criteria: AnonymizationCriteria,
+    criteria: &[AnonymizationCriteria],
 ) -> DataFrame {
-    let finished_partitions = partition_dataset(&df, &quasi_identifiers, &|_, partition| {
-        criteria.is_anonymous(df, partition)
-    });
+    let finished_partitions = partition_dataset(&df, &quasi_identifiers, &|_, partition| 
+        // If any criteria returns false, return false
+        criteria
+            .iter()
+            .map(|criteria| criteria.is_anonymous(df, partition))
+            .position(|b| !b)
+            .is_none()
+    );
 
     let anonymized = build_anonymized_dataset(&df, &finished_partitions, &quasi_identifiers);
 
@@ -437,7 +458,7 @@ mod tests {
         let anonymized = anonymize(
             &df,
             &quasi_identifiers,
-            AnonymizationCriteria::KAnonymous { k: 2 },
+            &[AnonymizationCriteria::KAnonymous { k: 2 }],
         );
 
         println!("Annonymized: {:?}", anonymized.head(Some(10)));
