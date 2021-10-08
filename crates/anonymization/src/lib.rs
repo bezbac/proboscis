@@ -33,6 +33,14 @@ fn get_spans(series: &[&Series], partition: &[u32]) -> Vec<i64> {
         .collect()
 }
 
+fn scale_spans(spans: &[i64], scale: &[i64]) -> Vec<i64> {
+    spans
+        .iter()
+        .zip(scale)
+        .map(|(value, scale)| value / scale)
+        .collect()
+}
+
 pub fn is_k_anonymous(partition: &[u32], k: usize) -> bool {
     if partition.len() < k {
         return false;
@@ -45,7 +53,7 @@ fn split(df: &DataFrame, partition: &[u32], column_index: usize) -> (Vec<u32>, V
         .take(&UInt32Chunked::new_from_slice("idx", partition))
         .unwrap();
 
-    // println!("Series: {:?}", dfp);
+    println!("Series: {:?}", dfp);
 
     match dfp.dtype() {
         &polars::prelude::DataType::Int32 => {
@@ -112,30 +120,40 @@ pub fn partition_dataset(
 
     let relevant_dataframe = df.columns(feature_columns).unwrap();
 
+    let scale = get_spans(&relevant_dataframe, &partitions[0].clone());
+
     let mut finished_partitions = vec![];
     while let Some(partition) = partitions.pop_front() {
         // println!("PARTITION");
         // println!("remaining_partitions: {:?}", partitions);
 
         let spans = get_spans(&relevant_dataframe, &partition);
+        let scaled_spans = &scale_spans(&spans, &scale);
 
         let mut column_index_span_vec: Vec<(usize, i64)> = feature_columns
             .iter()
             .enumerate()
-            .zip(spans.iter())
+            .zip(scaled_spans.iter())
             .map(|((column_index, _), span)| (column_index, *span))
             .collect();
 
         column_index_span_vec.sort_by_key(|(_, span)| *span);
-        // column_index_span_vec.reverse();
+        column_index_span_vec.reverse();
 
         // println!("Spans: {:?}. (Sorted {:?})", spans, column_index_span_vec);
 
         let mut did_break = false;
         for (column_index, _) in column_index_span_vec {
+            let column_name = feature_columns[column_index];
+            let df_column_index = df
+                .get_column_names()
+                .into_iter()
+                .position(|name| name == column_name)
+                .unwrap();
+
             // println!("Column: {:?}", column_index);
 
-            let (lp, rp) = split(df, &partition, column_index);
+            let (lp, rp) = split(df, &partition, df_column_index);
 
             // println!("{:?} {:?}", lp, rp);
 
