@@ -53,8 +53,6 @@ fn split(df: &DataFrame, partition: &[u32], column_index: usize) -> (Vec<u32>, V
         .take(&UInt32Chunked::new_from_slice("idx", partition))
         .unwrap();
 
-    println!("Series: {:?}", dfp);
-
     match dfp.dtype() {
         &polars::prelude::DataType::Int32 => {
             let median = dfp.median().unwrap();
@@ -213,6 +211,7 @@ pub fn build_anonymized_dataset(
     feature_columns: &[&str],
 ) -> DataFrame {
     let mut updated: Vec<Series> = vec![];
+    let mut original_indices_of_updated_rows: Vec<u32> = vec![];
 
     for partition in partitions {
         for (index, column) in df.get_columns().iter().enumerate() {
@@ -234,8 +233,14 @@ pub fn build_anonymized_dataset(
                 Some(s) => updated[index] = s.append(&new_data).unwrap().clone(),
                 None => updated.push(new_data),
             };
+
+            for index in partition {
+                original_indices_of_updated_rows.push(*index);
+            }
         }
     }
+
+    // TODO: Reorder according to original indices
 
     DataFrame::new(updated).unwrap()
 }
@@ -321,7 +326,7 @@ mod tests {
     }
 
     #[test]
-    fn it_works() {
+    fn k_anonymization() {
         let first_name_array = StringArray::from(vec![
             "Max", "Lukas", "Alex", "Alex", "Lukas", "Mia", "Noa", "Noah", "Mia",
         ]);
