@@ -1,11 +1,10 @@
 use arrow::{
-    array::{Array, Int32Array, StringArray, UInt16Array, UInt8Array},
-    datatypes::DataType,
+    array::{Int32Array, StringArray},
     record_batch::RecordBatch,
 };
 use polars::prelude::{DataFrame, UInt32Chunked};
 use polars::prelude::{NewChunkedArray, Series};
-use std::{collections::HashSet, convert::TryFrom, iter::FromIterator, ops::Range, sync::Arc};
+use std::collections::{HashSet, VecDeque};
 
 fn get_span(series: &Series) -> i64 {
     match series.dtype() {
@@ -22,20 +21,138 @@ fn get_span(series: &Series) -> i64 {
     }
 }
 
-fn get_spans(df: &DataFrame, partition: &[u32]) -> Vec<i64> {
-    let relevant_section = df
-        .take(&UInt32Chunked::new_from_slice("idx", partition))
-        .unwrap();
-
-    relevant_section
-        .columns(df.fields().iter().map(|f| f.name()))
-        .unwrap()
+fn get_spans(series: &[&Series], partition: &[u32]) -> Vec<i64> {
+    series
         .iter()
-        .map(|column| get_span(column.clone()))
+        .map(|series| {
+            let relevant_section = series
+                .take(&UInt32Chunked::new_from_slice("idx", partition))
+                .unwrap();
+            get_span(&relevant_section)
+        })
         .collect()
 }
 
-fn record_batch_to_data_frame(data: &RecordBatch) -> DataFrame {
+pub fn is_k_anonymous(partition: &[u32], k: usize) -> bool {
+    if partition.len() < k {
+        return false;
+    }
+    return true;
+}
+
+fn split(df: &DataFrame, partition: &[u32], column_index: usize) -> (Vec<u32>, Vec<u32>) {
+    let dfp = df[column_index]
+        .take(&UInt32Chunked::new_from_slice("idx", partition))
+        .unwrap();
+
+    println!("Series: {:?}", dfp);
+
+    match dfp.dtype() {
+        &polars::prelude::DataType::Int32 => {
+            let median = dfp.median().unwrap();
+
+            let dfl: Vec<u32> = partition
+                .iter()
+                .zip(dfp.i32().unwrap())
+                .filter(|(_, value)| match value {
+                    Some(v) => (*v as f64) < median,
+                    None => true,
+                })
+                .map(|(index, _)| *index)
+                .collect();
+
+            let dfr: Vec<u32> = partition
+                .iter()
+                .zip(dfp.i32().unwrap())
+                .filter(|(_, value)| match value {
+                    Some(v) => (*v as f64) >= median,
+                    None => false,
+                })
+                .map(|(index, _)| *index)
+                .collect();
+
+            (dfl, dfr)
+        }
+        &polars::prelude::DataType::Utf8 => {
+            let unique = dfp.unique().unwrap();
+            let values: Vec<Option<&str>> = unique.utf8().unwrap().into_iter().collect();
+
+            let lv: HashSet<&Option<&str>> = values[..values.len() / 2].iter().collect();
+            let rv: HashSet<&Option<&str>> = values[values.len() / 2..].iter().collect();
+
+            let left_indices = partition
+                .iter()
+                .zip(dfp.utf8().unwrap())
+                .filter(|(_, element)| lv.contains(element))
+                .map(|(idx, _)| idx)
+                .cloned()
+                .collect();
+
+            let right_indices = partition
+                .iter()
+                .zip(dfp.utf8().unwrap())
+                .filter(|(_, element)| rv.contains(element))
+                .map(|(idx, _)| idx)
+                .cloned()
+                .collect();
+
+            (left_indices, right_indices)
+        }
+        _ => todo!(),
+    }
+}
+
+pub fn partition_dataset(
+    df: &DataFrame,
+    feature_columns: &[&str],
+    is_valid: &dyn Fn(&DataFrame, &[u32]) -> bool,
+) -> Vec<Vec<u32>> {
+    let mut partitions: VecDeque<Vec<u32>> =
+        vec![(0..df[0].len()).map(|i| i as u32).collect::<Vec<u32>>()].into();
+
+    let relevant_dataframe = df.columns(feature_columns).unwrap();
+
+    let mut finished_partitions = vec![];
+    while let Some(partition) = partitions.pop_front() {
+        println!("PARTITION");
+
+        println!("remaining_partitions: {:?}", partitions);
+
+        let spans = get_spans(&relevant_dataframe, &partition);
+
+        println!("Spans: {:?}", spans);
+
+        let mut column_index_span_vec: Vec<(usize, i64)> = feature_columns
+            .iter()
+            .enumerate()
+            .zip(spans)
+            .map(|((column_index, _), span)| (column_index, span))
+            .collect();
+
+        column_index_span_vec.sort_by_key(|(_, span)| -*span);
+
+        for (column_index, _) in column_index_span_vec {
+            println!("Column: {:?}", column_index);
+
+            let (lp, rp) = split(df, &partition, column_index);
+
+            println!("{:?} {:?}", lp, rp);
+
+            if !is_valid(df, &lp) || !is_valid(df, &rp) {
+                continue;
+            }
+
+            partitions.push_back(lp);
+            partitions.push_back(rp);
+        }
+
+        finished_partitions.push(partition);
+    }
+
+    return finished_partitions;
+}
+
+pub fn record_batch_to_data_frame(data: &RecordBatch) -> DataFrame {
     use polars::prelude::*;
 
     let series: Vec<Series> = data
@@ -135,10 +252,30 @@ mod tests {
             .map(|i| i as u32)
             .collect::<Vec<u32>>();
 
-        let spans = get_spans(&df, &partition);
+        let relevant_series: Vec<&Series> = df[..].into_iter().map(|f| f).collect();
+        let spans = get_spans(&relevant_series, &partition);
 
-        println!("{:?}", spans);
+        println!("Spans: {:?}", spans);
+        println!("---");
+        println!();
 
-        // let quasi_identifiers = vec!["first_name", "last_name", "age", "profession"];
+        let (lp, rp) = split(&df, &partition, 0);
+        println!("Col 0 lp: {:?}", lp);
+        println!("Col 0 rp: {:?}", rp);
+        println!("---");
+        println!();
+
+        let (lp, rp) = split(&df, &partition, 2);
+        println!("Col 2 lp: {:?}", lp);
+        println!("Col 2 rp: {:?}", rp);
+        println!("---");
+        println!();
+
+        let quasi_identifiers = vec!["first_name", "last_name", "age", "profession"];
+        let finished_partitions = partition_dataset(&df, &quasi_identifiers, &|_, partition| {
+            is_k_anonymous(partition, 3)
+        });
+
+        println!("Final partitions: {:?}", finished_partitions);
     }
 }
