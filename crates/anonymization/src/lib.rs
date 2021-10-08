@@ -2,7 +2,7 @@ use arrow::{
     array::{Int32Array, StringArray},
     record_batch::RecordBatch,
 };
-use polars::prelude::{DataFrame, NamedFrom, UInt32Chunked};
+use polars::prelude::{ChunkCompare, DataFrame, NamedFrom, UInt32Chunked};
 use polars::prelude::{NewChunkedArray, Series};
 use std::collections::{HashSet, VecDeque};
 
@@ -49,53 +49,25 @@ fn split(df: &DataFrame, partition: &[u32], column_index: usize) -> (Vec<u32>, V
         .unwrap();
 
     match dfp.dtype() {
-        &polars::prelude::DataType::Int32 => {
+        &polars::prelude::DataType::UInt8
+        | &polars::prelude::DataType::UInt16
+        | &polars::prelude::DataType::UInt32
+        | &polars::prelude::DataType::UInt64
+        | &polars::prelude::DataType::Int16
+        | &polars::prelude::DataType::Int32
+        | &polars::prelude::DataType::Int64 => {
             let median = dfp.median().unwrap();
 
-            let dfl: Vec<u32> = partition
-                .iter()
-                .zip(dfp.i32().unwrap())
-                .filter(|(_, value)| match value {
-                    Some(v) => (*v as f64) < median,
-                    None => true,
-                })
-                .map(|(index, _)| *index)
-                .collect();
+            let mask = dfp.lt_eq(median);
 
-            let dfr: Vec<u32> = partition
-                .iter()
-                .zip(dfp.i32().unwrap())
-                .filter(|(_, value)| match value {
-                    Some(v) => (*v as f64) >= median,
-                    None => false,
-                })
-                .map(|(index, _)| *index)
-                .collect();
-
-            (dfl, dfr)
-        }
-        &polars::prelude::DataType::Int64 => {
-            let median = dfp.median().unwrap();
-
-            let dfl: Vec<u32> = partition
-                .iter()
-                .zip(dfp.i64().unwrap())
-                .filter(|(_, value)| match value {
-                    Some(v) => (*v as f64) < median,
-                    None => true,
-                })
-                .map(|(index, _)| *index)
-                .collect();
-
-            let dfr: Vec<u32> = partition
-                .iter()
-                .zip(dfp.i64().unwrap())
-                .filter(|(_, value)| match value {
-                    Some(v) => (*v as f64) >= median,
-                    None => false,
-                })
-                .map(|(index, _)| *index)
-                .collect();
+            let mut dfl = vec![];
+            let mut dfr = vec![];
+            for (index, mask_val) in partition.iter().zip(&mask) {
+                match mask_val.map_or(false, |v| v) {
+                    true => dfl.push(*index),
+                    false => dfr.push(*index)
+                }
+            }
 
             (dfl, dfr)
         }
