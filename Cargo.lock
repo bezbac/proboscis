@@ -47,6 +47,7 @@ dependencies = [
 name = "anonymization"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
  "arrow 3.0.0",
  "parquet",
  "polars",

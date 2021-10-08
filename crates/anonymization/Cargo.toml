@@ -9,3 +9,6 @@ edition = "2018"
 arrow = "3.0.0"
 polars = "0.16.0"
 parquet = "5.5.0"
+
+[dev-dependencies]
+anyhow = "1.0"

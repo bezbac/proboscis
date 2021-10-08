@@ -8,13 +8,15 @@ use std::collections::{HashSet, VecDeque};
 
 fn get_span(series: &Series) -> i64 {
     match series.dtype() {
-        &polars::prelude::DataType::UInt8 => {
-            let max = series.max::<u8>().unwrap() - series.min::<u8>().unwrap();
-            max as i64
-        }
-        &polars::prelude::DataType::Int32 => {
-            let max = series.max::<i32>().unwrap() - series.min::<i32>().unwrap();
-            max as i64
+        &polars::prelude::DataType::UInt8
+        | &polars::prelude::DataType::UInt16
+        | &polars::prelude::DataType::UInt32
+        | &polars::prelude::DataType::UInt64
+        | &polars::prelude::DataType::Int16
+        | &polars::prelude::DataType::Int32
+        | &polars::prelude::DataType::Int64 => {
+            let max = series.max::<i64>().unwrap() - series.min::<i64>().unwrap();
+            max
         }
         &polars::prelude::DataType::Utf8 => series.arg_unique().unwrap().len() as i64,
         _ => todo!(),
@@ -41,13 +43,6 @@ fn scale_spans(spans: &[i64], scale: &[i64]) -> Vec<i64> {
         .collect()
 }
 
-pub fn is_k_anonymous(partition: &[u32], k: usize) -> bool {
-    if partition.len() < k {
-        return false;
-    }
-    return true;
-}
-
 fn split(df: &DataFrame, partition: &[u32], column_index: usize) -> (Vec<u32>, Vec<u32>) {
     let dfp = df[column_index]
         .take(&UInt32Chunked::new_from_slice("idx", partition))
@@ -70,6 +65,31 @@ fn split(df: &DataFrame, partition: &[u32], column_index: usize) -> (Vec<u32>, V
             let dfr: Vec<u32> = partition
                 .iter()
                 .zip(dfp.i32().unwrap())
+                .filter(|(_, value)| match value {
+                    Some(v) => (*v as f64) >= median,
+                    None => false,
+                })
+                .map(|(index, _)| *index)
+                .collect();
+
+            (dfl, dfr)
+        }
+        &polars::prelude::DataType::Int64 => {
+            let median = dfp.median().unwrap();
+
+            let dfl: Vec<u32> = partition
+                .iter()
+                .zip(dfp.i64().unwrap())
+                .filter(|(_, value)| match value {
+                    Some(v) => (*v as f64) < median,
+                    None => true,
+                })
+                .map(|(index, _)| *index)
+                .collect();
+
+            let dfr: Vec<u32> = partition
+                .iter()
+                .zip(dfp.i64().unwrap())
                 .filter(|(_, value)| match value {
                     Some(v) => (*v as f64) >= median,
                     None => false,
@@ -110,25 +130,22 @@ fn split(df: &DataFrame, partition: &[u32], column_index: usize) -> (Vec<u32>, V
 
 pub fn partition_dataset(
     df: &DataFrame,
-    feature_columns: &[&str],
+    quasi_identifiers: &[&str],
     is_valid: &dyn Fn(&DataFrame, &[u32]) -> bool,
 ) -> Vec<Vec<u32>> {
     let mut partitions: VecDeque<Vec<u32>> =
         vec![(0..df[0].len()).map(|i| i as u32).collect::<Vec<u32>>()].into();
 
-    let relevant_dataframe = df.columns(feature_columns).unwrap();
+    let relevant_dataframe = df.columns(quasi_identifiers).unwrap();
 
     let scale = get_spans(&relevant_dataframe, &partitions[0].clone());
 
     let mut finished_partitions = vec![];
     while let Some(partition) = partitions.pop_front() {
-        // println!("PARTITION");
-        // println!("remaining_partitions: {:?}", partitions);
-
         let spans = get_spans(&relevant_dataframe, &partition);
         let scaled_spans = &scale_spans(&spans, &scale);
 
-        let mut column_index_span_vec: Vec<(usize, i64)> = feature_columns
+        let mut column_index_span_vec: Vec<(usize, i64)> = quasi_identifiers
             .iter()
             .enumerate()
             .zip(scaled_spans.iter())
@@ -142,7 +159,7 @@ pub fn partition_dataset(
 
         let mut did_break = false;
         for (column_index, _) in column_index_span_vec {
-            let column_name = feature_columns[column_index];
+            let column_name = quasi_identifiers[column_index];
             let df_column_index = df
                 .get_column_names()
                 .into_iter()
@@ -183,6 +200,10 @@ fn agg_column(series: &Series) -> Series {
         &polars::prelude::DataType::Int32 => Series::new(
             series.name(),
             vec![series.mean().unwrap(); series.i32().unwrap().len()],
+        ),
+        &polars::prelude::DataType::Int64 => Series::new(
+            series.name(),
+            vec![series.mean().unwrap(); series.i64().unwrap().len()],
         ),
         &polars::prelude::DataType::Utf8 => {
             let unique_series = series.unique().unwrap();
@@ -277,6 +298,39 @@ pub fn record_batch_to_data_frame(data: &RecordBatch) -> DataFrame {
         .collect();
 
     DataFrame::new(series).unwrap()
+}
+
+pub fn is_k_anonymous(partition: &[u32], k: usize) -> bool {
+    if partition.len() < k {
+        return false;
+    }
+    return true;
+}
+
+pub enum AnonymizationCriteria {
+    KAnonymous { k: usize },
+}
+
+impl AnonymizationCriteria {
+    fn is_anonymous(&self, df: &DataFrame, partition: &[u32]) -> bool {
+        match self {
+            Self::KAnonymous { k } => is_k_anonymous(partition, *k),
+        }
+    }
+}
+
+pub fn anonymize(
+    df: &DataFrame,
+    quasi_identifiers: &[&str],
+    criteria: AnonymizationCriteria,
+) -> DataFrame {
+    let finished_partitions = partition_dataset(&df, &quasi_identifiers, &|_, partition| {
+        criteria.is_anonymous(df, partition)
+    });
+
+    let anonymized = build_anonymized_dataset(&df, &finished_partitions, &quasi_identifiers);
+
+    anonymized
 }
 
 #[cfg(test)]
@@ -376,18 +430,15 @@ mod tests {
         .unwrap();
 
         let df = record_batch_to_data_frame(&batch);
-
         println!("{:?}", df.head(Some(10)));
 
         let quasi_identifiers = vec!["age", "profession"];
-        // let quasi_identifiers = vec!["age", "profession"];
-        let finished_partitions = partition_dataset(&df, &quasi_identifiers, &|_, partition| {
-            is_k_anonymous(partition, 2)
-        });
 
-        println!("Final partitions: {:?}", finished_partitions);
-
-        let anonymized = build_anonymized_dataset(&df, &finished_partitions, &quasi_identifiers);
+        let anonymized = anonymize(
+            &df,
+            &quasi_identifiers,
+            AnonymizationCriteria::KAnonymous { k: 2 },
+        );
 
         println!("Annonymized: {:?}", anonymized.head(Some(10)));
     }
