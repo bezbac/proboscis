@@ -3,7 +3,7 @@ use arrow::{
     record_batch::RecordBatch,
 };
 use itertools::Itertools;
-use polars::prelude::{ChunkCompare, DataFrame, NamedFrom, UInt32Chunked};
+use polars::prelude::{ChunkAgg, ChunkCompare, DataFrame, NamedFrom, UInt32Chunked};
 use polars::prelude::{NewChunkedArray, Series};
 use std::collections::{HashSet, VecDeque};
 
@@ -66,7 +66,7 @@ fn split(df: &DataFrame, partition: &[u32], column_index: usize) -> (Vec<u32>, V
             for (index, mask_val) in partition.iter().zip(&mask) {
                 match mask_val.map_or(false, |v| v) {
                     true => dfl.push(*index),
-                    false => dfr.push(*index)
+                    false => dfr.push(*index),
                 }
             }
 
@@ -163,20 +163,87 @@ pub fn partition_dataset(
     return finished_partitions;
 }
 
-fn agg_column(series: &Series) -> Series {
+pub enum NumericAggregation {
+    Median,
+    Range,
+}
+
+fn agg_column(series: &Series, numeric_aggregation: &NumericAggregation) -> Series {
     match series.dtype() {
-        &polars::prelude::DataType::UInt8 => Series::new(
-            series.name(),
-            vec![series.mean().unwrap(); series.u8().unwrap().len()],
-        ),
-        &polars::prelude::DataType::Int32 => Series::new(
-            series.name(),
-            vec![series.mean().unwrap(); series.i32().unwrap().len()],
-        ),
-        &polars::prelude::DataType::Int64 => Series::new(
-            series.name(),
-            vec![series.mean().unwrap(); series.i64().unwrap().len()],
-        ),
+        &polars::prelude::DataType::UInt8 => match numeric_aggregation {
+            NumericAggregation::Median => Series::new(
+                series.name(),
+                vec![series.mean().unwrap(); series.u8().unwrap().len()],
+            ),
+            NumericAggregation::Range => {
+                let min = series
+                    .u8()
+                    .unwrap()
+                    .min()
+                    .map_or("Null".to_string(), |f| format!("{}", f));
+                let max = series
+                    .u8()
+                    .unwrap()
+                    .max()
+                    .map_or("Null".to_string(), |f| format!("{}", f));
+                let agg = if max == min {
+                    max
+                } else {
+                    format!("{} - {}", min, max)
+                };
+                Series::new(series.name(), vec![agg; series.u8().unwrap().len()])
+            }
+        },
+        &polars::prelude::DataType::Int32 => match numeric_aggregation {
+            NumericAggregation::Median => Series::new(
+                series.name(),
+                vec![series.mean().unwrap(); series.i32().unwrap().len()],
+            ),
+            NumericAggregation::Range => {
+                let min = series
+                    .i32()
+                    .unwrap()
+                    .min()
+                    .map_or("Null".to_string(), |f| format!("{}", f));
+                let max = series
+                    .i32()
+                    .unwrap()
+                    .max()
+                    .map_or("Null".to_string(), |f| format!("{}", f));
+                let agg = if max == min {
+                    max
+                } else {
+                    format!("{} - {}", min, max)
+                };
+
+                Series::new(series.name(), vec![agg; series.i32().unwrap().len()])
+            }
+        },
+        &polars::prelude::DataType::Int64 => match numeric_aggregation {
+            NumericAggregation::Median => Series::new(
+                series.name(),
+                vec![series.mean().unwrap(); series.i64().unwrap().len()],
+            ),
+            NumericAggregation::Range => {
+                let min = series
+                    .i64()
+                    .unwrap()
+                    .min()
+                    .map_or("Null".to_string(), |f| format!("{}", f));
+                let max = series
+                    .i64()
+                    .unwrap()
+                    .max()
+                    .map_or("Null".to_string(), |f| format!("{}", f));
+                let agg = if max == min {
+                    max
+                } else {
+                    format!("{} - {}", min, max)
+                };
+
+                Series::new(series.name(), vec![agg; series.i64().unwrap().len()])
+            }
+        },
         &polars::prelude::DataType::Utf8 => {
             let unique_strings: Vec<&str> = series
                 .utf8()
@@ -201,6 +268,7 @@ pub fn build_anonymized_dataset(
     df: &DataFrame,
     partitions: &[Vec<u32>],
     feature_columns: &[&str],
+    numeric_aggregation: &NumericAggregation,
 ) -> DataFrame {
     let mut updated: Vec<Series> = vec![];
     let mut original_indices_of_updated_rows: Vec<u32> = vec![];
@@ -212,7 +280,7 @@ pub fn build_anonymized_dataset(
                     .take(&UInt32Chunked::new_from_slice("idx", partition))
                     .unwrap();
 
-                agg_column(&original_data)
+                agg_column(&original_data, numeric_aggregation)
             } else {
                 column
                     .take(&UInt32Chunked::new_from_slice("idx", partition))
@@ -310,17 +378,22 @@ pub fn anonymize(
     df: &DataFrame,
     quasi_identifiers: &[&str],
     criteria: &[AnonymizationCriteria],
+    numeric_aggregation: &NumericAggregation,
 ) -> DataFrame {
-    let finished_partitions = partition_dataset(&df, &quasi_identifiers, &|_, partition| 
+    let finished_partitions = partition_dataset(&df, &quasi_identifiers, &|_, partition|
         // If any criteria returns false, return false
         criteria
             .iter()
             .map(|criteria| criteria.is_anonymous(df, partition))
             .position(|b| !b)
-            .is_none()
-    );
+            .is_none());
 
-    let anonymized = build_anonymized_dataset(&df, &finished_partitions, &quasi_identifiers);
+    let anonymized = build_anonymized_dataset(
+        &df,
+        &finished_partitions,
+        &quasi_identifiers,
+        numeric_aggregation,
+    );
 
     anonymized
 }
@@ -339,7 +412,7 @@ mod tests {
     fn string_aggregation() {
         let series = Series::new("last_name", vec!["Müller", "Müller", "Schidt"]);
 
-        let aggregated = agg_column(&series);
+        let aggregated = agg_column(&series, &NumericAggregation::Median);
 
         assert_eq!(
             aggregated
@@ -356,10 +429,10 @@ mod tests {
     }
 
     #[test]
-    fn number_agg() {
+    fn number_agg_median() {
         let series = Series::new("last_name", vec![10 as i32, 10 as i32, 10 as i32]);
 
-        let aggregated = agg_column(&series);
+        let aggregated = agg_column(&series, &NumericAggregation::Median);
 
         assert_eq!(
             aggregated
@@ -368,6 +441,38 @@ mod tests {
                 .into_iter()
                 .collect::<Vec<Option<f64>>>(),
             vec![Some(10.0), Some(10.0), Some(10.0)]
+        );
+    }
+
+    #[test]
+    fn number_agg_range_equal() {
+        let series = Series::new("last_name", vec![10 as i32, 10 as i32, 10 as i32]);
+
+        let aggregated = agg_column(&series, &NumericAggregation::Range);
+
+        assert_eq!(
+            aggregated
+                .utf8()
+                .unwrap()
+                .into_iter()
+                .collect::<Vec<Option<&str>>>(),
+            vec![Some("10"), Some("10"), Some("10")]
+        );
+    }
+
+    #[test]
+    fn number_agg_range() {
+        let series = Series::new("last_name", vec![10 as i32, 20 as i32, 30 as i32]);
+
+        let aggregated = agg_column(&series, &NumericAggregation::Range);
+
+        assert_eq!(
+            aggregated
+                .utf8()
+                .unwrap()
+                .into_iter()
+                .collect::<Vec<Option<&str>>>(),
+            vec![Some("10 - 30"), Some("10 - 30"), Some("10 - 30")]
         );
     }
 
@@ -430,6 +535,7 @@ mod tests {
             &df,
             &quasi_identifiers,
             &[AnonymizationCriteria::KAnonymous { k: 2 }],
+            &NumericAggregation::Range,
         );
 
         println!("Annonymized: {:?}", anonymized.head(Some(10)));

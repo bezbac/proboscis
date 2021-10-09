@@ -1,5 +1,6 @@
 use anonymization::anonymize;
 use anonymization::AnonymizationCriteria;
+use anonymization::NumericAggregation;
 use polars::prelude::CsvReader;
 use polars::prelude::SerReader;
 
@@ -18,9 +19,10 @@ fn main() -> anyhow::Result<()> {
         &df,
         &quasi_identifiers,
         &[AnonymizationCriteria::KAnonymous { k: 3 }],
+        &NumericAggregation::Range,
     );
 
-    println!("{:?}", anonymized.head(None));
+    println!("{:?}", anonymized.head(Some(25)));
 
     Ok(())
 }
