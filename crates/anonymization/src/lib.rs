@@ -2,6 +2,7 @@ use arrow::{
     array::{Int32Array, StringArray},
     record_batch::RecordBatch,
 };
+use itertools::Itertools;
 use polars::prelude::{ChunkCompare, DataFrame, NamedFrom, UInt32Chunked};
 use polars::prelude::{NewChunkedArray, Series};
 use std::collections::{HashSet, VecDeque};
@@ -72,8 +73,7 @@ fn split(df: &DataFrame, partition: &[u32], column_index: usize) -> (Vec<u32>, V
             (dfl, dfr)
         }
         &polars::prelude::DataType::Utf8 => {
-            let unique = dfp.unique().unwrap();
-            let values: Vec<Option<&str>> = unique.utf8().unwrap().into_iter().collect();
+            let values: Vec<Option<&str>> = dfp.utf8().unwrap().into_iter().unique().collect();
 
             let lv: HashSet<&Option<&str>> = values[..values.len() / 2].iter().collect();
             let rv: HashSet<&Option<&str>> = values[values.len() / 2..].iter().collect();
@@ -178,12 +178,11 @@ fn agg_column(series: &Series) -> Series {
             vec![series.mean().unwrap(); series.i64().unwrap().len()],
         ),
         &polars::prelude::DataType::Utf8 => {
-            let unique_series = series.unique().unwrap();
-
-            let unique_strings: Vec<&str> = unique_series
+            let unique_strings: Vec<&str> = series
                 .utf8()
                 .unwrap()
                 .into_iter()
+                .unique()
                 .map(|v| v.map_or("None", |v| v))
                 .collect();
 
