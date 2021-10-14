@@ -98,13 +98,19 @@ async fn main() {
 
     // Simple query
     let simple_query_result = client
-        .simple_query("SELECT id, first_name, last_name, gender, city FROM contacts")
+        .simple_query("SELECT id, first_name, last_name, city FROM contacts")
         .await
         .unwrap();
 
     for message in simple_query_result {
         if let SimpleQueryMessage::Row(row) = message {
-            println!("{:?} {:?} {:?}", row.get(0), row.get(1), row.get(2))
+            println!(
+                "{:?} {:?} {:?} {:?}",
+                row.get(0),
+                row.get(1),
+                row.get(2),
+                row.get(3)
+            )
         }
     }
 

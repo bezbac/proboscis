@@ -1,17 +1,18 @@
 use crate::{table_column_transformer::get_schema_fields, traits::Transformer};
 use arrow::{
-    array::{ArrayRef, GenericStringArray, Int16Array, Int32Array},
+    array::{make_array, Array, ArrayRef},
     record_batch::RecordBatch,
 };
 use itertools::Itertools;
 use polars::prelude::NewChunkedArray;
-use polars::prelude::{ChunkAgg, ChunkCompare, DataFrame, DataType, UInt32Chunked};
+use polars::prelude::{ChunkAgg, ChunkCompare, DataFrame, UInt32Chunked};
 use polars::series::NamedFrom;
 use polars::series::Series;
 use sqlparser::ast::Statement;
 use std::{
     collections::{HashSet, VecDeque},
     convert::TryFrom,
+    ops::Deref,
     sync::Arc,
 };
 
@@ -378,21 +379,16 @@ pub fn record_batch_to_data_frame(data: &RecordBatch) -> DataFrame {
 }
 
 pub fn series_to_arrow_array(series: &Series) -> ArrayRef {
-    match series.dtype() {
-        DataType::Int16 => {
-            let values: Vec<Option<i16>> = series.i16().unwrap().into_iter().collect();
-            Arc::new(Int16Array::from(values))
-        }
-        DataType::Int32 => {
-            let values: Vec<Option<i32>> = series.i32().unwrap().into_iter().collect();
-            Arc::new(Int32Array::from(values))
-        }
-        DataType::Utf8 => {
-            let values: Vec<Option<&str>> = series.utf8().unwrap().into_iter().collect();
-            Arc::new(GenericStringArray::<i32>::from(values))
-        }
-        _ => todo!("{:?}", series.dtype()),
-    }
+    let arrays: Vec<Arc<dyn Array>> = series
+        .array_data()
+        .iter()
+        .cloned()
+        .map(|data| make_array(data.clone()))
+        .collect();
+
+    let array_refs: Vec<&dyn Array> = arrays.iter().map(|a| a.deref()).collect();
+
+    arrow::compute::kernels::concat::concat(&array_refs).unwrap()
 }
 
 pub fn data_frame_to_record_batch(df: &DataFrame, schema: arrow::datatypes::Schema) -> RecordBatch {

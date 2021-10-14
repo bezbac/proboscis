@@ -8,7 +8,12 @@ anyhow = "1.0"
 arrow = "5.5.0"
 async-trait = "0.1.50"
 sqlparser = "0.9.0"
-polars = { git = "https://github.com/pola-rs/polars", branch = "arrow-rs" }
 itertools = "0.10.1"
 
 proboscis-core = { version = "0.1.0", path = "../proboscis-core" }
+
+[dependencies.polars]
+git = "https://github.com/pola-rs/polars"
+branch = "arrow-rs"
+default-features = true
+features = ["dtype-i8", "dtype-i16", "dtype-u8", "dtype-u16"]
