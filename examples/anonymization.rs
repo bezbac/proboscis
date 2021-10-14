@@ -1,8 +1,9 @@
 use maplit::hashmap;
 use postgres::SimpleQueryMessage;
-use proboscis_anonymization::AnonymizationTransformer;
 use proboscis_core::{Config, Proxy};
 use proboscis_resolver_postgres::{PostgresResolver, TargetConfig};
+use proboscis_resolver_transformer::AnonymizationCriteria;
+use proboscis_resolver_transformer::AnonymizationTransformer;
 use proboscis_resolver_transformer::TransformingResolver;
 use testcontainers::clients;
 use tokio::net::TcpListener;
@@ -42,14 +43,14 @@ async fn run_proxy(database_connection_url: String) -> String {
                     String::from("contacts.last_name"),
                     String::from("contacts.email"),
                 ],
-                pseudo_identifier_columns: vec![
+                quasi_identifier_columns: vec![
                     String::from("contacts.gender"),
                     String::from("contacts.birth_year"),
                     String::from("contacts.street"),
                     String::from("contacts.city"),
                     String::from("contacts.profession"),
                 ],
-                criteria: proboscis_anonymization::AnonymizationCriteria::KAnonymous { k: 3 },
+                criteria: AnonymizationCriteria::KAnonymous { k: 3 },
             })),
         ),
     );
@@ -97,7 +98,7 @@ async fn main() {
 
     // Simple query
     let simple_query_result = client
-        .simple_query("SELECT id, first_name, last_name FROM contacts")
+        .simple_query("SELECT id, first_name, last_name, gender, city FROM contacts")
         .await
         .unwrap();
 

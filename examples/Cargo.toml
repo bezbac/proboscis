@@ -19,7 +19,6 @@ native-tls = "0.2.7"
 proboscis-core = { version = "0.1.0", path = "../crates/proboscis-core" }
 proboscis-resolver-postgres = { version = "0.1.0", path = "../crates/proboscis-resolver-postgres" }
 proboscis-resolver-transformer = { version = "0.1.0", path = "../crates/proboscis-resolver-transformer" }
-proboscis-anonymization = { version = "0.1.0", path = "../crates/proboscis-anonymization" }
 
 [[example]]
 name = "general"

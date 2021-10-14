@@ -392,7 +392,6 @@ dependencies = [
  "native-tls",
  "postgres",
  "postgres-native-tls",
- "proboscis-anonymization",
  "proboscis-core",
  "proboscis-resolver-postgres",
  "proboscis-resolver-transformer",
@@ -1346,18 +1345,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "proboscis-anonymization"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "arrow",
- "itertools",
- "polars",
- "proboscis-resolver-transformer",
- "sqlparser",
-]
-
-[[package]]
 name = "proboscis-core"
 version = "0.1.0"
 dependencies = [
@@ -1402,6 +1389,8 @@ dependencies = [
  "anyhow",
  "arrow",
  "async-trait",
+ "itertools",
+ "polars",
  "proboscis-core",
  "sqlparser",
 ]

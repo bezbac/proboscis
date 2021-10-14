@@ -11,7 +11,7 @@ use sqlparser::ast::{
 };
 use std::{collections::HashMap, sync::Arc};
 
-fn get_schema_fields(ast: &Statement) -> anyhow::Result<Vec<String>> {
+pub fn get_schema_fields(ast: &Statement) -> anyhow::Result<Vec<String>> {
     match ast {
         Statement::Query(query) => match &query.body {
             SetExpr::Select(select) => {

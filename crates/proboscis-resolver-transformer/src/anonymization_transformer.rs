@@ -1,17 +1,17 @@
+use crate::{table_column_transformer::get_schema_fields, traits::Transformer};
 use arrow::{
-    array::{Int32Array, StringArray},
+    array::{GenericStringArray, Int16Array, Int32Array, StringArray},
     record_batch::RecordBatch,
 };
 use itertools::Itertools;
 use polars::prelude::{ChunkAgg, ChunkCompare, DataFrame, NamedFrom, UInt32Chunked};
 use polars::prelude::{NewChunkedArray, Series};
-use proboscis_resolver_transformer::traits::Transformer;
 use sqlparser::ast::Statement;
 use std::collections::{HashSet, VecDeque};
 
 pub struct AnonymizationTransformer {
     pub identifier_columns: Vec<String>,
-    pub pseudo_identifier_columns: Vec<String>,
+    pub quasi_identifier_columns: Vec<String>,
     pub criteria: AnonymizationCriteria,
 }
 
@@ -21,11 +21,39 @@ impl Transformer for AnonymizationTransformer {
         query: &[Statement],
         schema: &arrow::datatypes::Schema,
     ) -> arrow::datatypes::Schema {
-        todo!()
+        // TODO: Correct this
+        schema.clone()
     }
 
     fn transform_records(&self, query: &[Statement], data: &RecordBatch) -> RecordBatch {
-        todo!()
+        let normalized_field_names = get_schema_fields(query.first().unwrap()).unwrap();
+
+        let dataframe = record_batch_to_data_frame(data);
+
+        let quasi_identifier_columns: Vec<String> = normalized_field_names
+            .iter()
+            .enumerate()
+            .filter(|(_, column_name)| self.quasi_identifier_columns.contains(column_name))
+            .map(|(idx, _)| data.schema().field(idx).name().to_string())
+            .collect();
+
+        let strs: Vec<&str> = quasi_identifier_columns
+            .iter()
+            .map(|f| f.as_str())
+            .collect();
+
+        let anonymized = anonymize(
+            &dataframe,
+            &strs,
+            &[self.criteria.clone()],
+            &NumericAggregation::Median,
+        );
+
+        println!("{:?}", anonymized.head(None));
+
+        let batch = data_frame_to_record_batch(&anonymized);
+
+        batch
     }
 }
 
@@ -344,6 +372,21 @@ pub fn record_batch_to_data_frame(data: &RecordBatch) -> DataFrame {
                     .iter()
                     .collect::<Vec<Option<i32>>>(),
             ),
+            arrow::datatypes::DataType::Int16 => {
+                let vec = column
+                    .as_any()
+                    .downcast_ref::<Int16Array>()
+                    .unwrap()
+                    .iter()
+                    .collect::<Vec<Option<i16>>>();
+
+                let array =
+                    ChunkedArray::<Int16Type>::new_from_opt_slice(field.name(), vec.as_slice());
+
+                let array: ChunkedArray<Int32Type> = array.cast().unwrap();
+
+                array.into_series()
+            }
             arrow::datatypes::DataType::Utf8 => Series::new(
                 field.name(),
                 column
@@ -354,11 +397,25 @@ pub fn record_batch_to_data_frame(data: &RecordBatch) -> DataFrame {
                     .map(|val| val.map(|v| v.to_string()))
                     .collect::<Vec<Option<String>>>(),
             ),
-            _ => todo!(),
+            arrow::datatypes::DataType::LargeUtf8 => Series::new(
+                field.name(),
+                column
+                    .as_any()
+                    .downcast_ref::<GenericStringArray<i64>>()
+                    .unwrap()
+                    .iter()
+                    .map(|val| val.map(|v| v.to_string()))
+                    .collect::<Vec<Option<String>>>(),
+            ),
+            _ => todo!("{:?}", column.data_type()),
         })
         .collect();
 
     DataFrame::new(series).unwrap()
+}
+
+pub fn data_frame_to_record_batch(df: &DataFrame) -> RecordBatch {
+    todo!();
 }
 
 pub fn is_k_anonymous(partition: &[u32], k: usize) -> bool {
@@ -379,6 +436,7 @@ pub fn is_l_diverse(df: &DataFrame, partition: &[u32], sensitive_column: &str, l
         >= l
 }
 
+#[derive(Clone)]
 pub enum AnonymizationCriteria {
     KAnonymous { k: usize },
     LDiverse { l: usize, sensitive_column: String },
