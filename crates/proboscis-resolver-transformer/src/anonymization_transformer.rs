@@ -1,13 +1,19 @@
 use crate::{table_column_transformer::get_schema_fields, traits::Transformer};
 use arrow::{
-    array::{GenericStringArray, Int16Array, Int32Array, StringArray},
+    array::{ArrayRef, GenericStringArray, Int16Array, Int32Array},
     record_batch::RecordBatch,
 };
 use itertools::Itertools;
-use polars::prelude::{ChunkAgg, ChunkCompare, DataFrame, NamedFrom, UInt32Chunked};
-use polars::prelude::{NewChunkedArray, Series};
+use polars::prelude::NewChunkedArray;
+use polars::prelude::{ChunkAgg, ChunkCompare, DataFrame, DataType, UInt32Chunked};
+use polars::series::NamedFrom;
+use polars::series::Series;
 use sqlparser::ast::Statement;
-use std::collections::{HashSet, VecDeque};
+use std::{
+    collections::{HashSet, VecDeque},
+    convert::TryFrom,
+    sync::Arc,
+};
 
 pub struct AnonymizationTransformer {
     pub identifier_columns: Vec<String>,
@@ -51,7 +57,8 @@ impl Transformer for AnonymizationTransformer {
 
         println!("{:?}", anonymized.head(None));
 
-        let batch = data_frame_to_record_batch(&anonymized);
+        let updated_schema = self.transform_schema(query, &data.schema());
+        let batch = data_frame_to_record_batch(&anonymized, updated_schema);
 
         batch
     }
@@ -362,60 +369,40 @@ pub fn record_batch_to_data_frame(data: &RecordBatch) -> DataFrame {
         .columns()
         .iter()
         .zip(data.schema().fields())
-        .map(|(column, field)| match column.data_type() {
-            arrow::datatypes::DataType::Int32 => Series::new(
-                field.name(),
-                column
-                    .as_any()
-                    .downcast_ref::<Int32Array>()
-                    .unwrap()
-                    .iter()
-                    .collect::<Vec<Option<i32>>>(),
-            ),
-            arrow::datatypes::DataType::Int16 => {
-                let vec = column
-                    .as_any()
-                    .downcast_ref::<Int16Array>()
-                    .unwrap()
-                    .iter()
-                    .collect::<Vec<Option<i16>>>();
-
-                let array =
-                    ChunkedArray::<Int16Type>::new_from_opt_slice(field.name(), vec.as_slice());
-
-                let array: ChunkedArray<Int32Type> = array.cast().unwrap();
-
-                array.into_series()
-            }
-            arrow::datatypes::DataType::Utf8 => Series::new(
-                field.name(),
-                column
-                    .as_any()
-                    .downcast_ref::<StringArray>()
-                    .unwrap()
-                    .iter()
-                    .map(|val| val.map(|v| v.to_string()))
-                    .collect::<Vec<Option<String>>>(),
-            ),
-            arrow::datatypes::DataType::LargeUtf8 => Series::new(
-                field.name(),
-                column
-                    .as_any()
-                    .downcast_ref::<GenericStringArray<i64>>()
-                    .unwrap()
-                    .iter()
-                    .map(|val| val.map(|v| v.to_string()))
-                    .collect::<Vec<Option<String>>>(),
-            ),
-            _ => todo!("{:?}", column.data_type()),
+        .map(|(column, field)| {
+            Series::try_from((field.name().as_str(), vec![column.clone()])).unwrap()
         })
         .collect();
 
     DataFrame::new(series).unwrap()
 }
 
-pub fn data_frame_to_record_batch(df: &DataFrame) -> RecordBatch {
-    todo!();
+pub fn series_to_arrow_array(series: &Series) -> ArrayRef {
+    match series.dtype() {
+        DataType::Int16 => {
+            let values: Vec<Option<i16>> = series.i16().unwrap().into_iter().collect();
+            Arc::new(Int16Array::from(values))
+        }
+        DataType::Int32 => {
+            let values: Vec<Option<i32>> = series.i32().unwrap().into_iter().collect();
+            Arc::new(Int32Array::from(values))
+        }
+        DataType::Utf8 => {
+            let values: Vec<Option<&str>> = series.utf8().unwrap().into_iter().collect();
+            Arc::new(GenericStringArray::<i32>::from(values))
+        }
+        _ => todo!("{:?}", series.dtype()),
+    }
+}
+
+pub fn data_frame_to_record_batch(df: &DataFrame, schema: arrow::datatypes::Schema) -> RecordBatch {
+    let columns: Vec<ArrayRef> = df
+        .get_columns()
+        .iter()
+        .map(|series| series_to_arrow_array(series))
+        .collect();
+
+    RecordBatch::try_new(Arc::new(schema), columns).unwrap()
 }
 
 pub fn is_k_anonymous(partition: &[u32], k: usize) -> bool {
