@@ -1,8 +1,8 @@
-use anonymization::anonymize;
-use anonymization::AnonymizationCriteria;
-use anonymization::NumericAggregation;
 use polars::prelude::CsvReader;
 use polars::prelude::SerReader;
+use proboscis_anonymization::anonymize;
+use proboscis_anonymization::AnonymizationCriteria;
+use proboscis_anonymization::NumericAggregation;
 
 fn main() -> anyhow::Result<()> {
     let csv_path = "examples/adult.csv".to_string();

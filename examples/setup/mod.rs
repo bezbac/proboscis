@@ -1,16 +1,12 @@
 use postgres::NoTls;
+use refinery::Runner;
 use testcontainers::{
     clients::{self, Cli},
     images::{self, generic::WaitFor},
     Container, Docker,
 };
 
-pub async fn apply_migrations(address: &str) {
-    mod embedded {
-        use refinery::embed_migrations;
-        embed_migrations!("setup/sql_migrations");
-    }
-
+pub async fn apply_migrations(migration_runner: Runner, address: &str) {
     let (mut client, connection) = tokio_postgres::connect(address, NoTls).await.unwrap();
 
     tokio::spawn(async move {
@@ -19,7 +15,7 @@ pub async fn apply_migrations(address: &str) {
         }
     });
 
-    embedded::migrations::runner()
+    migration_runner
         .run_async(&mut client)
         .await
         .expect("Migrations failed");
@@ -46,8 +42,6 @@ pub async fn start_dockerized_postgres<'a>(
         password,
         node.get_host_port(5432).unwrap(),
     );
-
-    apply_migrations(&connection_string).await;
 
     (connection_string, node)
 }

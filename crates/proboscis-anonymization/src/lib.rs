@@ -5,7 +5,29 @@ use arrow::{
 use itertools::Itertools;
 use polars::prelude::{ChunkAgg, ChunkCompare, DataFrame, NamedFrom, UInt32Chunked};
 use polars::prelude::{NewChunkedArray, Series};
+use proboscis_resolver_transformer::traits::Transformer;
+use sqlparser::ast::Statement;
 use std::collections::{HashSet, VecDeque};
+
+pub struct AnonymizationTransformer {
+    pub identifier_columns: Vec<String>,
+    pub pseudo_identifier_columns: Vec<String>,
+    pub criteria: AnonymizationCriteria,
+}
+
+impl Transformer for AnonymizationTransformer {
+    fn transform_schema(
+        &self,
+        query: &[Statement],
+        schema: &arrow::datatypes::Schema,
+    ) -> arrow::datatypes::Schema {
+        todo!()
+    }
+
+    fn transform_records(&self, query: &[Statement], data: &RecordBatch) -> RecordBatch {
+        todo!()
+    }
+}
 
 fn get_span(series: &Series) -> i64 {
     match series.dtype() {

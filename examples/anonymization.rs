@@ -1,19 +1,19 @@
 use maplit::hashmap;
+use postgres::SimpleQueryMessage;
+use proboscis_anonymization::AnonymizationTransformer;
 use proboscis_core::{Config, Proxy};
 use proboscis_resolver_postgres::{PostgresResolver, TargetConfig};
-use proboscis_resolver_transformer::{
-    column_transformations::ReplaceString, TableColumnTransformer, TransformingResolver,
-};
+use proboscis_resolver_transformer::TransformingResolver;
 use testcontainers::clients;
 use tokio::net::TcpListener;
-use tokio_postgres::{NoTls, SimpleQueryMessage};
+use tokio_postgres::NoTls;
 use tracing_subscriber::EnvFilter;
 
 mod setup;
 
 mod embedded {
     use refinery::embed_migrations;
-    embed_migrations!("setup/sql_migrations");
+    embed_migrations!("setup/sql_migrations_anonymization");
 }
 
 async fn run_proxy(database_connection_url: String) -> String {
@@ -36,14 +36,21 @@ async fn run_proxy(database_connection_url: String) -> String {
                 .await
                 .unwrap(),
             ))
-            .add_transformer(Box::new(
-                TableColumnTransformer::default().add_transformation(
-                    "users.name",
-                    Box::new(ReplaceString {
-                        new_string: String::from("Anon"),
-                    }),
-                ),
-            )),
+            .add_transformer(Box::new(AnonymizationTransformer {
+                identifier_columns: vec![
+                    String::from("contacts.first_name"),
+                    String::from("contacts.last_name"),
+                    String::from("contacts.email"),
+                ],
+                pseudo_identifier_columns: vec![
+                    String::from("contacts.gender"),
+                    String::from("contacts.birth_year"),
+                    String::from("contacts.street"),
+                    String::from("contacts.city"),
+                    String::from("contacts.profession"),
+                ],
+                criteria: proboscis_anonymization::AnonymizationCriteria::KAnonymous { k: 3 },
+            })),
         ),
     );
 
@@ -90,24 +97,15 @@ async fn main() {
 
     // Simple query
     let simple_query_result = client
-        .simple_query("SELECT id, name FROM users")
+        .simple_query("SELECT id, first_name, last_name FROM contacts")
         .await
         .unwrap();
 
-    let row = match simple_query_result.first().unwrap() {
-        SimpleQueryMessage::Row(v) => v,
-        _ => panic!("Not a row"),
-    };
+    for message in simple_query_result {
+        if let SimpleQueryMessage::Row(row) = message {
+            println!("{:?} {:?} {:?}", row.get(0), row.get(1), row.get(2))
+        }
+    }
 
-    let name: &str = row.get(1).unwrap();
-    assert_eq!(name, "Anon");
-
-    // Normal query
-    let rows = client
-        .query("SELECT id, name FROM users", &[])
-        .await
-        .unwrap();
-
-    let name: &str = rows[0].get(1);
-    assert_eq!(name, "Anon");
+    // TODO output
 }

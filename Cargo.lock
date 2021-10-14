@@ -23,16 +23,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "anonymization"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "arrow",
- "itertools",
- "polars",
-]
-
-[[package]]
 name = "ansi_term"
 version = "0.12.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -402,6 +392,7 @@ dependencies = [
  "native-tls",
  "postgres",
  "postgres-native-tls",
+ "proboscis-anonymization",
  "proboscis-core",
  "proboscis-resolver-postgres",
  "proboscis-resolver-transformer",
@@ -1352,6 +1343,18 @@ dependencies = [
  "lazy_static",
  "term",
  "unicode-width",
+]
+
+[[package]]
+name = "proboscis-anonymization"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "arrow",
+ "itertools",
+ "polars",
+ "proboscis-resolver-transformer",
+ "sqlparser",
 ]
 
 [[package]]

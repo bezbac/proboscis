@@ -1,5 +1,5 @@
 [package]
-name = "anonymization"
+name = "proboscis-anonymization"
 version = "0.1.0"
 edition = "2018"
 
@@ -9,6 +9,9 @@ edition = "2018"
 arrow = "3.0.0"
 polars = "0.16.0"
 itertools = "0.10.1"
+sqlparser = "0.9.0"
+
+proboscis-resolver-transformer = { version = "0.1.0", path = "../proboscis-resolver-transformer" }
 
 [dev-dependencies]
 anyhow = "1.0"
