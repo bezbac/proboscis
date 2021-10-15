@@ -8,6 +8,8 @@ use polars::prelude::NewChunkedArray;
 use polars::prelude::{ChunkAgg, ChunkCompare, DataFrame, UInt32Chunked};
 use polars::series::NamedFrom;
 use polars::series::Series;
+use rand::distributions::Alphanumeric;
+use rand::{thread_rng, Rng};
 use sqlparser::ast::Statement;
 use std::{
     collections::{HashSet, VecDeque},
@@ -44,14 +46,25 @@ impl Transformer for AnonymizationTransformer {
             .map(|(idx, _)| data.schema().field(idx).name().to_string())
             .collect();
 
-        let strs: Vec<&str> = quasi_identifier_columns
+        let quasi_identifier_columns_strs: Vec<&str> = quasi_identifier_columns
             .iter()
             .map(|f| f.as_str())
             .collect();
 
+        let identifier_columns: Vec<String> = normalized_field_names
+            .iter()
+            .enumerate()
+            .filter(|(_, column_name)| self.identifier_columns.contains(column_name))
+            .map(|(idx, _)| data.schema().field(idx).name().to_string())
+            .collect();
+
+        let identifier_columns_strs: Vec<&str> =
+            identifier_columns.iter().map(|f| f.as_str()).collect();
+
         let anonymized = anonymize(
             &dataframe,
-            &strs,
+            &identifier_columns_strs,
+            &quasi_identifier_columns_strs,
             &[self.criteria.clone()],
             &NumericAggregation::Median,
         );
@@ -226,6 +239,30 @@ pub enum NumericAggregation {
     Range,
 }
 
+fn deidentify_column(series: &Series) -> Series {
+    match series.dtype() {
+        &polars::prelude::DataType::Utf8 => {
+            let unique_strings: Vec<Option<String>> = series
+                .utf8()
+                .unwrap()
+                .into_iter()
+                .map(|v| {
+                    v.map(|_| {
+                        thread_rng()
+                            .sample_iter(&Alphanumeric)
+                            .take(30)
+                            .map(char::from)
+                            .collect()
+                    })
+                })
+                .collect();
+
+            Series::new(series.name(), unique_strings)
+        }
+        _ => todo!("{:?}", series.dtype()),
+    }
+}
+
 fn agg_column(series: &Series, numeric_aggregation: &NumericAggregation) -> Series {
     match series.dtype() {
         &polars::prelude::DataType::UInt8 => match numeric_aggregation {
@@ -322,47 +359,6 @@ fn agg_column(series: &Series, numeric_aggregation: &NumericAggregation) -> Seri
     }
 }
 
-pub fn build_anonymized_dataset(
-    df: &DataFrame,
-    partitions: &[Vec<u32>],
-    feature_columns: &[&str],
-    numeric_aggregation: &NumericAggregation,
-) -> DataFrame {
-    let mut updated: Vec<Series> = vec![];
-    let mut original_indices_of_updated_rows: Vec<u32> = vec![];
-
-    for partition in partitions {
-        for (index, column) in df.get_columns().iter().enumerate() {
-            let new_data: Series = if feature_columns.contains(&column.name()) {
-                let original_data = column
-                    .take(&UInt32Chunked::new_from_slice("idx", partition))
-                    .unwrap();
-
-                agg_column(&original_data, numeric_aggregation)
-            } else {
-                column
-                    .take(&UInt32Chunked::new_from_slice("idx", partition))
-                    .unwrap()
-            };
-
-            let entry = updated.get_mut(index);
-
-            match entry {
-                Some(s) => updated[index] = s.append(&new_data).unwrap().clone(),
-                None => updated.push(new_data),
-            };
-
-            for index in partition {
-                original_indices_of_updated_rows.push(*index);
-            }
-        }
-    }
-
-    // TODO: Reorder according to original indices
-
-    DataFrame::new(updated).unwrap()
-}
-
 pub fn record_batch_to_data_frame(data: &RecordBatch) -> DataFrame {
     use polars::prelude::*;
 
@@ -439,11 +435,12 @@ impl AnonymizationCriteria {
 
 pub fn anonymize(
     df: &DataFrame,
+    identifiers: &[&str],
     quasi_identifiers: &[&str],
     criteria: &[AnonymizationCriteria],
     numeric_aggregation: &NumericAggregation,
 ) -> DataFrame {
-    let finished_partitions = partition_dataset(&df, &quasi_identifiers, &|_, partition|
+    let partitions = partition_dataset(&df, &quasi_identifiers, &|_, partition|
         // If any criteria returns false, return false
         criteria
             .iter()
@@ -451,14 +448,47 @@ pub fn anonymize(
             .position(|b| !b)
             .is_none());
 
-    let anonymized = build_anonymized_dataset(
-        &df,
-        &finished_partitions,
-        &quasi_identifiers,
-        numeric_aggregation,
-    );
+    let mut updated: Vec<Series> = vec![];
 
-    anonymized
+    for partition in &partitions {
+        for (index, column) in df.get_columns().iter().enumerate() {
+            let is_quasi_identifier = quasi_identifiers.contains(&column.name());
+            let is_identifier = identifiers.contains(&column.name());
+
+            let data = column
+                .take(&UInt32Chunked::new_from_slice("idx", &partition))
+                .unwrap();
+
+            let new_data: Series = if is_quasi_identifier {
+                agg_column(&data, numeric_aggregation)
+            } else if is_identifier {
+                deidentify_column(&data)
+            } else {
+                data
+            };
+
+            let entry = updated.get_mut(index);
+
+            match entry {
+                Some(s) => updated[index] = s.append(&new_data).unwrap().clone(),
+                None => updated.push(new_data),
+            };
+        }
+    }
+
+    let original_indices_of_updated_rows: Vec<u32> = partitions.concat();
+
+    // Reorder according to original indices
+    let mut result = DataFrame::new(updated).unwrap();
+    result
+        .insert_at_idx(
+            0,
+            Series::new("original_indices", original_indices_of_updated_rows),
+        )
+        .unwrap();
+    result.sort("original_indices", false).unwrap();
+
+    result.drop("original_indices").unwrap()
 }
 
 #[cfg(test)]
@@ -541,6 +571,7 @@ mod tests {
 
     #[test]
     fn k_anonymization() {
+        let id_array = Int32Array::from(vec![1, 2, 3, 4, 5, 6, 7, 8, 9]);
         let first_name_array = StringArray::from(vec![
             "Max", "Lukas", "Alex", "Alex", "Lukas", "Mia", "Noa", "Noah", "Mia",
         ]);
@@ -570,6 +601,7 @@ mod tests {
         let pay_array = Int32Array::from(vec![54, 54, 120, 70, 32, 42, 56, 140, 38]);
 
         let schema = Schema::new(vec![
+            Field::new("id", DataType::Int32, false),
             Field::new("first_name", DataType::Utf8, false),
             Field::new("last_name", DataType::Utf8, false),
             Field::new("age", DataType::Int32, false),
@@ -580,6 +612,7 @@ mod tests {
         let batch = RecordBatch::try_new(
             Arc::new(schema),
             vec![
+                Arc::new(id_array),
                 Arc::new(first_name_array),
                 Arc::new(last_name_array),
                 Arc::new(age_array),
@@ -592,10 +625,12 @@ mod tests {
         let df = record_batch_to_data_frame(&batch);
         println!("{:?}", df.head(Some(10)));
 
+        let identifiers = vec!["first_name", "last_name"];
         let quasi_identifiers = vec!["age", "profession"];
 
         let anonymized = anonymize(
             &df,
+            &identifiers,
             &quasi_identifiers,
             &[AnonymizationCriteria::KAnonymous { k: 2 }],
             &NumericAggregation::Range,
