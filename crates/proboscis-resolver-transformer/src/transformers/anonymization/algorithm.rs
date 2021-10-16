@@ -1,10 +1,11 @@
+use anyhow::Result;
 use itertools::Itertools;
 use polars::prelude::NewChunkedArray;
 use polars::prelude::{ChunkAgg, ChunkCompare, DataFrame, NamedFrom, Series, UInt32Chunked};
 use rand::{distributions::Alphanumeric, thread_rng, Rng};
 use std::collections::{HashSet, VecDeque};
 
-fn get_span(series: &Series) -> i64 {
+fn get_span(series: &Series) -> Result<Option<i64>> {
     match series.dtype() {
         &polars::prelude::DataType::UInt8
         | &polars::prelude::DataType::UInt16
@@ -13,37 +14,43 @@ fn get_span(series: &Series) -> i64 {
         | &polars::prelude::DataType::Int16
         | &polars::prelude::DataType::Int32
         | &polars::prelude::DataType::Int64 => {
-            series.max::<i64>().unwrap() - series.min::<i64>().unwrap()
+            let max = series.max::<i64>();
+            let min = series.min::<i64>();
+
+            match (max, min) {
+                (None, _) | (_, None) => Ok(None),
+                (Some(max), Some(min)) => Ok(Some(max - min)),
+            }
         }
-        &polars::prelude::DataType::Utf8 => series.arg_unique().unwrap().len() as i64,
+        &polars::prelude::DataType::Utf8 => {
+            Ok(series.arg_unique().map(|x| Some(x.len() as i64))?)
+        }
         _ => todo!(),
     }
 }
 
-fn get_spans(series: &[&Series], partition: &[u32]) -> Vec<i64> {
-    series
-        .iter()
-        .map(|series| {
-            let relevant_section = series
-                .take(&UInt32Chunked::new_from_slice("idx", partition))
-                .unwrap();
-            get_span(&relevant_section)
-        })
-        .collect()
+fn get_spans(series: &[&Series], partition: &[u32]) -> Result<Vec<Option<i64>>> {
+    let mut spans = vec![];
+
+    for series in series {
+        let relevant_section = series.take(&UInt32Chunked::new_from_slice("idx", partition))?;
+        let span = get_span(&relevant_section)?;
+        spans.push(span);
+    }
+
+    Ok(spans)
 }
 
-fn scale_spans(spans: &[i64], scale: &[i64]) -> Vec<i64> {
+fn scale_spans(spans: &[Option<i64>], scale: &[i64]) -> Vec<Option<i64>> {
     spans
         .iter()
         .zip(scale)
-        .map(|(value, scale)| value / scale)
+        .map(|(value, scale)| value.map(|v| v / scale))
         .collect()
 }
 
-fn split(df: &DataFrame, partition: &[u32], column_index: usize) -> (Vec<u32>, Vec<u32>) {
-    let dfp = df[column_index]
-        .take(&UInt32Chunked::new_from_slice("idx", partition))
-        .unwrap();
+fn split(df: &DataFrame, partition: &[u32], column_index: usize) -> Result<(Vec<u32>, Vec<u32>)> {
+    let dfp = df[column_index].take(&UInt32Chunked::new_from_slice("idx", partition))?;
 
     match dfp.dtype() {
         &polars::prelude::DataType::UInt8
@@ -53,7 +60,7 @@ fn split(df: &DataFrame, partition: &[u32], column_index: usize) -> (Vec<u32>, V
         | &polars::prelude::DataType::Int16
         | &polars::prelude::DataType::Int32
         | &polars::prelude::DataType::Int64 => {
-            let median = dfp.median().unwrap();
+            let median = dfp.median().ok_or_else(|| anyhow::anyhow!("No median"))?;
 
             let mask = dfp.lt_eq(median);
 
@@ -66,17 +73,17 @@ fn split(df: &DataFrame, partition: &[u32], column_index: usize) -> (Vec<u32>, V
                 }
             }
 
-            (dfl, dfr)
+            Ok((dfl, dfr))
         }
         &polars::prelude::DataType::Utf8 => {
-            let values: Vec<Option<&str>> = dfp.utf8().unwrap().into_iter().unique().collect();
+            let values: Vec<Option<&str>> = dfp.utf8()?.into_iter().unique().collect();
 
             let lv: HashSet<&Option<&str>> = values[..values.len() / 2].iter().collect();
             let rv: HashSet<&Option<&str>> = values[values.len() / 2..].iter().collect();
 
             let left_indices = partition
                 .iter()
-                .zip(dfp.utf8().unwrap())
+                .zip(dfp.utf8()?)
                 .filter(|(_, element)| lv.contains(element))
                 .map(|(idx, _)| idx)
                 .cloned()
@@ -84,13 +91,13 @@ fn split(df: &DataFrame, partition: &[u32], column_index: usize) -> (Vec<u32>, V
 
             let right_indices = partition
                 .iter()
-                .zip(dfp.utf8().unwrap())
+                .zip(dfp.utf8()?)
                 .filter(|(_, element)| rv.contains(element))
                 .map(|(idx, _)| idx)
                 .cloned()
                 .collect();
 
-            (left_indices, right_indices)
+            Ok((left_indices, right_indices))
         }
         _ => todo!(),
     }
@@ -99,21 +106,35 @@ fn split(df: &DataFrame, partition: &[u32], column_index: usize) -> (Vec<u32>, V
 pub fn partition_dataset(
     df: &DataFrame,
     quasi_identifiers: &[&str],
-    is_valid: &dyn Fn(&DataFrame, &[u32]) -> bool,
-) -> Vec<Vec<u32>> {
+    is_valid: &dyn Fn(&DataFrame, &[u32]) -> Result<bool>,
+) -> Result<Vec<Vec<u32>>> {
     let mut partitions: VecDeque<Vec<u32>> =
         vec![(0..df[0].len()).map(|i| i as u32).collect::<Vec<u32>>()].into();
 
-    let relevant_dataframe = df.columns(quasi_identifiers).unwrap();
+    let mut relevant_dataframe = df.columns(quasi_identifiers)?;
 
-    let scale = get_spans(&relevant_dataframe, &partitions[0].clone());
+    let overall_spans = get_spans(&relevant_dataframe, &partitions[0].clone())?;
+
+    // Remove all empty columns from the relevant dataframe
+    for (index, span) in overall_spans.iter().enumerate() {
+        if span.is_none() {
+            relevant_dataframe.remove(index);
+        }
+    }
+
+    let relevant_quasi_identifiers: Vec<&str> = relevant_dataframe
+        .iter()
+        .map(|series| series.name())
+        .collect();
+
+    let overall_spans: Vec<i64> = overall_spans.iter().flatten().cloned().collect();
 
     let mut finished_partitions = vec![];
     while let Some(partition) = partitions.pop_front() {
-        let spans = get_spans(&relevant_dataframe, &partition);
-        let scaled_spans = &scale_spans(&spans, &scale);
+        let spans = get_spans(&relevant_dataframe, &partition)?;
+        let scaled_spans = &scale_spans(&spans, &overall_spans);
 
-        let mut column_index_span_vec: Vec<(usize, i64)> = quasi_identifiers
+        let mut column_index_span_vec: Vec<(usize, Option<i64>)> = relevant_quasi_identifiers
             .iter()
             .enumerate()
             .zip(scaled_spans.iter())
@@ -125,16 +146,16 @@ pub fn partition_dataset(
 
         let mut did_break = false;
         for (column_index, _) in column_index_span_vec {
-            let column_name = quasi_identifiers[column_index];
+            let column_name = relevant_quasi_identifiers[column_index];
             let df_column_index = df
                 .get_column_names()
                 .into_iter()
                 .position(|name| name == column_name)
-                .unwrap();
+                .ok_or_else(|| anyhow::anyhow!("Column not found {:?}", column_name))?;
 
-            let (lp, rp) = split(df, &partition, df_column_index);
+            let (lp, rp) = split(df, &partition, df_column_index)?;
 
-            if !is_valid(df, &lp) || !is_valid(df, &rp) {
+            if !is_valid(df, &lp)? || !is_valid(df, &rp)? {
                 continue;
             }
 
@@ -150,7 +171,7 @@ pub fn partition_dataset(
         }
     }
 
-    finished_partitions
+    Ok(finished_partitions)
 }
 
 pub enum NumericAggregation {
@@ -158,12 +179,11 @@ pub enum NumericAggregation {
     Range,
 }
 
-fn deidentify_column(series: &Series) -> Series {
+fn deidentify_column(series: &Series) -> Result<Series> {
     match series.dtype() {
         polars::prelude::DataType::Utf8 => {
             let unique_strings: Vec<Option<String>> = series
-                .utf8()
-                .unwrap()
+                .utf8()?
                 .into_iter()
                 .map(|v| {
                     v.map(|_| {
@@ -176,92 +196,81 @@ fn deidentify_column(series: &Series) -> Series {
                 })
                 .collect();
 
-            Series::new(series.name(), unique_strings)
+            Ok(Series::new(series.name(), unique_strings))
         }
         _ => todo!("{:?}", series.dtype()),
     }
 }
 
-fn agg_column(series: &Series, numeric_aggregation: &NumericAggregation) -> Series {
+fn agg_column(series: &Series, numeric_aggregation: &NumericAggregation) -> Result<Series> {
     match series.dtype() {
         polars::prelude::DataType::UInt8 => match numeric_aggregation {
-            NumericAggregation::Median => Series::new(
+            NumericAggregation::Median => Ok(Series::new(
                 series.name(),
-                vec![series.mean().unwrap(); series.u8().unwrap().len()],
-            ),
+                vec![series.mean(); series.u8()?.len()],
+            )),
             NumericAggregation::Range => {
-                let min = series
-                    .u8()
-                    .unwrap()
-                    .min()
-                    .map_or("Null".to_string(), |f| format!("{}", f));
-                let max = series
-                    .u8()
-                    .unwrap()
-                    .max()
-                    .map_or("Null".to_string(), |f| format!("{}", f));
+                let min = series.u8()?.min();
+                let max = series.u8()?.max();
                 let agg = if max == min {
-                    max
+                    max.map(|v| format!("{}", v))
                 } else {
-                    format!("{} - {}", min, max)
+                    Some(format!(
+                        "{} - {}",
+                        min.map_or("null".to_string(), |f| format!("{}", f)),
+                        max.map_or("null".to_string(), |f| format!("{}", f))
+                    ))
                 };
-                Series::new(series.name(), vec![agg; series.u8().unwrap().len()])
+                Ok(Series::new(series.name(), vec![agg; series.u8()?.len()]))
             }
         },
         polars::prelude::DataType::Int32 => match numeric_aggregation {
-            NumericAggregation::Median => Series::new(
+            NumericAggregation::Median => Ok(Series::new(
                 series.name(),
-                vec![series.mean().unwrap(); series.i32().unwrap().len()],
-            ),
+                vec![series.mean(); series.i32()?.len()],
+            )),
             NumericAggregation::Range => {
-                let min = series
-                    .i32()
-                    .unwrap()
-                    .min()
-                    .map_or("Null".to_string(), |f| format!("{}", f));
-                let max = series
-                    .i32()
-                    .unwrap()
-                    .max()
-                    .map_or("Null".to_string(), |f| format!("{}", f));
+                let min = series.i32()?.min();
+                let max = series.i32()?.max();
+
                 let agg = if max == min {
-                    max
+                    max.map(|v| format!("{}", v))
                 } else {
-                    format!("{} - {}", min, max)
+                    Some(format!(
+                        "{} - {}",
+                        min.map_or("null".to_string(), |f| format!("{}", f)),
+                        max.map_or("null".to_string(), |f| format!("{}", f))
+                    ))
                 };
 
-                Series::new(series.name(), vec![agg; series.i32().unwrap().len()])
+                Ok(Series::new(series.name(), vec![agg; series.i32()?.len()]))
             }
         },
         polars::prelude::DataType::Int64 => match numeric_aggregation {
-            NumericAggregation::Median => Series::new(
+            NumericAggregation::Median => Ok(Series::new(
                 series.name(),
-                vec![series.mean().unwrap(); series.i64().unwrap().len()],
-            ),
+                vec![series.mean(); series.i64()?.len()],
+            )),
             NumericAggregation::Range => {
-                let min = series
-                    .i64()
-                    .unwrap()
-                    .min()
-                    .map_or("Null".to_string(), |f| format!("{}", f));
-                let max = series
-                    .i64()
-                    .unwrap()
-                    .max()
-                    .map_or("Null".to_string(), |f| format!("{}", f));
+                let min = series.i64()?.min();
+                let max = series.i64()?.max();
+
                 let agg = if max == min {
-                    max
+                    max.map(|v| format!("{}", v))
                 } else {
-                    format!("{} - {}", min, max)
+                    Some(format!(
+                        "{} - {}",
+                        min.map_or("null".to_string(), |f| format!("{}", f)),
+                        max.map_or("null".to_string(), |f| format!("{}", f))
+                    ))
                 };
 
-                Series::new(series.name(), vec![agg; series.i64().unwrap().len()])
+                Ok(Series::new(series.name(), vec![agg; series.i64()?.len()]))
             }
         },
         polars::prelude::DataType::Utf8 => {
             let unique_strings: Vec<&str> = series
-                .utf8()
-                .unwrap()
+                .utf8()?
                 .into_iter()
                 .unique()
                 .map(|v| v.map_or("None", |v| v))
@@ -269,10 +278,10 @@ fn agg_column(series: &Series, numeric_aggregation: &NumericAggregation) -> Seri
 
             let new_string = unique_strings.join(", ");
 
-            Series::new(
+            Ok(Series::new(
                 series.name(),
-                vec![new_string; series.utf8().unwrap().len()],
-            )
+                vec![new_string; series.utf8()?.len()],
+            ))
         }
         _ => todo!(),
     }
@@ -282,15 +291,18 @@ pub fn is_k_anonymous(partition: &[u32], k: usize) -> bool {
     partition.len() >= k
 }
 
-pub fn is_l_diverse(df: &DataFrame, partition: &[u32], sensitive_column: &str, l: usize) -> bool {
-    df.column(sensitive_column)
-        .unwrap()
-        .take(&UInt32Chunked::new_from_slice("idx", partition))
-        .unwrap()
-        .unique()
-        .unwrap()
+pub fn is_l_diverse(
+    df: &DataFrame,
+    partition: &[u32],
+    sensitive_column: &str,
+    l: usize,
+) -> Result<bool> {
+    Ok(df
+        .column(sensitive_column)?
+        .take(&UInt32Chunked::new_from_slice("idx", partition))?
+        .unique()?
         .len()
-        >= l
+        >= l)
 }
 
 #[derive(Clone)]
@@ -300,9 +312,9 @@ pub enum AnonymizationCriteria {
 }
 
 impl AnonymizationCriteria {
-    fn is_anonymous(&self, df: &DataFrame, partition: &[u32]) -> bool {
+    fn is_anonymous(&self, df: &DataFrame, partition: &[u32]) -> Result<bool> {
         match self {
-            Self::KAnonymous { k } => is_k_anonymous(partition, *k),
+            Self::KAnonymous { k } => Ok(is_k_anonymous(partition, *k)),
             Self::LDiverse {
                 l,
                 sensitive_column,
@@ -317,13 +329,16 @@ pub fn anonymize(
     quasi_identifiers: &[&str],
     criteria: &[AnonymizationCriteria],
     numeric_aggregation: &NumericAggregation,
-) -> DataFrame {
-    let partitions = partition_dataset(df, quasi_identifiers, &|_, partition|
-        // If any criteria returns false, return false
-        criteria
-            .iter()
-            .map(|criteria| criteria.is_anonymous(df, partition))
-            .all(|b| b));
+) -> Result<DataFrame> {
+    let partitions = partition_dataset(df, quasi_identifiers, &|_, partition| {
+        for criterium in criteria {
+            if !criterium.is_anonymous(df, partition)? {
+                return Ok(false);
+            }
+        }
+
+        Ok(true)
+    })?;
 
     let mut updated: Vec<Series> = vec![];
 
@@ -332,14 +347,12 @@ pub fn anonymize(
             let is_quasi_identifier = quasi_identifiers.contains(&column.name());
             let is_identifier = identifiers.contains(&column.name());
 
-            let data = column
-                .take(&UInt32Chunked::new_from_slice("idx", partition))
-                .unwrap();
+            let data = column.take(&UInt32Chunked::new_from_slice("idx", partition))?;
 
             let new_data: Series = if is_quasi_identifier {
-                agg_column(&data, numeric_aggregation)
+                agg_column(&data, numeric_aggregation)?
             } else if is_identifier {
-                deidentify_column(&data)
+                deidentify_column(&data)?
             } else {
                 data
             };
@@ -347,7 +360,7 @@ pub fn anonymize(
             let entry = updated.get_mut(index);
 
             match entry {
-                Some(s) => updated[index] = s.append(&new_data).unwrap().clone(),
+                Some(s) => updated[index] = s.append(&new_data)?.clone(),
                 None => updated.push(new_data),
             };
         }
@@ -356,16 +369,16 @@ pub fn anonymize(
     let original_indices_of_updated_rows: Vec<u32> = partitions.concat();
 
     // Reorder according to original indices
-    let mut result = DataFrame::new(updated).unwrap();
-    result
-        .insert_at_idx(
-            0,
-            Series::new("original_indices", original_indices_of_updated_rows),
-        )
-        .unwrap();
-    result.sort("original_indices", false).unwrap();
+    let mut result = DataFrame::new(updated)?;
+    result.insert_at_idx(
+        0,
+        Series::new("original_indices", original_indices_of_updated_rows),
+    )?;
+    result.sort("original_indices", false)?;
 
-    result.drop("original_indices").unwrap()
+    result.drop_in_place("original_indices")?;
+
+    Ok(result)
 }
 
 #[cfg(test)]
@@ -383,7 +396,7 @@ mod tests {
     fn string_aggregation() {
         let series = Series::new("last_name", vec!["Müller", "Müller", "Schidt"]);
 
-        let aggregated = agg_column(&series, &NumericAggregation::Median);
+        let aggregated = agg_column(&series, &NumericAggregation::Median).unwrap();
 
         assert_eq!(
             aggregated
@@ -403,7 +416,7 @@ mod tests {
     fn number_agg_median() {
         let series = Series::new("last_name", vec![10 as i32, 10 as i32, 10 as i32]);
 
-        let aggregated = agg_column(&series, &NumericAggregation::Median);
+        let aggregated = agg_column(&series, &NumericAggregation::Median).unwrap();
 
         assert_eq!(
             aggregated
@@ -419,7 +432,7 @@ mod tests {
     fn number_agg_range_equal() {
         let series = Series::new("last_name", vec![10 as i32, 10 as i32, 10 as i32]);
 
-        let aggregated = agg_column(&series, &NumericAggregation::Range);
+        let aggregated = agg_column(&series, &NumericAggregation::Range).unwrap();
 
         assert_eq!(
             aggregated
@@ -435,7 +448,7 @@ mod tests {
     fn number_agg_range() {
         let series = Series::new("last_name", vec![10 as i32, 20 as i32, 30 as i32]);
 
-        let aggregated = agg_column(&series, &NumericAggregation::Range);
+        let aggregated = agg_column(&series, &NumericAggregation::Range).unwrap();
 
         assert_eq!(
             aggregated
@@ -465,6 +478,8 @@ mod tests {
             "Müller",
         ]);
         let age_array = Int32Array::from(vec![18, 40, 46, 22, 22, 26, 32, 17, 29]);
+        let empty_array =
+            Int32Array::from(vec![None, None, None, None, None, None, None, None, None]);
         let profession_array = StringArray::from(vec![
             "Sales",
             "Sales",
@@ -483,6 +498,7 @@ mod tests {
             Field::new("first_name", DataType::Utf8, false),
             Field::new("last_name", DataType::Utf8, false),
             Field::new("age", DataType::Int32, false),
+            Field::new("empty", DataType::Int32, false),
             Field::new("profession", DataType::Utf8, false),
             Field::new("pay", DataType::Int32, false),
         ]);
@@ -494,6 +510,7 @@ mod tests {
                 Arc::new(first_name_array),
                 Arc::new(last_name_array),
                 Arc::new(age_array),
+                Arc::new(empty_array),
                 Arc::new(profession_array),
                 Arc::new(pay_array),
             ],
@@ -504,7 +521,7 @@ mod tests {
         println!("{:?}", df.head(Some(10)));
 
         let identifiers = vec!["first_name", "last_name"];
-        let quasi_identifiers = vec!["age", "profession"];
+        let quasi_identifiers = vec!["age", "profession", "empty"];
 
         let anonymized = anonymize(
             &df,
@@ -512,7 +529,8 @@ mod tests {
             &quasi_identifiers,
             &[AnonymizationCriteria::KAnonymous { k: 2 }],
             &NumericAggregation::Range,
-        );
+        )
+        .unwrap();
 
         println!("Annonymized: {:?}", anonymized.head(Some(10)));
     }

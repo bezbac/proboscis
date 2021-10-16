@@ -3,6 +3,7 @@ use crate::{
     traits::Transformer,
     util::get_schema_fields,
 };
+use anyhow::Result;
 use arrow::{
     datatypes::{Field, Schema},
     record_batch::RecordBatch,
@@ -63,12 +64,12 @@ fn transform_field(field: &Field, transformation: &dyn ColumnTransformation) -> 
 }
 
 impl Transformer for TableColumnTransformer {
-    fn transform_schema(&self, query: &[Statement], schema: &Schema) -> Schema {
+    fn transform_schema(&self, query: &[Statement], schema: &Schema) -> Result<Schema> {
         let column_transformations =
             self.get_column_transformations(query.first().unwrap(), schema);
 
         if column_transformations.keys().len() == 0 {
-            return schema.clone();
+            return Ok(schema.clone());
         }
 
         let new_fields = schema
@@ -85,15 +86,18 @@ impl Transformer for TableColumnTransformer {
             })
             .collect();
 
-        Schema::new_with_metadata(new_fields, schema.metadata().clone())
+        Ok(Schema::new_with_metadata(
+            new_fields,
+            schema.metadata().clone(),
+        ))
     }
 
-    fn transform_records(&self, query: &[Statement], data: &RecordBatch) -> RecordBatch {
+    fn transform_records(&self, query: &[Statement], data: &RecordBatch) -> Result<RecordBatch> {
         let column_transformations =
             self.get_column_transformations(query.first().unwrap(), &data.schema());
 
         if column_transformations.keys().len() == 0 {
-            return data.clone();
+            return Ok(data.clone());
         }
 
         let (new_fields, new_data) = data
@@ -120,6 +124,6 @@ impl Transformer for TableColumnTransformer {
 
         let new_schema = Schema::new_with_metadata(new_fields, data.schema().metadata().clone());
 
-        RecordBatch::try_new(Arc::new(new_schema), new_data).unwrap()
+        Ok(RecordBatch::try_new(Arc::new(new_schema), new_data)?)
     }
 }

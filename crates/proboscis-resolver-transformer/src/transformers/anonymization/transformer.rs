@@ -1,3 +1,4 @@
+use anyhow::Result;
 use arrow::record_batch::RecordBatch;
 use sqlparser::ast::Statement;
 
@@ -23,13 +24,14 @@ impl Transformer for AnonymizationTransformer {
         &self,
         _query: &[Statement],
         schema: &arrow::datatypes::Schema,
-    ) -> arrow::datatypes::Schema {
+    ) -> Result<arrow::datatypes::Schema> {
         // TODO: Correct this
-        schema.clone()
+        Ok(schema.clone())
     }
 
-    fn transform_records(&self, query: &[Statement], data: &RecordBatch) -> RecordBatch {
-        let normalized_field_names = get_schema_fields(query.first().unwrap()).unwrap();
+    fn transform_records(&self, query: &[Statement], data: &RecordBatch) -> Result<RecordBatch> {
+        let normalized_field_names =
+            get_schema_fields(query.first().ok_or_else(|| anyhow::anyhow!("Missing query"))?)?;
 
         let dataframe = record_batch_to_data_frame(data);
 
@@ -61,10 +63,11 @@ impl Transformer for AnonymizationTransformer {
             &quasi_identifier_columns_strs,
             &[self.criteria.clone()],
             &NumericAggregation::Median,
-        );
+        )?;
 
-        let updated_schema = self.transform_schema(query, &data.schema());
+        let updated_schema = self.transform_schema(query, &data.schema())?;
 
-        data_frame_to_record_batch(&anonymized, updated_schema)
+        let result = data_frame_to_record_batch(&anonymized, updated_schema);
+        Ok(result)
     }
 }

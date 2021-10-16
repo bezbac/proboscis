@@ -5,6 +5,7 @@ use proboscis_core::resolver::{
     Bind, ClientId, Close, Describe, Execute, Parse, Resolver, SyncResponse,
 };
 use sqlparser::{ast::Statement, dialect::PostgreSqlDialect, parser::Parser};
+use std::vec;
 
 pub struct TransformingResolver {
     resolver: Box<dyn Resolver>,
@@ -49,12 +50,12 @@ impl Resolver for TransformingResolver {
             todo!("Mismatched number of statements");
         }
 
-        let result = self.resolver.query(client_id, query).await;
-        result.map(|data| {
-            self.transformers.iter().fold(data, |data, transformer| {
-                transformer.transform_records(&query_ast, &data)
-            })
-        })
+        let mut result = self.resolver.query(client_id, query).await?;
+        for transformer in &self.transformers {
+            result = transformer.transform_records(&query_ast, &result)?;
+        }
+
+        Ok(result)
     }
 
     async fn parse(&mut self, client_id: ClientId, parse: Parse) -> anyhow::Result<()> {
@@ -76,18 +77,16 @@ impl Resolver for TransformingResolver {
     async fn sync(&mut self, client_id: ClientId) -> anyhow::Result<Vec<SyncResponse>> {
         let responses = self.resolver.sync(client_id).await?;
 
-        let transformed_responses = responses
-            .into_iter()
-            .map(|response| match response {
+        let mut transformed_responses = vec![];
+        for response in responses {
+            transformed_responses.push(match response {
                 SyncResponse::Schema { schema, query } => {
                     let query_ast = self.parse_sql(&query).unwrap();
 
-                    let transformed = self
-                        .transformers
-                        .iter()
-                        .fold(schema, |schema, transformer| {
-                            transformer.transform_schema(&query_ast, &schema)
-                        });
+                    let mut transformed = schema;
+                    for transformer in &self.transformers {
+                        transformed = transformer.transform_schema(&query_ast, &transformed)?;
+                    }
 
                     SyncResponse::Schema {
                         schema: transformed,
@@ -97,9 +96,10 @@ impl Resolver for TransformingResolver {
                 SyncResponse::Records { data, query } => {
                     let query_ast = self.parse_sql(&query).unwrap();
 
-                    let transformed = self.transformers.iter().fold(data, |data, transformer| {
-                        transformer.transform_records(&query_ast, &data)
-                    });
+                    let mut transformed = data;
+                    for transformer in &self.transformers {
+                        transformed = transformer.transform_records(&query_ast, &transformed)?;
+                    }
 
                     SyncResponse::Records {
                         data: transformed,
@@ -108,7 +108,7 @@ impl Resolver for TransformingResolver {
                 }
                 _ => response,
             })
-            .collect();
+        }
 
         Ok(transformed_responses)
     }
