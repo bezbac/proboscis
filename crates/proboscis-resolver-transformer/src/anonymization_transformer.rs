@@ -27,7 +27,7 @@ pub struct AnonymizationTransformer {
 impl Transformer for AnonymizationTransformer {
     fn transform_schema(
         &self,
-        query: &[Statement],
+        _query: &[Statement],
         schema: &arrow::datatypes::Schema,
     ) -> arrow::datatypes::Schema {
         // TODO: Correct this
@@ -72,9 +72,8 @@ impl Transformer for AnonymizationTransformer {
         println!("{:?}", anonymized.head(None));
 
         let updated_schema = self.transform_schema(query, &data.schema());
-        let batch = data_frame_to_record_batch(&anonymized, updated_schema);
 
-        batch
+        data_frame_to_record_batch(&anonymized, updated_schema)
     }
 }
 
@@ -87,8 +86,7 @@ fn get_span(series: &Series) -> i64 {
         | &polars::prelude::DataType::Int16
         | &polars::prelude::DataType::Int32
         | &polars::prelude::DataType::Int64 => {
-            let max = series.max::<i64>().unwrap() - series.min::<i64>().unwrap();
-            max
+            series.max::<i64>().unwrap() - series.min::<i64>().unwrap()
         }
         &polars::prelude::DataType::Utf8 => series.arg_unique().unwrap().len() as i64,
         _ => todo!(),
@@ -231,7 +229,7 @@ pub fn partition_dataset(
         }
     }
 
-    return finished_partitions;
+    finished_partitions
 }
 
 pub enum NumericAggregation {
@@ -241,7 +239,7 @@ pub enum NumericAggregation {
 
 fn deidentify_column(series: &Series) -> Series {
     match series.dtype() {
-        &polars::prelude::DataType::Utf8 => {
+        polars::prelude::DataType::Utf8 => {
             let unique_strings: Vec<Option<String>> = series
                 .utf8()
                 .unwrap()
@@ -265,7 +263,7 @@ fn deidentify_column(series: &Series) -> Series {
 
 fn agg_column(series: &Series, numeric_aggregation: &NumericAggregation) -> Series {
     match series.dtype() {
-        &polars::prelude::DataType::UInt8 => match numeric_aggregation {
+        polars::prelude::DataType::UInt8 => match numeric_aggregation {
             NumericAggregation::Median => Series::new(
                 series.name(),
                 vec![series.mean().unwrap(); series.u8().unwrap().len()],
@@ -289,7 +287,7 @@ fn agg_column(series: &Series, numeric_aggregation: &NumericAggregation) -> Seri
                 Series::new(series.name(), vec![agg; series.u8().unwrap().len()])
             }
         },
-        &polars::prelude::DataType::Int32 => match numeric_aggregation {
+        polars::prelude::DataType::Int32 => match numeric_aggregation {
             NumericAggregation::Median => Series::new(
                 series.name(),
                 vec![series.mean().unwrap(); series.i32().unwrap().len()],
@@ -314,7 +312,7 @@ fn agg_column(series: &Series, numeric_aggregation: &NumericAggregation) -> Seri
                 Series::new(series.name(), vec![agg; series.i32().unwrap().len()])
             }
         },
-        &polars::prelude::DataType::Int64 => match numeric_aggregation {
+        polars::prelude::DataType::Int64 => match numeric_aggregation {
             NumericAggregation::Median => Series::new(
                 series.name(),
                 vec![series.mean().unwrap(); series.i64().unwrap().len()],
@@ -339,7 +337,7 @@ fn agg_column(series: &Series, numeric_aggregation: &NumericAggregation) -> Seri
                 Series::new(series.name(), vec![agg; series.i64().unwrap().len()])
             }
         },
-        &polars::prelude::DataType::Utf8 => {
+        polars::prelude::DataType::Utf8 => {
             let unique_strings: Vec<&str> = series
                 .utf8()
                 .unwrap()
@@ -398,10 +396,7 @@ pub fn data_frame_to_record_batch(df: &DataFrame, schema: arrow::datatypes::Sche
 }
 
 pub fn is_k_anonymous(partition: &[u32], k: usize) -> bool {
-    if partition.len() < k {
-        return false;
-    }
-    return true;
+    partition.len() >= k
 }
 
 pub fn is_l_diverse(df: &DataFrame, partition: &[u32], sensitive_column: &str, l: usize) -> bool {
@@ -428,7 +423,7 @@ impl AnonymizationCriteria {
             Self::LDiverse {
                 l,
                 sensitive_column,
-            } => is_l_diverse(df, partition, &sensitive_column, *l),
+            } => is_l_diverse(df, partition, sensitive_column, *l),
         }
     }
 }
@@ -440,13 +435,12 @@ pub fn anonymize(
     criteria: &[AnonymizationCriteria],
     numeric_aggregation: &NumericAggregation,
 ) -> DataFrame {
-    let partitions = partition_dataset(&df, &quasi_identifiers, &|_, partition|
+    let partitions = partition_dataset(df, quasi_identifiers, &|_, partition|
         // If any criteria returns false, return false
         criteria
             .iter()
             .map(|criteria| criteria.is_anonymous(df, partition))
-            .position(|b| !b)
-            .is_none());
+            .all(|b| b));
 
     let mut updated: Vec<Series> = vec![];
 
@@ -456,7 +450,7 @@ pub fn anonymize(
             let is_identifier = identifiers.contains(&column.name());
 
             let data = column
-                .take(&UInt32Chunked::new_from_slice("idx", &partition))
+                .take(&UInt32Chunked::new_from_slice("idx", partition))
                 .unwrap();
 
             let new_data: Series = if is_quasi_identifier {
