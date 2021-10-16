@@ -35,3 +35,7 @@ path = "tls.rs"
 [[example]]
 name = "transformer"
 path = "transformer.rs"
+
+[[example]]
+name = "anonymization"
+path = "anonymization.rs"

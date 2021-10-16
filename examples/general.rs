@@ -8,6 +8,11 @@ use tracing_subscriber::EnvFilter;
 
 mod setup;
 
+mod embedded {
+    use refinery::embed_migrations;
+    embed_migrations!("setup/sql_migrations");
+}
+
 async fn run_proxy(database_connection_url: String) -> String {
     let proxy_user = "admin";
     let proxy_password = "password";
@@ -56,6 +61,8 @@ async fn main() {
     let docker = clients::Cli::default();
 
     let (database_connection_url, _node) = setup::start_dockerized_postgres(&docker).await;
+    setup::apply_migrations(embedded::migrations::runner(), &database_connection_url).await;
+
     let proxy_connection_url = run_proxy(database_connection_url).await;
 
     let (client, connection) = tokio_postgres::connect(&proxy_connection_url, NoTls)

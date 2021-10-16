@@ -11,7 +11,7 @@ use sqlparser::ast::{
 };
 use std::{collections::HashMap, sync::Arc};
 
-fn get_schema_fields(ast: &Statement) -> anyhow::Result<Vec<String>> {
+pub fn get_schema_fields(ast: &Statement) -> anyhow::Result<Vec<String>> {
     match ast {
         Statement::Query(query) => match &query.body {
             SetExpr::Select(select) => {
@@ -144,7 +144,7 @@ impl TableColumnTransformer {
     }
 }
 
-fn transform_field(field: &Field, transformation: &Box<dyn ColumnTransformation>) -> Field {
+fn transform_field(field: &Field, transformation: &dyn ColumnTransformation) -> Field {
     let ColumnTransformationOutput {
         data_type,
         nullable,
@@ -171,7 +171,7 @@ impl Transformer for TableColumnTransformer {
                 Some(transformations) => transformations
                     .iter()
                     .fold(field.clone(), |field, transformation| {
-                        transform_field(&field, transformation)
+                        transform_field(&field, transformation.as_ref())
                     }),
                 None => field.clone(),
             })
@@ -200,7 +200,7 @@ impl Transformer for TableColumnTransformer {
                         (field.clone(), column_data),
                         |(field, data), transformation| {
                             (
-                                transform_field(&field, transformation),
+                                transform_field(&field, transformation.as_ref()),
                                 transformation.transform_data(data),
                             )
                         },
