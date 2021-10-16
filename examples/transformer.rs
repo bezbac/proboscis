@@ -2,7 +2,8 @@ use maplit::hashmap;
 use proboscis_core::{Config, Proxy};
 use proboscis_resolver_postgres::{PostgresResolver, TargetConfig};
 use proboscis_resolver_transformer::{
-    column_transformations::ReplaceString, TableColumnTransformer, TransformingResolver,
+    column_transformations::ReplaceString, transformers::table_column::TableColumnTransformer,
+    TransformingResolver,
 };
 use testcontainers::clients;
 use tokio::net::TcpListener;

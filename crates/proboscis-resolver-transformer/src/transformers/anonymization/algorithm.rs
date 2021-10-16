@@ -1,81 +1,8 @@
-use crate::{table_column_transformer::get_schema_fields, traits::Transformer};
-use arrow::{
-    array::{make_array, Array, ArrayRef},
-    record_batch::RecordBatch,
-};
 use itertools::Itertools;
 use polars::prelude::NewChunkedArray;
-use polars::prelude::{ChunkAgg, ChunkCompare, DataFrame, UInt32Chunked};
-use polars::series::NamedFrom;
-use polars::series::Series;
-use rand::distributions::Alphanumeric;
-use rand::{thread_rng, Rng};
-use sqlparser::ast::Statement;
-use std::{
-    collections::{HashSet, VecDeque},
-    convert::TryFrom,
-    ops::Deref,
-    sync::Arc,
-};
-
-pub struct AnonymizationTransformer {
-    pub identifier_columns: Vec<String>,
-    pub quasi_identifier_columns: Vec<String>,
-    pub criteria: AnonymizationCriteria,
-}
-
-impl Transformer for AnonymizationTransformer {
-    fn transform_schema(
-        &self,
-        _query: &[Statement],
-        schema: &arrow::datatypes::Schema,
-    ) -> arrow::datatypes::Schema {
-        // TODO: Correct this
-        schema.clone()
-    }
-
-    fn transform_records(&self, query: &[Statement], data: &RecordBatch) -> RecordBatch {
-        let normalized_field_names = get_schema_fields(query.first().unwrap()).unwrap();
-
-        let dataframe = record_batch_to_data_frame(data);
-
-        let quasi_identifier_columns: Vec<String> = normalized_field_names
-            .iter()
-            .enumerate()
-            .filter(|(_, column_name)| self.quasi_identifier_columns.contains(column_name))
-            .map(|(idx, _)| data.schema().field(idx).name().to_string())
-            .collect();
-
-        let quasi_identifier_columns_strs: Vec<&str> = quasi_identifier_columns
-            .iter()
-            .map(|f| f.as_str())
-            .collect();
-
-        let identifier_columns: Vec<String> = normalized_field_names
-            .iter()
-            .enumerate()
-            .filter(|(_, column_name)| self.identifier_columns.contains(column_name))
-            .map(|(idx, _)| data.schema().field(idx).name().to_string())
-            .collect();
-
-        let identifier_columns_strs: Vec<&str> =
-            identifier_columns.iter().map(|f| f.as_str()).collect();
-
-        let anonymized = anonymize(
-            &dataframe,
-            &identifier_columns_strs,
-            &quasi_identifier_columns_strs,
-            &[self.criteria.clone()],
-            &NumericAggregation::Median,
-        );
-
-        println!("{:?}", anonymized.head(None));
-
-        let updated_schema = self.transform_schema(query, &data.schema());
-
-        data_frame_to_record_batch(&anonymized, updated_schema)
-    }
-}
+use polars::prelude::{ChunkAgg, ChunkCompare, DataFrame, NamedFrom, Series, UInt32Chunked};
+use rand::{distributions::Alphanumeric, thread_rng, Rng};
+use std::collections::{HashSet, VecDeque};
 
 fn get_span(series: &Series) -> i64 {
     match series.dtype() {
@@ -196,8 +123,6 @@ pub fn partition_dataset(
         column_index_span_vec.sort_by_key(|(_, span)| *span);
         column_index_span_vec.reverse();
 
-        // println!("Spans: {:?}. (Sorted {:?})", spans, column_index_span_vec);
-
         let mut did_break = false;
         for (column_index, _) in column_index_span_vec {
             let column_name = quasi_identifiers[column_index];
@@ -207,11 +132,7 @@ pub fn partition_dataset(
                 .position(|name| name == column_name)
                 .unwrap();
 
-            // println!("Column: {:?}", column_index);
-
             let (lp, rp) = split(df, &partition, df_column_index);
-
-            // println!("{:?} {:?}", lp, rp);
 
             if !is_valid(df, &lp) || !is_valid(df, &rp) {
                 continue;
@@ -357,44 +278,6 @@ fn agg_column(series: &Series, numeric_aggregation: &NumericAggregation) -> Seri
     }
 }
 
-pub fn record_batch_to_data_frame(data: &RecordBatch) -> DataFrame {
-    use polars::prelude::*;
-
-    let series: Vec<Series> = data
-        .columns()
-        .iter()
-        .zip(data.schema().fields())
-        .map(|(column, field)| {
-            Series::try_from((field.name().as_str(), vec![column.clone()])).unwrap()
-        })
-        .collect();
-
-    DataFrame::new(series).unwrap()
-}
-
-pub fn series_to_arrow_array(series: &Series) -> ArrayRef {
-    let arrays: Vec<Arc<dyn Array>> = series
-        .array_data()
-        .iter()
-        .cloned()
-        .map(|data| make_array(data.clone()))
-        .collect();
-
-    let array_refs: Vec<&dyn Array> = arrays.iter().map(|a| a.deref()).collect();
-
-    arrow::compute::kernels::concat::concat(&array_refs).unwrap()
-}
-
-pub fn data_frame_to_record_batch(df: &DataFrame, schema: arrow::datatypes::Schema) -> RecordBatch {
-    let columns: Vec<ArrayRef> = df
-        .get_columns()
-        .iter()
-        .map(|series| series_to_arrow_array(series))
-        .collect();
-
-    RecordBatch::try_new(Arc::new(schema), columns).unwrap()
-}
-
 pub fn is_k_anonymous(partition: &[u32], k: usize) -> bool {
     partition.len() >= k
 }
@@ -488,6 +371,7 @@ pub fn anonymize(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::transformers::anonymization::conversion::record_batch_to_data_frame;
     use arrow::{
         array::{Int32Array, StringArray},
         datatypes::{DataType, Field, Schema},

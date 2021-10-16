@@ -2,9 +2,10 @@ use maplit::hashmap;
 use postgres::SimpleQueryMessage;
 use proboscis_core::{Config, Proxy};
 use proboscis_resolver_postgres::{PostgresResolver, TargetConfig};
-use proboscis_resolver_transformer::AnonymizationCriteria;
-use proboscis_resolver_transformer::AnonymizationTransformer;
-use proboscis_resolver_transformer::TransformingResolver;
+use proboscis_resolver_transformer::{
+    transformers::anonymization::{AnonymizationCriteria, AnonymizationTransformer},
+    TransformingResolver,
+};
 use testcontainers::clients;
 use tokio::net::TcpListener;
 use tokio_postgres::NoTls;

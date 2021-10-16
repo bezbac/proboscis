@@ -62,7 +62,7 @@ async fn main() {
 
     let (database_connection_url, _node) = setup::start_dockerized_postgres(&docker).await;
     setup::apply_migrations(embedded::migrations::runner(), &database_connection_url).await;
-    
+
     let proxy_connection_url = run_proxy(database_connection_url).await;
 
     for _ in 0..1000 {
