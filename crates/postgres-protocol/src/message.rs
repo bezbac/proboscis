@@ -724,25 +724,19 @@ impl BackendMessage {
                 Ok(Self::RowDescription(RowDescription { fields }))
             }
             CharTag::DataRowOrDescribe => {
-                let mut bytes: Vec<u8> = vec![0; remaining_bytes_len as usize];
-                bytes = stream.read_exact(&mut bytes).map(|_| bytes)?;
+                let num_fields: u16 = stream.read_be()?;
 
-                let mut cursor = std::io::Cursor::new(bytes);
-
-                let num_fields: u16 = cursor.read_be()?;
-
-                let mut fields = vec![];
-
-                while fields.len() < num_fields as usize {
-                    let field_len: u32 = cursor.read_be()?;
+                let mut field_data = vec![];
+                for _ in 0..num_fields {
+                    let field_len: i32 = stream.read_be()?;
 
                     let mut field_bytes = vec![0; field_len as usize];
-                    std::io::Read::read_exact(&mut cursor, &mut field_bytes)?;
+                    stream.read_exact(&mut field_bytes)?;
 
-                    fields.push(field_bytes[..].to_vec())
+                    field_data.push(field_bytes)
                 }
 
-                Ok(Self::DataRow(DataRow { field_data: fields }))
+                Ok(Self::DataRow(DataRow { field_data }))
             }
             CharTag::CommandCompleteOrClose => {
                 let tag_bytes = read_until_zero(stream)?;

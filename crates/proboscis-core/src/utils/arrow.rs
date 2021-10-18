@@ -25,9 +25,14 @@ fn column_data_to_array(data: &[Vec<u8>], data_type: &DataType) -> ArrayRef {
             let data_array = data
                 .iter()
                 .map(|d| {
-                    let mut cursor = std::io::Cursor::new(d);
-                    let value: i8 = cursor.read_be().unwrap(); // TODO: This should not be i8
-                    value as i16
+                    let mut bytes = d.clone();
+                    while bytes.len() < 2 {
+                        bytes.push(0);
+                    }
+
+                    let mut cursor = std::io::Cursor::new(bytes);
+                    let value: i16 = cursor.read_be().unwrap();
+                    value
                 })
                 .collect::<Vec<i16>>();
 
@@ -37,7 +42,12 @@ fn column_data_to_array(data: &[Vec<u8>], data_type: &DataType) -> ArrayRef {
             let data_array = data
                 .iter()
                 .map(|d| {
-                    let mut cursor = std::io::Cursor::new(d);
+                    let mut bytes = d.clone();
+                    while bytes.len() < 4 {
+                        bytes.push(0);
+                    }
+
+                    let mut cursor = std::io::Cursor::new(bytes);
                     let value: i32 = cursor.read_be().unwrap();
                     value
                 })
@@ -49,7 +59,12 @@ fn column_data_to_array(data: &[Vec<u8>], data_type: &DataType) -> ArrayRef {
             let data_array = data
                 .iter()
                 .map(|d| {
-                    let mut cursor = std::io::Cursor::new(d);
+                    let mut bytes = d.clone();
+                    while bytes.len() < 8 {
+                        bytes.push(0);
+                    }
+
+                    let mut cursor = std::io::Cursor::new(bytes);
                     let value: i64 = cursor.read_be().unwrap();
                     value
                 })
@@ -107,18 +122,33 @@ fn protocol_rows_to_arrow_columns(
     Ok(result)
 }
 
+fn arrow_type_for_postgres_type(postgres_type: &postgres::types::Type) -> DataType {
+    match postgres_type {
+        &postgres::types::Type::BOOL => DataType::Boolean,
+        &postgres::types::Type::INT2 => DataType::Int8,
+        &postgres::types::Type::INT4 => DataType::Int16,
+        &postgres::types::Type::INT8 => DataType::Int32,
+        &postgres::types::Type::TEXT => DataType::LargeUtf8,
+        &postgres::types::Type::VARCHAR => DataType::Utf8,
+        _ => unimplemented!(),
+    }
+}
+
+fn postgres_type_for_arrow_type(arrow_type: &DataType) -> postgres::types::Type {
+    match arrow_type {
+        DataType::Boolean => postgres::types::Type::BOOL,
+        DataType::Int8 => postgres::types::Type::INT2,
+        DataType::Int16 => postgres::types::Type::INT4,
+        DataType::Int32 => postgres::types::Type::INT8,
+        DataType::LargeUtf8 => postgres::types::Type::TEXT,
+        DataType::Utf8 => postgres::types::Type::VARCHAR,
+        _ => unimplemented!(),
+    }
+}
+
 fn message_field_to_arrow_field(value: &postgres_protocol::message::Field) -> Field {
     let postgres_type = postgres::types::Type::from_oid(value.type_oid as u32).unwrap();
-
-    let arrow_type = match postgres_type {
-        postgres::types::Type::BOOL => DataType::Boolean,
-        postgres::types::Type::INT2 => DataType::Int8,
-        postgres::types::Type::INT4 => DataType::Int16,
-        postgres::types::Type::INT8 => DataType::Int32,
-        postgres::types::Type::TEXT => DataType::LargeUtf8,
-        postgres::types::Type::VARCHAR => DataType::Utf8,
-        _ => unimplemented!(),
-    };
+    let arrow_type = arrow_type_for_postgres_type(&postgres_type);
 
     let mut metadata = BTreeMap::new();
     metadata.insert("table_oid".to_string(), format!("{}", value.table_oid));
@@ -139,15 +169,7 @@ fn arrow_field_to_message_field(
     value: &Field,
     column_number: i16,
 ) -> postgres_protocol::message::Field {
-    let postgres_type = match value.data_type() {
-        DataType::Boolean => postgres::types::Type::BOOL,
-        DataType::Int8 => postgres::types::Type::INT2,
-        DataType::Int16 => postgres::types::Type::INT4,
-        DataType::Int32 => postgres::types::Type::INT8,
-        DataType::LargeUtf8 => postgres::types::Type::TEXT,
-        DataType::Utf8 => postgres::types::Type::VARCHAR,
-        _ => unimplemented!(),
-    };
+    let postgres_type = postgres_type_for_arrow_type(value.data_type());
 
     let metadata = value.metadata().clone().unwrap();
 
@@ -204,6 +226,20 @@ pub fn simple_query_response_to_record_batch(
     RecordBatch::try_new(Arc::new(schema), columns).map_err(|err| anyhow::anyhow!(err))
 }
 
+fn write_be_without_trailing_zeros<V: omnom::WriteBytes, W: std::io::Write>(
+    value: V,
+    buffer: &mut W,
+) -> std::io::Result<usize> {
+    let mut bytes = vec![];
+    value.write_be_bytes(&mut bytes).unwrap();
+
+    while bytes.last() == Some(&0) {
+        bytes.pop();
+    }
+
+    buffer.write(&bytes)
+}
+
 pub fn serialize_record_batch_to_data_rows(batch: &RecordBatch) -> Vec<DataRow> {
     (0..batch.num_rows())
         .map(|row_index| {
@@ -215,23 +251,22 @@ pub fn serialize_record_batch_to_data_rows(batch: &RecordBatch) -> Vec<DataRow> 
                     DataType::Int8 => {
                         let values: &Int8Array = as_primitive_array(column);
                         let value: i8 = values.value(row_index);
-
                         value.write_be_bytes(&mut cell).unwrap();
                     }
                     DataType::Int16 => {
                         let values: &Int16Array = as_primitive_array(column);
                         let value: i16 = values.value(row_index);
-                        value.write_be_bytes(&mut cell).unwrap();
+                        write_be_without_trailing_zeros(value, &mut cell).unwrap();
                     }
                     DataType::Int32 => {
                         let values: &Int32Array = as_primitive_array(column);
                         let value: i32 = values.value(row_index);
-                        value.write_be_bytes(&mut cell).unwrap();
+                        write_be_without_trailing_zeros(value, &mut cell).unwrap();
                     }
                     DataType::Int64 => {
                         let values: &Int64Array = as_primitive_array(column);
                         let value: i64 = values.value(row_index);
-                        value.write_be_bytes(&mut cell).unwrap();
+                        write_be_without_trailing_zeros(value, &mut cell).unwrap();
                     }
                     DataType::LargeUtf8 => {
                         let values = &column

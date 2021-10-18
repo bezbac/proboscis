@@ -95,6 +95,9 @@ async fn main() {
         .await
         .unwrap();
 
+    let id: &str = rows[0].get(0);
+    assert_eq!(id, "1");
+
     let name: &str = rows[0].get(1);
     assert_eq!(name, "Max");
 }
