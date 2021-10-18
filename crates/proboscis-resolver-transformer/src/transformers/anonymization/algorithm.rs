@@ -1,9 +1,10 @@
 use anyhow::Result;
+use arrow::datatypes::DataType;
 use itertools::Itertools;
 use polars::prelude::NewChunkedArray;
 use polars::prelude::{ChunkAgg, ChunkCompare, DataFrame, NamedFrom, Series, UInt32Chunked};
 use rand::{distributions::Alphanumeric, thread_rng, Rng};
-use std::collections::{HashSet, VecDeque};
+use std::collections::{HashMap, HashSet, VecDeque};
 
 fn get_span(series: &Series) -> Result<Option<i64>> {
     match series.dtype() {
@@ -13,15 +14,21 @@ fn get_span(series: &Series) -> Result<Option<i64>> {
         | &polars::prelude::DataType::UInt64
         | &polars::prelude::DataType::Int16
         | &polars::prelude::DataType::Int32
-        | &polars::prelude::DataType::Int64 => {
+        | &polars::prelude::DataType::Int64 => Ok({
             let max = series.max::<i64>();
             let min = series.min::<i64>();
 
             match (max, min) {
-                (None, _) | (_, None) => Ok(None),
-                (Some(max), Some(min)) => Ok(Some(max - min)),
+                (None, _) | (_, None) => None,
+                (Some(max), Some(min)) => Some({
+                    let span = max - min;
+                    match span {
+                        0 => 1,
+                        _ => span,
+                    }
+                }),
             }
-        }
+        }),
         &polars::prelude::DataType::Utf8 => {
             Ok(series.arg_unique().map(|x| Some(x.len() as i64))?)
         }
@@ -174,9 +181,19 @@ pub fn partition_dataset(
     Ok(finished_partitions)
 }
 
+#[derive(Clone, Copy, Debug)]
 pub enum NumericAggregation {
     Median,
     Range,
+}
+
+impl NumericAggregation {
+    pub fn output_type(&self, input: &DataType) -> DataType {
+        match self {
+            NumericAggregation::Median => input.clone(),
+            NumericAggregation::Range => DataType::Utf8,
+        }
+    }
 }
 
 fn deidentify_column(series: &Series) -> Result<Series> {
@@ -222,6 +239,28 @@ fn agg_column(series: &Series, numeric_aggregation: &NumericAggregation) -> Resu
                     ))
                 };
                 Ok(Series::new(series.name(), vec![agg; series.u8()?.len()]))
+            }
+        },
+        polars::prelude::DataType::Int16 => match numeric_aggregation {
+            NumericAggregation::Median => Ok(Series::new(
+                series.name(),
+                vec![series.mean(); series.i16()?.len()],
+            )),
+            NumericAggregation::Range => {
+                let min = series.i16()?.min();
+                let max = series.i16()?.max();
+
+                let agg = if max == min {
+                    max.map(|v| format!("{}", v))
+                } else {
+                    Some(format!(
+                        "{} - {}",
+                        min.map_or("null".to_string(), |f| format!("{}", f)),
+                        max.map_or("null".to_string(), |f| format!("{}", f))
+                    ))
+                };
+
+                Ok(Series::new(series.name(), vec![agg; series.i16()?.len()]))
             }
         },
         polars::prelude::DataType::Int32 => match numeric_aggregation {
@@ -283,7 +322,7 @@ fn agg_column(series: &Series, numeric_aggregation: &NumericAggregation) -> Resu
                 vec![new_string; series.utf8()?.len()],
             ))
         }
-        _ => todo!(),
+        _ => todo!("{}", series.dtype()),
     }
 }
 
@@ -326,11 +365,13 @@ impl AnonymizationCriteria {
 pub fn anonymize(
     df: &DataFrame,
     identifiers: &[&str],
-    quasi_identifiers: &[&str],
+    quasi_identifiers: &HashMap<String, Option<NumericAggregation>>,
     criteria: &[AnonymizationCriteria],
     numeric_aggregation: &NumericAggregation,
 ) -> Result<DataFrame> {
-    let partitions = partition_dataset(df, quasi_identifiers, &|_, partition| {
+    let quasi_identifier_strs: Vec<&str> = quasi_identifiers.keys().map(|k| k.as_str()).collect();
+
+    let partitions = partition_dataset(df, &quasi_identifier_strs, &|_, partition| {
         for criterium in criteria {
             if !criterium.is_anonymous(df, partition)? {
                 return Ok(false);
@@ -344,7 +385,7 @@ pub fn anonymize(
 
     for partition in &partitions {
         for (index, column) in df.get_columns().iter().enumerate() {
-            let is_quasi_identifier = quasi_identifiers.contains(&column.name());
+            let is_quasi_identifier = quasi_identifier_strs.contains(&column.name());
             let is_identifier = identifiers.contains(&column.name());
 
             let data = column.take(&UInt32Chunked::new_from_slice("idx", partition))?;
@@ -521,7 +562,14 @@ mod tests {
         println!("{:?}", df.head(Some(10)));
 
         let identifiers = vec!["first_name", "last_name"];
-        let quasi_identifiers = vec!["age", "profession", "empty"];
+        let quasi_identifiers = vec![
+            ("age".to_string(), None),
+            ("profession".to_string(), None),
+            ("empty".to_string(), None),
+        ]
+        .iter()
+        .cloned()
+        .collect();
 
         let anonymized = anonymize(
             &df,

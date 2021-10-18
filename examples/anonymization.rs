@@ -3,9 +3,12 @@ use postgres::SimpleQueryMessage;
 use proboscis_core::{Config, Proxy};
 use proboscis_resolver_postgres::{PostgresResolver, TargetConfig};
 use proboscis_resolver_transformer::{
-    transformers::anonymization::{AnonymizationCriteria, AnonymizationTransformer},
+    transformers::anonymization::{
+        AnonymizationCriteria, AnonymizationTransformer, NumericAggregation,
+    },
     TransformingResolver,
 };
+use std::collections::HashMap;
 use testcontainers::clients;
 use tokio::net::TcpListener;
 use tokio_postgres::NoTls;
@@ -21,6 +24,23 @@ mod embedded {
 async fn run_proxy(database_connection_url: String) -> String {
     let proxy_user = "admin";
     let proxy_password = "password";
+
+    let identifier_columns = vec![
+        String::from("contacts.first_name"),
+        String::from("contacts.last_name"),
+        String::from("contacts.email"),
+    ];
+
+    let quasi_identifier_columns: HashMap<String, Option<NumericAggregation>> = vec![
+        (String::from("contacts.gender"), None),
+        (String::from("contacts.birth_year"), None),
+        (String::from("contacts.street"), None),
+        (String::from("contacts.city"), None),
+        (String::from("contacts.profession"), None),
+    ]
+    .iter()
+    .cloned()
+    .collect();
 
     let mut proxy = Proxy::new(
         Config {
@@ -39,18 +59,8 @@ async fn run_proxy(database_connection_url: String) -> String {
                 .unwrap(),
             ))
             .add_transformer(Box::new(AnonymizationTransformer {
-                identifier_columns: vec![
-                    String::from("contacts.first_name"),
-                    String::from("contacts.last_name"),
-                    String::from("contacts.email"),
-                ],
-                quasi_identifier_columns: vec![
-                    String::from("contacts.gender"),
-                    String::from("contacts.birth_year"),
-                    String::from("contacts.street"),
-                    String::from("contacts.city"),
-                    String::from("contacts.profession"),
-                ],
+                identifier_columns,
+                quasi_identifier_columns,
                 criteria: AnonymizationCriteria::KAnonymous { k: 3 },
             })),
         ),
@@ -109,8 +119,8 @@ async fn main() {
                 "{:?} {:?} {:?} {:?}",
                 row.get(0),
                 row.get(1),
-                row.get(2),
-                row.get(3)
+                row.get(1),
+                row.get(2)
             )
         }
     }
