@@ -1,0 +1,23 @@
+max_pool_size = 10
+k = 3
+connection_uri = "postgres://admin:password@localhost:5432"
+
+[listener]
+host = "localhost"
+port = "6432"
+
+[[credentials]]
+username = "admin"
+password = "password"
+
+[[columns]]
+type = "identifier"
+name = "contacts.first_name"
+
+[[columns]]
+type = "identifier"
+name = "contacts.last_name"
+
+[[columns]]
+type = "pseudo_identifier"
+name = "contacts.age"
