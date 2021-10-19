@@ -29,7 +29,11 @@ pub fn get_schema_fields(ast: &Statement) -> anyhow::Result<Vec<String>> {
                                 }),
                             alias: _,
                         } => value.clone(),
-                        _ => unimplemented!(),
+                        SelectItem::UnnamedExpr(expression) => match expression {
+                            Expr::Function(_) => String::from("function"),
+                            _ => todo!("{:?}", expression),
+                        },
+                        _ => todo!("{:?}", item),
                     })
                     .collect();
 
@@ -81,8 +85,6 @@ pub fn get_schema_fields(ast: &Statement) -> anyhow::Result<Vec<String>> {
                             _ => unimplemented!(),
                         }
                     }
-                } else {
-                    unimplemented!()
                 }
 
                 Ok(fields)
@@ -95,12 +97,11 @@ pub fn get_schema_fields(ast: &Statement) -> anyhow::Result<Vec<String>> {
 
 #[cfg(test)]
 mod tests {
+    use super::*;
     use sqlparser::{dialect::PostgreSqlDialect, parser::Parser};
 
-    use super::*;
-
     #[test]
-    fn test_schema_fields() {
+    fn test_single_field() {
         let dialect = PostgreSqlDialect {};
         let query_ast = Parser::parse_sql(&dialect, "SELECT id FROM users")
             .unwrap()
@@ -112,7 +113,18 @@ mod tests {
     }
 
     #[test]
-    fn test_schema_fields_renamed() {
+    fn test_all_fields() {
+        let dialect = PostgreSqlDialect {};
+        let _query_ast = Parser::parse_sql(&dialect, "SELECT * FROM users")
+            .unwrap()
+            .pop()
+            .unwrap();
+
+        // TODO: Refactor function to take schema as well, in order to handle these
+    }
+
+    #[test]
+    fn test_single_field_renamed() {
         let dialect = PostgreSqlDialect {};
         let query_ast = Parser::parse_sql(&dialect, "SELECT id AS 'user_id' FROM users")
             .unwrap()
@@ -124,7 +136,7 @@ mod tests {
     }
 
     #[test]
-    fn test_schema_fields_table_alias() {
+    fn test_single_field_from_aliased_table() {
         let dialect = PostgreSqlDialect {};
         let query_ast = Parser::parse_sql(&dialect, "SELECT u.id FROM users u")
             .unwrap()
@@ -136,7 +148,7 @@ mod tests {
     }
 
     #[test]
-    fn test_schema_fields_join() {
+    fn test_multiple_fields_with_join() {
         let dialect = PostgreSqlDialect {};
         let query_ast = Parser::parse_sql(
             &dialect,
@@ -148,5 +160,17 @@ mod tests {
 
         let unnested_fields = get_schema_fields(&query_ast).unwrap();
         assert_eq!(unnested_fields, vec!["users.id", "posts.id", "posts.title"])
+    }
+
+    #[test]
+    fn test_function() {
+        let dialect = PostgreSqlDialect {};
+        let query_ast = Parser::parse_sql(&dialect, "SELECT version()")
+            .unwrap()
+            .pop()
+            .unwrap();
+
+        let unnested_fields = get_schema_fields(&query_ast).unwrap();
+        assert_eq!(unnested_fields, vec!["function"])
     }
 }
