@@ -1,7 +1,5 @@
 use crate::{
-    column_transformations::{ColumnTransformation, ColumnTransformationOutput},
-    traits::Transformer,
-    util::get_schema_fields,
+    column_transformations::ColumnTransformation, traits::Transformer, util::get_schema_fields,
 };
 use anyhow::Result;
 use arrow::{
@@ -53,12 +51,10 @@ impl TableColumnTransformer {
     }
 }
 
-fn transform_field(field: &Field, transformation: &dyn ColumnTransformation) -> Field {
-    let ColumnTransformationOutput {
-        data_type,
-        nullable,
-    } = transformation.output_format();
-    Field::new(field.name(), data_type, nullable)
+fn transform_field(field: &Field, transformation: &dyn ColumnTransformation) -> Result<Field> {
+    transformation
+        .output_format(field.data_type())
+        .map(|output| Field::new(field.name(), output.data_type, output.nullable))
 }
 
 impl Transformer for TableColumnTransformer {
@@ -70,19 +66,22 @@ impl Transformer for TableColumnTransformer {
             return Ok(schema.clone());
         }
 
-        let new_fields = schema
-            .fields()
-            .iter()
-            .enumerate()
-            .map(|(index, field)| match column_transformations.get(&index) {
-                Some(transformations) => transformations
-                    .iter()
-                    .fold(field.clone(), |field, transformation| {
-                        transform_field(&field, transformation.as_ref())
-                    }),
+        let mut new_fields = vec![];
+        for (index, field) in schema.fields().iter().enumerate() {
+            let new_field = match column_transformations.get(&index) {
+                Some(transformations) => {
+                    let mut transformed = field.clone();
+                    for transformation in transformations.iter() {
+                        transformed = transform_field(field, transformation.as_ref())?;
+                    }
+
+                    transformed
+                }
                 None => field.clone(),
-            })
-            .collect();
+            };
+
+            new_fields.push(new_field)
+        }
 
         Ok(Schema::new(new_fields))
     }
@@ -95,27 +94,29 @@ impl Transformer for TableColumnTransformer {
             return Ok(data.clone());
         }
 
-        let (new_fields, new_data) = data
-            .schema()
-            .fields()
-            .iter()
-            .enumerate()
-            .map(|(idx, field)| {
-                let column_data = data.column(idx).clone();
-                match column_transformations.get(&idx) {
-                    Some(transformations) => transformations.iter().fold(
-                        (field.clone(), column_data),
-                        |(field, data), transformation| {
-                            (
-                                transform_field(&field, transformation.as_ref()),
-                                transformation.transform_data(data),
-                            )
-                        },
-                    ),
-                    None => (field.clone(), column_data),
+        let mut new_fields = vec![];
+        let mut new_data = vec![];
+        for (index, field) in data.schema().fields().iter().enumerate() {
+            let column_data = data.column(index).clone();
+            match column_transformations.get(&index) {
+                Some(transformations) => {
+                    let mut transformed_field = field.clone();
+                    let mut transformed_data = column_data;
+                    for transformation in transformations.iter() {
+                        transformed_field =
+                            transform_field(&transformed_field, transformation.as_ref())?;
+                        transformed_data = transformation.transform_data(transformed_data)?;
+                    }
+
+                    new_fields.push(transformed_field);
+                    new_data.push(transformed_data);
                 }
-            })
-            .unzip();
+                None => {
+                    new_fields.push(field.clone());
+                    new_data.push(column_data);
+                }
+            };
+        }
 
         let new_schema = Schema::new(new_fields);
 

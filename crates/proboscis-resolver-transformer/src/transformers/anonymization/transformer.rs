@@ -77,27 +77,44 @@ impl Transformer for AnonymizationTransformer {
             return Ok(schema.clone());
         }
 
-        let updated_fields = schema
-            .fields()
-            .iter()
-            .map(|field| {
-                match quasi_identifiers.get(field.name()) {
-                    Some(aggregation) => {
-                        let aggregation = if let Some(aggregation) = aggregation {
-                            aggregation
-                        } else {
-                            // TODO: Make this more logical for non-numeric types
-                            &NumericAggregation::Median
-                        };
+        let mut updated_fields = vec![];
+        for field in schema.fields() {
+            let updated_field = match field.data_type() {
+                arrow::datatypes::DataType::UInt8
+                | arrow::datatypes::DataType::UInt16
+                | arrow::datatypes::DataType::UInt32
+                | arrow::datatypes::DataType::UInt64
+                | arrow::datatypes::DataType::Int8
+                | arrow::datatypes::DataType::Int16
+                | arrow::datatypes::DataType::Int32
+                | arrow::datatypes::DataType::Int64 => {
+                    match quasi_identifiers.get(field.name()) {
+                        Some(aggregation) => {
+                            let aggregation = if let Some(aggregation) = aggregation {
+                                aggregation
+                            } else {
+                                // TODO: Make this more logical for non-numeric types
+                                &NumericAggregation::Median
+                            };
 
-                        let new_type = aggregation.output_type(field.data_type());
+                            let output_format = aggregation
+                                .transformation()
+                                .output_format(field.data_type())?;
 
-                        arrow::datatypes::Field::new(field.name(), new_type, field.is_nullable())
+                            arrow::datatypes::Field::new(
+                                field.name(),
+                                output_format.data_type,
+                                output_format.nullable,
+                            )
+                        }
+                        None => field.clone(),
                     }
-                    None => field.clone(),
                 }
-            })
-            .collect();
+                _ => field.clone(),
+            };
+
+            updated_fields.push(updated_field);
+        }
 
         let updated_schema = arrow::datatypes::Schema::new(updated_fields);
 

@@ -1,10 +1,13 @@
 use anyhow::Result;
-use arrow::datatypes::DataType;
+use arrow::array::Array;
 use itertools::Itertools;
 use polars::prelude::NewChunkedArray;
-use polars::prelude::{ChunkAgg, ChunkCompare, DataFrame, NamedFrom, Series, UInt32Chunked};
-use rand::{distributions::Alphanumeric, thread_rng, Rng};
+use polars::prelude::{ChunkCompare, DataFrame, NamedFrom, Series, UInt32Chunked};
 use std::collections::{HashMap, HashSet, VecDeque};
+use std::convert::TryFrom;
+use std::ops::Deref;
+
+use crate::column_transformations::ColumnTransformation;
 
 fn get_span(series: &Series) -> Result<Option<i64>> {
     match series.dtype() {
@@ -188,125 +191,38 @@ pub enum NumericAggregation {
 }
 
 impl NumericAggregation {
-    pub fn output_type(&self, input: &DataType) -> DataType {
+    pub fn transformation(&self) -> Box<dyn ColumnTransformation> {
         match self {
-            NumericAggregation::Median => input.clone(),
-            NumericAggregation::Range => DataType::Utf8,
+            NumericAggregation::Median => Box::new(crate::column_transformations::AggMedian {}),
+            NumericAggregation::Range => Box::new(crate::column_transformations::AggRange {}),
         }
     }
 }
 
-fn deidentify_column(series: &Series) -> Result<Series> {
-    match series.dtype() {
-        polars::prelude::DataType::Utf8 => {
-            let unique_strings: Vec<Option<String>> = series
-                .utf8()?
-                .into_iter()
-                .map(|v| {
-                    v.map(|_| {
-                        thread_rng()
-                            .sample_iter(&Alphanumeric)
-                            .take(30)
-                            .map(char::from)
-                            .collect()
-                    })
-                })
-                .collect();
+fn apply_column_transformation_to_series(
+    series: &Series,
+    transformation: &dyn ColumnTransformation,
+) -> Result<Series> {
+    let array_refs: Vec<&dyn Array> = series.chunks().iter().map(|a| a.deref()).collect();
+    let array = arrow::compute::kernels::concat::concat(&array_refs).unwrap();
+    let transformed_data = transformation.transform_data(array)?;
+    let updated = Series::try_from((series.name(), vec![transformed_data]))?;
+    Ok(updated)
+}
 
-            Ok(Series::new(series.name(), unique_strings))
-        }
-        _ => todo!("{:?}", series.dtype()),
-    }
+fn deidentify_column(series: &Series) -> Result<Series> {
+    apply_column_transformation_to_series(series, &crate::column_transformations::Randomize {})
 }
 
 fn agg_column(series: &Series, numeric_aggregation: &NumericAggregation) -> Result<Series> {
     match series.dtype() {
-        polars::prelude::DataType::UInt8 => match numeric_aggregation {
-            NumericAggregation::Median => Ok(Series::new(
-                series.name(),
-                vec![series.mean(); series.u8()?.len()],
-            )),
-            NumericAggregation::Range => {
-                let min = series.u8()?.min();
-                let max = series.u8()?.max();
-                let agg = if max == min {
-                    max.map(|v| format!("{}", v))
-                } else {
-                    Some(format!(
-                        "{} - {}",
-                        min.map_or("null".to_string(), |f| format!("{}", f)),
-                        max.map_or("null".to_string(), |f| format!("{}", f))
-                    ))
-                };
-                Ok(Series::new(series.name(), vec![agg; series.u8()?.len()]))
-            }
-        },
-        polars::prelude::DataType::Int16 => match numeric_aggregation {
-            NumericAggregation::Median => Ok(Series::new(
-                series.name(),
-                vec![series.mean(); series.i16()?.len()],
-            )),
-            NumericAggregation::Range => {
-                let min = series.i16()?.min();
-                let max = series.i16()?.max();
-
-                let agg = if max == min {
-                    max.map(|v| format!("{}", v))
-                } else {
-                    Some(format!(
-                        "{} - {}",
-                        min.map_or("null".to_string(), |f| format!("{}", f)),
-                        max.map_or("null".to_string(), |f| format!("{}", f))
-                    ))
-                };
-
-                Ok(Series::new(series.name(), vec![agg; series.i16()?.len()]))
-            }
-        },
-        polars::prelude::DataType::Int32 => match numeric_aggregation {
-            NumericAggregation::Median => Ok(Series::new(
-                series.name(),
-                vec![series.mean(); series.i32()?.len()],
-            )),
-            NumericAggregation::Range => {
-                let min = series.i32()?.min();
-                let max = series.i32()?.max();
-
-                let agg = if max == min {
-                    max.map(|v| format!("{}", v))
-                } else {
-                    Some(format!(
-                        "{} - {}",
-                        min.map_or("null".to_string(), |f| format!("{}", f)),
-                        max.map_or("null".to_string(), |f| format!("{}", f))
-                    ))
-                };
-
-                Ok(Series::new(series.name(), vec![agg; series.i32()?.len()]))
-            }
-        },
-        polars::prelude::DataType::Int64 => match numeric_aggregation {
-            NumericAggregation::Median => Ok(Series::new(
-                series.name(),
-                vec![series.mean(); series.i64()?.len()],
-            )),
-            NumericAggregation::Range => {
-                let min = series.i64()?.min();
-                let max = series.i64()?.max();
-
-                let agg = if max == min {
-                    max.map(|v| format!("{}", v))
-                } else {
-                    Some(format!(
-                        "{} - {}",
-                        min.map_or("null".to_string(), |f| format!("{}", f)),
-                        max.map_or("null".to_string(), |f| format!("{}", f))
-                    ))
-                };
-
-                Ok(Series::new(series.name(), vec![agg; series.i64()?.len()]))
-            }
-        },
+        polars::prelude::DataType::UInt8
+        | polars::prelude::DataType::Int16
+        | polars::prelude::DataType::Int32
+        | polars::prelude::DataType::Int64 => apply_column_transformation_to_series(
+            series,
+            numeric_aggregation.transformation().as_ref(),
+        ),
         polars::prelude::DataType::Utf8 => {
             let unique_strings: Vec<&str> = series
                 .utf8()?
@@ -461,11 +377,11 @@ mod tests {
 
         assert_eq!(
             aggregated
-                .f64()
+                .i32()
                 .unwrap()
                 .into_iter()
-                .collect::<Vec<Option<f64>>>(),
-            vec![Some(10.0), Some(10.0), Some(10.0)]
+                .collect::<Vec<Option<i32>>>(),
+            vec![Some(10), Some(10), Some(10)]
         );
     }
 
