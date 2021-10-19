@@ -92,14 +92,7 @@ impl Transformer for AnonymizationTransformer {
 
                         let new_type = aggregation.output_type(field.data_type());
 
-                        let mut updated_field = arrow::datatypes::Field::new(
-                            field.name(),
-                            new_type,
-                            field.is_nullable(),
-                        );
-                        updated_field.set_metadata(field.metadata().clone());
-
-                        updated_field
+                        arrow::datatypes::Field::new(field.name(), new_type, field.is_nullable())
                     }
                     None => field.clone(),
                 }

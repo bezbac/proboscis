@@ -58,9 +58,7 @@ fn transform_field(field: &Field, transformation: &dyn ColumnTransformation) -> 
         data_type,
         nullable,
     } = transformation.output_format();
-    let mut new_field = Field::new(field.name(), data_type, nullable);
-    new_field.set_metadata(field.metadata().clone());
-    new_field
+    Field::new(field.name(), data_type, nullable)
 }
 
 impl Transformer for TableColumnTransformer {
@@ -86,10 +84,7 @@ impl Transformer for TableColumnTransformer {
             })
             .collect();
 
-        Ok(Schema::new_with_metadata(
-            new_fields,
-            schema.metadata().clone(),
-        ))
+        Ok(Schema::new(new_fields))
     }
 
     fn transform_records(&self, query: &[Statement], data: &RecordBatch) -> Result<RecordBatch> {
@@ -122,7 +117,7 @@ impl Transformer for TableColumnTransformer {
             })
             .unzip();
 
-        let new_schema = Schema::new_with_metadata(new_fields, data.schema().metadata().clone());
+        let new_schema = Schema::new(new_fields);
 
         Ok(RecordBatch::try_new(Arc::new(new_schema), new_data)?)
     }

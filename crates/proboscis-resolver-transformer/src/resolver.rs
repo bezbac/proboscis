@@ -1,11 +1,16 @@
 use crate::traits::Transformer;
 use anyhow::Result;
+use arrow::{datatypes::Schema, record_batch::RecordBatch};
 use async_trait::async_trait;
 use proboscis_core::resolver::{
     Bind, ClientId, Close, Describe, Execute, Parse, Resolver, SyncResponse,
 };
 use sqlparser::{ast::Statement, dialect::PostgreSqlDialect, parser::Parser};
-use std::vec;
+use std::{
+    collections::{BTreeMap, HashMap},
+    sync::Arc,
+    vec,
+};
 
 pub struct TransformingResolver {
     resolver: Box<dyn Resolver>,
@@ -33,6 +38,82 @@ impl TransformingResolver {
     }
 }
 
+fn re_apply_metadata(original_schema: &Schema, new_schema: &Schema) -> Result<Schema> {
+    println!("TETETETE");
+
+    let original_metadata: HashMap<String, BTreeMap<String, String>> = original_schema
+        .fields()
+        .iter()
+        .map(|field| (field.name().clone(), field.metadata().clone().unwrap()))
+        .collect();
+
+    println!("{:?}", original_metadata);
+
+    let mut fields_with_metadata = vec![];
+    for field in new_schema.fields() {
+        let mut field_with_metadata = arrow::datatypes::Field::new(
+            field.name(),
+            field.data_type().clone(),
+            field.is_nullable(),
+        );
+
+        let field_metadata = original_metadata
+            .get(field.name())
+            .ok_or_else(|| {
+                anyhow::anyhow!(
+                    "No field with name {} contained in original schema",
+                    field.name()
+                )
+            })?
+            .clone();
+
+        field_with_metadata.set_metadata(Some(field_metadata));
+
+        fields_with_metadata.push(field_with_metadata)
+    }
+
+    Ok(arrow::datatypes::Schema::new_with_metadata(
+        fields_with_metadata,
+        original_schema.metadata().clone(),
+    ))
+}
+
+impl TransformingResolver {
+    fn transform_records(&self, query: &str, data: &RecordBatch) -> Result<RecordBatch> {
+        let query_ast = self.parse_sql(query).unwrap();
+
+        let original_schema = data.schema();
+
+        let mut transformed = data.clone();
+        for transformer in &self.transformers {
+            transformed = transformer.transform_records(&query_ast, &transformed)?;
+        }
+
+        let transformed_schema_with_metadata =
+            re_apply_metadata(&original_schema, &transformed.schema())?;
+
+        let transformed_with_metadata = RecordBatch::try_new(
+            Arc::new(transformed_schema_with_metadata),
+            transformed.columns().to_vec(),
+        )?;
+
+        Ok(transformed_with_metadata)
+    }
+
+    fn transform_schema(&self, query: &str, schema: &Schema) -> Result<Schema> {
+        let query_ast = self.parse_sql(query).unwrap();
+
+        let mut transformed = schema.clone();
+        for transformer in &self.transformers {
+            transformed = transformer.transform_schema(&query_ast, &transformed)?;
+        }
+
+        let transformed_with_metadata = re_apply_metadata(schema, &transformed)?;
+
+        Ok(transformed_with_metadata)
+    }
+}
+
 #[async_trait]
 impl Resolver for TransformingResolver {
     async fn initialize(&mut self, client_id: ClientId) -> anyhow::Result<()> {
@@ -44,18 +125,9 @@ impl Resolver for TransformingResolver {
         client_id: ClientId,
         query: String,
     ) -> anyhow::Result<arrow::record_batch::RecordBatch> {
-        let query_ast = self.parse_sql(&query)?;
-
-        if query_ast.len() != 1 {
-            todo!("Mismatched number of statements");
-        }
-
-        let mut result = self.resolver.query(client_id, query).await?;
-        for transformer in &self.transformers {
-            result = transformer.transform_records(&query_ast, &result)?;
-        }
-
-        Ok(result)
+        let records = self.resolver.query(client_id, query.clone()).await?;
+        let transformed = self.transform_records(&query, &records)?;
+        Ok(transformed)
     }
 
     async fn parse(&mut self, client_id: ClientId, parse: Parse) -> anyhow::Result<()> {
@@ -79,35 +151,27 @@ impl Resolver for TransformingResolver {
 
         let mut transformed_responses = vec![];
         for response in responses {
-            transformed_responses.push(match response {
+            let transformed_response = match response {
                 SyncResponse::Schema { schema, query } => {
-                    let query_ast = self.parse_sql(&query).unwrap();
-
-                    let mut transformed = schema;
-                    for transformer in &self.transformers {
-                        transformed = transformer.transform_schema(&query_ast, &transformed)?;
-                    }
+                    let transformed_schema = self.transform_schema(&query, &schema)?;
 
                     SyncResponse::Schema {
-                        schema: transformed,
+                        schema: transformed_schema,
                         query,
                     }
                 }
                 SyncResponse::Records { data, query } => {
-                    let query_ast = self.parse_sql(&query).unwrap();
-
-                    let mut transformed = data;
-                    for transformer in &self.transformers {
-                        transformed = transformer.transform_records(&query_ast, &transformed)?;
-                    }
+                    let transformed_data = self.transform_records(&query, &data)?;
 
                     SyncResponse::Records {
-                        data: transformed,
+                        data: transformed_data,
                         query,
                     }
                 }
                 _ => response,
-            })
+            };
+
+            transformed_responses.push(transformed_response)
         }
 
         Ok(transformed_responses)
