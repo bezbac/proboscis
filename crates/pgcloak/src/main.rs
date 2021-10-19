@@ -35,6 +35,21 @@ impl ListenerConfig {
     }
 }
 
+#[derive(Debug, Clone, Deserialize)]
+pub struct TlsConfig {
+    pub pcks_path: String,
+    pub password: String,
+}
+
+impl From<TlsConfig> for proboscis_core::TlsConfig {
+    fn from(config: TlsConfig) -> Self {
+        Self {
+            pcks_path: config.pcks_path,
+            password: config.password,
+        }
+    }
+}
+
 #[derive(Debug, Deserialize)]
 #[serde(tag = "type")]
 #[serde(rename_all = "snake_case")]
@@ -53,6 +68,7 @@ struct Credential {
 struct ApplicationConfig {
     credentials: Vec<Credential>,
     columns: Vec<ColumnConfiguration>,
+    tls: Option<TlsConfig>,
     listener: ListenerConfig,
     max_pool_size: usize,
     connection_uri: String,
@@ -124,10 +140,12 @@ async fn main() -> Result<()> {
         .map(|credential| (credential.username, credential.password))
         .collect();
 
+    let tls_config: Option<proboscis_core::TlsConfig> = config.tls.map(|config| config.into());
+
     let mut proxy = Proxy::new(
         proboscis_core::Config {
             credentials,
-            tls_config: None,
+            tls_config,
         },
         Box::new(
             TransformingResolver::new(Box::new(
