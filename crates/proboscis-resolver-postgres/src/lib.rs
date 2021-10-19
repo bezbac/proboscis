@@ -333,6 +333,7 @@ impl Resolver for PostgresResolver {
                         }
                         BackendMessage::ParameterDescription(parameter_description) => responses
                             .push(SyncResponse::ParameterDescription(parameter_description)),
+                        BackendMessage::NoData => responses.push(SyncResponse::NoData),
                         _ => todo!(),
                     }
                 },

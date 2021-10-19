@@ -33,6 +33,7 @@ impl SyncResponse {
             SyncResponse::BindComplete => vec![BackendMessage::BindComplete],
             SyncResponse::ParseComplete => vec![BackendMessage::ParseComplete],
             SyncResponse::ReadyForQuery => vec![BackendMessage::ReadyForQuery],
+            SyncResponse::NoData => vec![BackendMessage::NoData],
         }
     }
 }
@@ -45,6 +46,7 @@ pub enum SyncResponse {
     ParseComplete,
     ReadyForQuery,
     ParameterDescription(ParameterDescription),
+    NoData,
 }
 
 #[async_trait]

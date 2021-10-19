@@ -22,6 +22,7 @@ pub enum CharTag {
     ParseComplete,
     BindComplete,
     CloseComplete,
+    NoData,
 }
 
 impl CharTag {
@@ -31,7 +32,7 @@ impl CharTag {
 
         let tag = CharTag::try_from(bytes[0]);
 
-        Ok(tag.expect("Could not read char tag"))
+        Ok(tag.expect(&format!("Could not read char tag {:?}", bytes[0])))
     }
 }
 
@@ -56,6 +57,7 @@ impl From<CharTag> for u8 {
             CharTag::ParseComplete => b'1',
             CharTag::BindComplete => b'2',
             CharTag::CloseComplete => b'3',
+            CharTag::NoData => b'n',
         }
     }
 }
@@ -83,6 +85,7 @@ impl TryFrom<u8> for CharTag {
             b'1' => Ok(CharTag::ParseComplete),
             b'2' => Ok(CharTag::BindComplete),
             b'3' => Ok(CharTag::CloseComplete),
+            b'n' => Ok(CharTag::NoData),
             _ => Err("Unknown char tag"),
         }
     }

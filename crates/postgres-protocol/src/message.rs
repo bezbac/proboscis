@@ -141,6 +141,7 @@ pub enum BackendMessage {
     CloseComplete,
     Error(Error),
     ParameterDescription(ParameterDescription),
+    NoData,
 }
 
 #[derive(Debug, PartialEq, Clone)]
@@ -627,6 +628,11 @@ impl BackendMessage {
                 CharTag::CloseComplete,
                 Box::new(move |_| -> Result<()> { Ok(()) }),
             ),
+            Self::NoData => write_message_with_prefixed_message_len(
+                buf,
+                CharTag::NoData,
+                Box::new(move |_| -> Result<()> { Ok(()) }),
+            ),
             Self::Error(messages) => {
                 unimplemented!()
             }
@@ -775,6 +781,7 @@ impl BackendMessage {
             }
             CharTag::CloseComplete => Ok(Self::CloseComplete),
             CharTag::EmptyQueryResponse => unimplemented!(),
+            CharTag::NoData => Ok(Self::NoData),
             _ => todo!(),
         }
     }
