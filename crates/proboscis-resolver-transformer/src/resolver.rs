@@ -15,12 +15,14 @@ use std::{
 pub struct TransformingResolver {
     resolver: Box<dyn Resolver>,
     transformers: Vec<Box<dyn Transformer>>,
+    skip_if_cannot_parse: bool,
 }
 
 impl TransformingResolver {
     pub fn new(resolver: Box<dyn Resolver>) -> TransformingResolver {
         TransformingResolver {
             resolver,
+            skip_if_cannot_parse: true,
             transformers: Vec::new(),
         }
     }
@@ -76,7 +78,16 @@ fn re_apply_metadata(original_schema: &Schema, new_schema: &Schema) -> Result<Sc
 
 impl TransformingResolver {
     fn transform_records(&self, query: &str, data: &RecordBatch) -> Result<RecordBatch> {
-        let query_ast = self.parse_sql(query).unwrap();
+        let query_ast: Vec<Statement> = match self.parse_sql(query) {
+            Ok(ast) => ast,
+            Err(err) => {
+                return if self.skip_if_cannot_parse {
+                    Ok(data.clone())
+                } else {
+                    Err(err)
+                }
+            }
+        };
 
         let original_schema = data.schema();
 
@@ -97,7 +108,16 @@ impl TransformingResolver {
     }
 
     fn transform_schema(&self, query: &str, schema: &Schema) -> Result<Schema> {
-        let query_ast = self.parse_sql(query).unwrap();
+        let query_ast: Vec<Statement> = match self.parse_sql(query) {
+            Ok(ast) => ast,
+            Err(err) => {
+                return if self.skip_if_cannot_parse {
+                    Ok(schema.clone())
+                } else {
+                    Err(err)
+                }
+            }
+        };
 
         let mut transformed = schema.clone();
         for transformer in &self.transformers {
