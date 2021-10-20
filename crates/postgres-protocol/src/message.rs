@@ -1,6 +1,6 @@
 use super::util::{read_until_zero, write_message_with_prefixed_message_len};
 use super::CharTag;
-use anyhow::Result;
+use anyhow::{bail, Result};
 use byteorder::{ByteOrder, NetworkEndian};
 use omnom::prelude::*;
 use std::io::{prelude::*, Cursor};
@@ -108,11 +108,16 @@ pub struct Close {
 }
 
 #[derive(Debug, PartialEq, Clone)]
+pub enum BindParameter {
+    Binary(Vec<u8>),
+    Text(String),
+}
+
+#[derive(Debug, PartialEq, Clone)]
 pub struct Bind {
     pub statement: String,
     pub portal: String,
-    pub formats: Vec<i16>,
-    pub params: Vec<Vec<u8>>,
+    pub params: Vec<BindParameter>,
     pub results: Vec<i16>,
 }
 
@@ -312,7 +317,6 @@ impl FrontendMessage {
                 portal,
                 statement,
                 params,
-                formats,
                 results,
             }) => write_message_with_prefixed_message_len(
                 buf,
@@ -324,17 +328,33 @@ impl FrontendMessage {
                     body.extend_from_slice(statement.as_bytes());
                     body.push(0);
 
-                    body.write_be((&formats).len() as i16)?;
-                    for format in &formats {
-                        body.write_be(*format)?;
-                    }
+                    let are_all_parameters_text =
+                        params.iter().all(|p| matches!(p, BindParameter::Text(_)));
 
-                    body.write_be((&params).len() as i16)?;
+                    if params.is_empty() || are_all_parameters_text {
+                        body.write_be(0_i16)?;
+                    } else {
+                        body.write_be(params.len() as i16)?;
+                        for param in &params {
+                            body.write_be(match param {
+                                BindParameter::Text(_) => 0_i16,
+                                BindParameter::Binary(_) => 1_i16,
+                            })?;
+                        }
+                    };
+
+                    body.write_be(params.len() as i16)?;
                     for param in &params {
-                        body.extend_from_slice(param);
+                        let bytes = match param {
+                            BindParameter::Text(string) => string.as_bytes(),
+                            BindParameter::Binary(data) => data,
+                        };
+
+                        body.write_be(bytes.len() as i32)?;
+                        body.extend_from_slice(bytes);
                     }
 
-                    body.write_be((&results).len() as i16)?;
+                    body.write_be(results.len() as i16)?;
                     for result_format in &results {
                         body.write_be(*result_format)?;
                     }
@@ -459,14 +479,28 @@ impl FrontendMessage {
                     formats.push(format)
                 }
 
-                let mut params = vec![];
+                let mut params: Vec<BindParameter> = vec![];
                 let num_params: u16 = stream.read_be()?;
-                while params.len() < num_params as usize {
+                for index in 0..num_params {
+                    // 0 means text, 1 means binary
+                    let format = if !formats.is_empty() {
+                        formats[index as usize]
+                    } else {
+                        0
+                    };
+
                     let param_len: u32 = stream.read_be()?;
 
                     let mut param_bytes: Vec<u8> = vec![0; param_len as usize];
                     stream.read_exact(&mut param_bytes)?;
-                    params.push(param_bytes);
+
+                    let param = match format {
+                        0 => BindParameter::Text(String::from_utf8(param_bytes)?),
+                        1 => BindParameter::Binary(param_bytes),
+                        _ => bail!("Unsupported parameter format"),
+                    };
+
+                    params.push(param)
                 }
 
                 let mut results = vec![];
@@ -479,7 +513,6 @@ impl FrontendMessage {
                 Ok(Self::Bind(Bind {
                     portal,
                     statement,
-                    formats,
                     params,
                     results,
                 }))
@@ -885,6 +918,30 @@ mod tests {
         let message = FrontendMessage::Describe(Describe {
             kind: DescribeKind::Portal,
             name: "Test".to_string(),
+        });
+
+        test_frontend_symmetric_serialization_deserialization(message.into());
+    }
+
+    #[test]
+    fn bind() {
+        let message = FrontendMessage::Bind(Bind {
+            statement: "test".to_string(),
+            portal: "test".to_string(),
+            params: vec![],
+            results: vec![],
+        });
+
+        test_frontend_symmetric_serialization_deserialization(message.into());
+    }
+
+    #[test]
+    fn bind_with_parameters() {
+        let message = FrontendMessage::Bind(Bind {
+            statement: "test".to_string(),
+            portal: "test".to_string(),
+            params: vec![BindParameter::Binary(vec![0, 0, 3, 235])],
+            results: vec![],
         });
 
         test_frontend_symmetric_serialization_deserialization(message.into());
