@@ -39,15 +39,11 @@ impl TransformingResolver {
 }
 
 fn re_apply_metadata(original_schema: &Schema, new_schema: &Schema) -> Result<Schema> {
-    println!("TETETETE");
-
     let original_metadata: HashMap<String, BTreeMap<String, String>> = original_schema
         .fields()
         .iter()
         .map(|field| (field.name().clone(), field.metadata().clone().unwrap()))
         .collect();
-
-    println!("{:?}", original_metadata);
 
     let mut fields_with_metadata = vec![];
     for field in new_schema.fields() {
