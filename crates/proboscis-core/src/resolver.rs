@@ -34,6 +34,7 @@ impl SyncResponse {
             SyncResponse::ParseComplete => vec![BackendMessage::ParseComplete],
             SyncResponse::ReadyForQuery => vec![BackendMessage::ReadyForQuery],
             SyncResponse::NoData => vec![BackendMessage::NoData],
+            SyncResponse::EmptyQueryResponse => vec![BackendMessage::EmptyQueryResponse],
         }
     }
 }
@@ -47,6 +48,7 @@ pub enum SyncResponse {
     ReadyForQuery,
     ParameterDescription(ParameterDescription),
     NoData,
+    EmptyQueryResponse,
 }
 
 #[async_trait]

@@ -142,6 +142,7 @@ pub enum BackendMessage {
     Error(Error),
     ParameterDescription(ParameterDescription),
     NoData,
+    EmptyQueryResponse,
 }
 
 #[derive(Debug, PartialEq, Clone)]
@@ -633,7 +634,12 @@ impl BackendMessage {
                 CharTag::NoData,
                 Box::new(move |_| -> Result<()> { Ok(()) }),
             ),
-            Self::Error(messages) => {
+            Self::EmptyQueryResponse => write_message_with_prefixed_message_len(
+                buf,
+                CharTag::EmptyQueryResponse,
+                Box::new(move |_| -> Result<()> { Ok(()) }),
+            ),
+            Self::Error(_) => {
                 unimplemented!()
             }
         }
@@ -780,7 +786,7 @@ impl BackendMessage {
                 Ok(Self::ParameterDescription(ParameterDescription { types }))
             }
             CharTag::CloseComplete => Ok(Self::CloseComplete),
-            CharTag::EmptyQueryResponse => unimplemented!(),
+            CharTag::EmptyQueryResponse => Ok(Self::EmptyQueryResponse),
             CharTag::NoData => Ok(Self::NoData),
             _ => todo!(),
         }

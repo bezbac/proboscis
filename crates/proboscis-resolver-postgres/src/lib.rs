@@ -302,7 +302,7 @@ impl Resolver for PostgresResolver {
             .await?;
 
         let mut responses = vec![];
-        while let Some(operation) = &connection.requested_ops.pop_front() {
+        'client_request: while let Some(operation) = &connection.requested_ops.pop_front() {
             match operation {
                 ClientOperation::Parse => {
                     let read_message = connection.connection.read_backend_message().await?;
@@ -333,7 +333,10 @@ impl Resolver for PostgresResolver {
                         }
                         BackendMessage::ParameterDescription(parameter_description) => responses
                             .push(SyncResponse::ParameterDescription(parameter_description)),
-                        BackendMessage::NoData => responses.push(SyncResponse::NoData),
+                        BackendMessage::NoData => {
+                            responses.push(SyncResponse::NoData);
+                            break;
+                        }
                         _ => todo!(),
                     }
                 },
@@ -359,6 +362,10 @@ impl Resolver for PostgresResolver {
                             BackendMessage::CommandComplete(tag) => {
                                 command_complete_tag = tag;
                                 break;
+                            }
+                            BackendMessage::EmptyQueryResponse => {
+                                responses.push(SyncResponse::EmptyQueryResponse);
+                                break 'client_request;
                             }
                             _ => todo!(),
                         }
