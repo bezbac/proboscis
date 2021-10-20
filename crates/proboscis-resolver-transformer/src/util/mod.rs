@@ -1,3 +1,4 @@
+use itertools::Itertools;
 use sqlparser::ast::{
     Expr, Ident, ObjectName, SelectItem, SetExpr, Statement, TableAlias, TableFactor,
 };
@@ -31,7 +32,13 @@ pub fn get_schema_fields(ast: &Statement) -> anyhow::Result<Vec<String>> {
                         } => value.clone(),
                         SelectItem::UnnamedExpr(expression) => match expression {
                             Expr::Function(_) => String::from("function"),
+                            Expr::Value(_) => String::from("value"),
                             _ => todo!("{:?}", expression),
+                        },
+                        SelectItem::ExprWithAlias { expr, alias: _ } => match expr {
+                            Expr::Function(_) => String::from("function"),
+                            Expr::Value(_) => String::from("value"),
+                            _ => todo!("{:?}", expr),
                         },
                         _ => todo!("{:?}", item),
                     })
@@ -48,16 +55,13 @@ pub fn get_schema_fields(ast: &Statement) -> anyhow::Result<Vec<String>> {
                     for table in tables {
                         match table {
                             TableFactor::Table {
-                                name: ObjectName(mut name_identifiers),
+                                name: ObjectName(name_identifiers),
                                 alias,
                                 args: _,
                                 with_hints: _,
                             } => {
-                                if name_identifiers.len() != 1 {
-                                    unimplemented!()
-                                }
-
-                                let original_name = name_identifiers.pop().unwrap().value;
+                                let original_name =
+                                    name_identifiers.iter().map(|id| &id.value).join(".");
 
                                 match alias {
                                     Some(TableAlias {
