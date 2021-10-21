@@ -30,9 +30,9 @@ impl CharTag {
         let mut bytes = vec![0; 1];
         stream.read_exact(&mut bytes)?;
 
-        let tag = CharTag::try_from(bytes[0]);
-
-        Ok(tag.expect(&format!("Could not read char tag {:?}", bytes[0])))
+        CharTag::try_from(bytes[0]).map_err(|err| {
+            anyhow::format_err!("Could not read char tag {:?}. err: {}", bytes[0], err)
+        })
     }
 }
 

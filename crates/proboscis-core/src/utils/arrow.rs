@@ -167,15 +167,15 @@ fn postgres_type_for_arrow_type(
 fn message_field_to_arrow_field(value: &postgres_protocol::message::Field) -> Field {
     let postgres_type = postgres::types::Type::from_oid(value.type_oid as u32).unwrap();
 
-    let arrow_type = match &postgres_type {
-        &postgres::types::Type::BOOL => DataType::Boolean,
-        &postgres::types::Type::INT2 => DataType::Int8,
-        &postgres::types::Type::INT4 => DataType::Int16,
-        &postgres::types::Type::INT8 => DataType::Int32,
-        &postgres::types::Type::TEXT => DataType::LargeUtf8,
-        &postgres::types::Type::VARCHAR => DataType::Utf8,
-        &postgres::types::Type::NAME => DataType::Utf8,
-        &postgres::types::Type::NAME_ARRAY => DataType::List(Box::new(Field::new(
+    let arrow_type = match postgres_type {
+        postgres::types::Type::BOOL => DataType::Boolean,
+        postgres::types::Type::INT2 => DataType::Int8,
+        postgres::types::Type::INT4 => DataType::Int16,
+        postgres::types::Type::INT8 => DataType::Int32,
+        postgres::types::Type::TEXT => DataType::LargeUtf8,
+        postgres::types::Type::VARCHAR => DataType::Utf8,
+        postgres::types::Type::NAME => DataType::Utf8,
+        postgres::types::Type::NAME_ARRAY => DataType::List(Box::new(Field::new(
             "unnamed_name_array",
             DataType::UInt8,
             true,
@@ -372,8 +372,7 @@ pub fn serialize_record_batch_schema_to_row_description(schema: &Schema) -> RowD
     let fields: Vec<postgres_protocol::message::Field> = schema
         .fields()
         .iter()
-        .enumerate()
-        .map(|(idx, arrow_field)| arrow_field_to_message_field(arrow_field))
+        .map(|arrow_field| arrow_field_to_message_field(arrow_field))
         .collect();
     RowDescription { fields }
 }
