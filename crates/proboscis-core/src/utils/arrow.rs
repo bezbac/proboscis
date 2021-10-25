@@ -1,6 +1,7 @@
 use anyhow::Result;
 use arrow::array::{
-    as_primitive_array, make_array, ArrayData, BooleanArray, ListArray, UInt16Array,
+    as_primitive_array, make_array, ArrayData, BooleanArray, ListArray, UInt16Array, UInt32Array,
+    UInt64Array,
 };
 use arrow::array::{Array, GenericListArray, UInt8Array};
 use arrow::array::{ArrayRef, GenericStringArray, Int16Array, Int32Array, Int64Array, Int8Array};
@@ -11,124 +12,61 @@ use omnom::prelude::*;
 use postgres_protocol::message::{DataRow, RowDescription};
 use std::{collections::BTreeMap, sync::Arc, vec};
 
+macro_rules! create_numerical_column_data_to_array_function {
+    ($func_name:ident, $Array:ident, $type:ty, $byte_count:literal) => {
+        fn $func_name(data: &[Option<Vec<u8>>]) -> ArrayRef {
+            Arc::new(
+                data.iter()
+                    .map(|d| {
+                        d.as_ref().map(|d| {
+                            let mut bytes = d.clone();
+                            while bytes.len() < $byte_count {
+                                bytes.push(0);
+                            }
+
+                            let mut cursor = std::io::Cursor::new(bytes);
+                            let value: $type = cursor.read_be().unwrap();
+                            value
+                        })
+                    })
+                    .collect::<$Array>(),
+            )
+        }
+    };
+}
+
+create_numerical_column_data_to_array_function!(column_data_to_array_i8, Int8Array, i8, 1);
+create_numerical_column_data_to_array_function!(column_data_to_array_i16, Int16Array, i16, 2);
+create_numerical_column_data_to_array_function!(column_data_to_array_i32, Int32Array, i32, 4);
+create_numerical_column_data_to_array_function!(column_data_to_array_i64, Int64Array, i64, 8);
+
+create_numerical_column_data_to_array_function!(column_data_to_array_u8, UInt8Array, u8, 1);
+create_numerical_column_data_to_array_function!(column_data_to_array_u16, UInt16Array, u16, 2);
+create_numerical_column_data_to_array_function!(column_data_to_array_u32, UInt32Array, u32, 4);
+create_numerical_column_data_to_array_function!(column_data_to_array_u64, UInt64Array, u64, 8);
+
 fn column_data_to_array(data: &[Option<Vec<u8>>], data_type: &DataType) -> ArrayRef {
     match data_type {
-        DataType::Int8 => {
-            let data_array = data
-                .iter()
-                .map(|d| {
-                    d.as_ref().map(|d| {
-                        let mut cursor = std::io::Cursor::new(d);
-                        let value: i8 = cursor.read_be().unwrap();
-                        value
-                    })
-                })
-                .collect::<Vec<Option<i8>>>();
+        DataType::Int8 => column_data_to_array_i8(data),
+        DataType::Int16 => column_data_to_array_i16(data),
+        DataType::Int32 => column_data_to_array_i32(data),
+        DataType::Int64 => column_data_to_array_i64(data),
 
-            Arc::new(Int8Array::from(data_array))
-        }
-        DataType::Int16 => {
-            let data_array = data
-                .iter()
-                .map(|d| {
-                    d.as_ref().map(|d| {
-                        let mut bytes = d.clone();
-                        while bytes.len() < 2 {
-                            bytes.push(0);
-                        }
+        DataType::UInt8 => column_data_to_array_u8(data),
+        DataType::UInt16 => column_data_to_array_u16(data),
+        DataType::UInt32 => column_data_to_array_u32(data),
+        DataType::UInt64 => column_data_to_array_u64(data),
 
-                        let mut cursor = std::io::Cursor::new(bytes);
-                        let value: i16 = cursor.read_be().unwrap();
-                        value
-                    })
-                })
-                .collect::<Vec<Option<i16>>>();
-
-            Arc::new(Int16Array::from(data_array))
-        }
-        DataType::Int32 => {
-            let data_array = data
-                .iter()
-                .map(|d| {
-                    d.as_ref().map(|d| {
-                        let mut bytes = d.clone();
-                        while bytes.len() < 4 {
-                            bytes.push(0);
-                        }
-
-                        let mut cursor = std::io::Cursor::new(bytes);
-                        let value: i32 = cursor.read_be().unwrap();
-                        value
-                    })
-                })
-                .collect::<Vec<Option<i32>>>();
-
-            Arc::new(Int32Array::from(data_array))
-        }
-        DataType::Int64 => {
-            let data_array = data
-                .iter()
-                .map(|d| {
-                    d.as_ref().map(|d| {
-                        let mut bytes = d.clone();
-                        while bytes.len() < 8 {
-                            bytes.push(0);
-                        }
-
-                        let mut cursor = std::io::Cursor::new(bytes);
-                        let value: i64 = cursor.read_be().unwrap();
-                        value
-                    })
-                })
-                .collect::<Vec<Option<i64>>>();
-
-            Arc::new(Int64Array::from(data_array))
-        }
-        DataType::UInt16 => {
-            let data_array = data
-                .iter()
-                .map(|d| {
-                    d.as_ref().map(|d| {
-                        let mut bytes = d.clone();
-                        while bytes.len() < 8 {
-                            bytes.push(0);
-                        }
-
-                        let mut cursor = std::io::Cursor::new(bytes);
-                        let value: u16 = cursor.read_be().unwrap();
-                        value
-                    })
-                })
-                .collect::<Vec<Option<u16>>>();
-
-            Arc::new(UInt16Array::from(data_array))
-        }
-        DataType::Utf8 => {
-            let data_array: Vec<Option<String>> = data
-                .iter()
+        DataType::Utf8 => Arc::new(
+            data.iter()
                 .map(|d| d.as_ref().map(|d| String::from_utf8(d.to_vec()).unwrap()))
-                .collect();
-
-            Arc::new(GenericStringArray::<i32>::from(
-                data_array
-                    .iter()
-                    .map(|s| s.as_ref().map(|s| s.as_ref()))
-                    .collect::<Vec<Option<&str>>>(),
-            ))
-        }
-        DataType::LargeUtf8 => {
-            let data_array: Vec<Option<String>> = data
-                .iter()
+                .collect::<GenericStringArray<i32>>(),
+        ),
+        DataType::LargeUtf8 => Arc::new(
+            data.iter()
                 .map(|d| d.as_ref().map(|d| String::from_utf8(d.to_vec()).unwrap()))
-                .collect();
-
-            Arc::new(GenericStringArray::<i64>::from(
-                data_array
-                    .iter()
-                    .map(|s| s.as_ref().map(|s| s.as_ref()))
-                    .collect::<Vec<Option<&str>>>(),
-            ))
-        }
+                .collect::<GenericStringArray<i64>>(),
+        ),
         DataType::List(field) => {
             let data_array: Vec<Option<Vec<Option<u8>>>> = data
                 .iter()
@@ -351,39 +289,56 @@ pub fn serialize_record_batch_to_data_rows(batch: &RecordBatch) -> Vec<DataRow> 
                 match column.data_type() {
                     DataType::Int8 => {
                         let values: &Int8Array = as_primitive_array(column);
-                        let value: i8 = values.value(row_index);
-                        value.write_be_bytes(&mut cell).unwrap();
+                        values.value(row_index).write_be_bytes(&mut cell).unwrap();
                     }
                     DataType::Int16 => {
                         let values: &Int16Array = as_primitive_array(column);
-                        let value: i16 = values.value(row_index);
-                        write_be_without_trailing_zeros(value, &mut cell).unwrap();
+                        write_be_without_trailing_zeros(values.value(row_index), &mut cell)
+                            .unwrap();
                     }
                     DataType::Int32 => {
                         let values: &Int32Array = as_primitive_array(column);
-                        let value: i32 = values.value(row_index);
-                        write_be_without_trailing_zeros(value, &mut cell).unwrap();
+                        write_be_without_trailing_zeros(values.value(row_index), &mut cell)
+                            .unwrap();
                     }
                     DataType::Int64 => {
                         let values: &Int64Array = as_primitive_array(column);
-                        let value: i64 = values.value(row_index);
-                        write_be_without_trailing_zeros(value, &mut cell).unwrap();
+                        write_be_without_trailing_zeros(values.value(row_index), &mut cell)
+                            .unwrap();
+                    }
+                    DataType::UInt8 => {
+                        let values: &UInt8Array = as_primitive_array(column);
+                        write_be_without_trailing_zeros(values.value(row_index), &mut cell)
+                            .unwrap();
+                    }
+                    DataType::UInt16 => {
+                        let values: &UInt16Array = as_primitive_array(column);
+                        write_be_without_trailing_zeros(values.value(row_index), &mut cell)
+                            .unwrap();
+                    }
+                    DataType::UInt32 => {
+                        let values: &UInt32Array = as_primitive_array(column);
+                        write_be_without_trailing_zeros(values.value(row_index), &mut cell)
+                            .unwrap();
+                    }
+                    DataType::UInt64 => {
+                        let values: &UInt64Array = as_primitive_array(column);
+                        write_be_without_trailing_zeros(values.value(row_index), &mut cell)
+                            .unwrap();
                     }
                     DataType::LargeUtf8 => {
                         let values = &column
                             .as_any()
                             .downcast_ref::<GenericStringArray<i64>>()
                             .unwrap();
-                        let value = values.value(row_index);
-                        cell.extend_from_slice(value.as_bytes())
+                        cell.extend_from_slice(values.value(row_index).as_bytes())
                     }
                     DataType::Utf8 => {
                         let values = &column
                             .as_any()
                             .downcast_ref::<GenericStringArray<i32>>()
                             .unwrap();
-                        let value = values.value(row_index);
-                        cell.extend_from_slice(value.as_bytes())
+                        cell.extend_from_slice(values.value(row_index).as_bytes())
                     }
                     DataType::List(_) => {
                         let values = &column
@@ -406,11 +361,6 @@ pub fn serialize_record_batch_to_data_rows(batch: &RecordBatch) -> Vec<DataRow> 
                         let boolean_value = values.value(row_index);
                         let byte_value = if boolean_value { 1 } else { 0 };
                         cell.extend_from_slice(&[byte_value])
-                    }
-                    DataType::UInt16 => {
-                        let values: &UInt16Array = as_primitive_array(column);
-                        let value: u16 = values.value(row_index);
-                        write_be_without_trailing_zeros(value, &mut cell).unwrap();
                     }
                     _ => todo!("{:?}", column.data_type()),
                 }
