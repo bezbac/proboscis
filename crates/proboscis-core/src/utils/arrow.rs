@@ -1,5 +1,7 @@
 use anyhow::Result;
-use arrow::array::{as_primitive_array, make_array, ArrayData, ListArray};
+use arrow::array::{
+    as_primitive_array, make_array, ArrayData, BooleanArray, ListArray, UInt16Array,
+};
 use arrow::array::{Array, GenericListArray, UInt8Array};
 use arrow::array::{ArrayRef, GenericStringArray, Int16Array, Int32Array, Int64Array, Int8Array};
 use arrow::buffer::Buffer;
@@ -82,6 +84,25 @@ fn column_data_to_array(data: &[Option<Vec<u8>>], data_type: &DataType) -> Array
 
             Arc::new(Int64Array::from(data_array))
         }
+        DataType::UInt16 => {
+            let data_array = data
+                .iter()
+                .map(|d| {
+                    d.as_ref().map(|d| {
+                        let mut bytes = d.clone();
+                        while bytes.len() < 8 {
+                            bytes.push(0);
+                        }
+
+                        let mut cursor = std::io::Cursor::new(bytes);
+                        let value: u16 = cursor.read_be().unwrap();
+                        value
+                    })
+                })
+                .collect::<Vec<Option<u16>>>();
+
+            Arc::new(UInt16Array::from(data_array))
+        }
         DataType::Utf8 => {
             let data_array: Vec<Option<String>> = data
                 .iter()
@@ -126,6 +147,11 @@ fn column_data_to_array(data: &[Option<Vec<u8>>], data_type: &DataType) -> Array
 
             make_array(list_data)
         }
+        DataType::Boolean => Arc::new(BooleanArray::from(
+            data.iter()
+                .map(|d| d.as_ref().map(|d| d == &[0]))
+                .collect::<Vec<Option<bool>>>(),
+        )),
         _ => todo!("{}", data_type),
     }
 }
@@ -166,9 +192,11 @@ fn postgres_type_for_arrow_type(
         DataType::Int8 => postgres::types::Type::INT2,
         DataType::Int16 => postgres::types::Type::INT4,
         DataType::Int32 => postgres::types::Type::INT8,
+        DataType::UInt16 => postgres::types::Type::OID,
         DataType::LargeUtf8 => postgres::types::Type::TEXT,
         DataType::Utf8 => match original_type {
             Some(postgres::types::Type::NAME) => postgres::types::Type::NAME,
+            Some(postgres::types::Type::CHAR) => postgres::types::Type::CHAR,
             _ => postgres::types::Type::VARCHAR,
         },
         DataType::List(field) => match field.name().as_str() {
@@ -195,6 +223,8 @@ fn message_field_to_arrow_field(value: &postgres_protocol::message::Field) -> Fi
             DataType::UInt8,
             true,
         ))),
+        postgres::types::Type::OID => DataType::UInt16,
+        postgres::types::Type::CHAR => DataType::Utf8,
         _ => todo!("{}", postgres_type),
     };
 
@@ -371,7 +401,18 @@ pub fn serialize_record_batch_to_data_rows(batch: &RecordBatch) -> Vec<DataRow> 
 
                         cell.extend_from_slice(value)
                     }
-                    _ => unimplemented!(),
+                    DataType::Boolean => {
+                        let values = &column.as_any().downcast_ref::<BooleanArray>().unwrap();
+                        let boolean_value = values.value(row_index);
+                        let byte_value = if boolean_value { 1 } else { 0 };
+                        cell.extend_from_slice(&[byte_value])
+                    }
+                    DataType::UInt16 => {
+                        let values: &UInt16Array = as_primitive_array(column);
+                        let value: u16 = values.value(row_index);
+                        write_be_without_trailing_zeros(value, &mut cell).unwrap();
+                    }
+                    _ => todo!("{:?}", column.data_type()),
                 }
                 row_data.push(Some(cell))
             }
