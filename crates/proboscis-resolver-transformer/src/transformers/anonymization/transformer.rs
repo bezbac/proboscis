@@ -5,11 +5,10 @@ use crate::{
         algorithm::{anonymize, NumericAggregation},
         conversion::{data_frame_to_record_batch, record_batch_to_data_frame},
     },
-    util::get_schema_fields,
+    util::get_projected_origin,
 };
 use anyhow::Result;
 use arrow::record_batch::RecordBatch;
-use itertools::Itertools;
 use sqlparser::ast::Statement;
 use std::collections::HashMap;
 
@@ -28,37 +27,51 @@ impl AnonymizationTransformer {
         query: &[Statement],
         schema: &arrow::datatypes::Schema,
     ) -> Result<RelevantColumns> {
-        let normalized_field_names = get_schema_fields(
+        let origins = get_projected_origin(
             query
                 .first()
                 .ok_or_else(|| anyhow::anyhow!("Missing query"))?,
+            schema.fields(),
         )?;
 
-        let quasi_identifier_columns: HashMap<String, Option<NumericAggregation>> =
-            normalized_field_names
-                .iter()
-                .enumerate()
-                .filter(|(_, normalized_column_name)| {
-                    self.quasi_identifier_columns
-                        .keys()
-                        .contains(normalized_column_name)
-                })
-                .map(|(idx, normalized_column_name)| {
-                    (
+        let quasi_identifier_columns: HashMap<String, Option<NumericAggregation>> = origins
+            .iter()
+            .enumerate()
+            .filter_map(|(idx, origin)| match origin {
+                crate::util::ProjectedOrigin::Function => return None,
+                crate::util::ProjectedOrigin::Value => return None,
+                crate::util::ProjectedOrigin::TableColumn { table, column } => {
+                    let normalized_column_name = &format!("{}.{}", table, column);
+
+                    Some((
                         schema.field(idx).name().to_string(),
                         *self
                             .quasi_identifier_columns
                             .get(normalized_column_name)
                             .unwrap(),
-                    )
-                })
-                .collect();
+                    ))
+                }
+            })
+            .collect();
 
-        let identifier_columns: Vec<String> = normalized_field_names
+        let identifier_columns: Vec<String> = origins
             .iter()
             .enumerate()
-            .filter(|(_, column_name)| self.identifier_columns.contains(column_name))
-            .map(|(idx, _)| schema.field(idx).name().to_string())
+            .filter_map(|(idx, origin)| match origin {
+                crate::util::ProjectedOrigin::Function => return None,
+                crate::util::ProjectedOrigin::Value => return None,
+                crate::util::ProjectedOrigin::TableColumn { table, column } => {
+                    let normalized_column_name = &format!("{}.{}", table, column);
+
+                    let is_identifier = self.identifier_columns.contains(normalized_column_name);
+
+                    if !is_identifier {
+                        return None
+                    }
+
+                    Some(schema.field(idx).name().to_string())
+                }
+            })
             .collect();
 
         Ok((identifier_columns, quasi_identifier_columns))
@@ -152,13 +165,12 @@ impl Transformer for AnonymizationTransformer {
 #[cfg(test)]
 mod tests {
     use std::sync::Arc;
-
     use arrow::{
         array::{Int32Array, StringArray},
         datatypes::{DataType, Field, Schema},
     };
+    use itertools::Itertools;
     use sqlparser::{dialect::PostgreSqlDialect, parser::Parser};
-
     use super::*;
 
     #[test]

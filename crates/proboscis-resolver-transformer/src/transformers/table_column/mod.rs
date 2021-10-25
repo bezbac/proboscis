@@ -1,5 +1,5 @@
 use crate::{
-    column_transformations::ColumnTransformation, traits::Transformer, util::get_schema_fields,
+    column_transformations::ColumnTransformation, traits::Transformer, util::get_projected_origin,
 };
 use anyhow::Result;
 use arrow::{
@@ -35,16 +35,25 @@ impl TableColumnTransformer {
         statement: &Statement,
         schema: &Schema,
     ) -> HashMap<usize, &Vec<Box<dyn ColumnTransformation>>> {
-        let normalized_field_names = get_schema_fields(statement).unwrap();
+        let origins = get_projected_origin(statement, schema.fields()).unwrap();
 
         schema
             .fields()
             .iter()
-            .zip(normalized_field_names.iter())
+            .zip(origins.iter())
             .enumerate()
-            .filter_map(|(index, (_, normalized_field_name))| {
+            .filter_map(|(index, (_, origin))| {
+                // TODO: Reconsider using a string here
+                let normalized_field_name = match origin {
+                    crate::util::ProjectedOrigin::Function => return None,
+                    crate::util::ProjectedOrigin::Value => return None,
+                    crate::util::ProjectedOrigin::TableColumn { table, column } => {
+                        format!("{}.{}", table, column)
+                    }
+                };
+
                 self.transformations
-                    .get(normalized_field_name)
+                    .get(&normalized_field_name)
                     .map(|transformations| (index, transformations))
             })
             .collect()

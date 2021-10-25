@@ -1,101 +1,28 @@
+use arrow::datatypes::Field;
 use itertools::Itertools;
 use sqlparser::ast::{
     Expr, Ident, ObjectName, SelectItem, SetExpr, Statement, TableAlias, TableFactor,
 };
 
-pub fn get_schema_fields(ast: &Statement) -> anyhow::Result<Vec<String>> {
+#[derive(Clone, Debug, PartialEq)]
+pub enum ProjectedOrigin {
+    TableColumn { table: String, column: String },
+    Value,
+    Function,
+}
+
+pub fn get_projected_origin(
+    ast: &Statement,
+    fields: &[Field],
+) -> anyhow::Result<Vec<ProjectedOrigin>> {
     match ast {
         Statement::Query(query) => match &query.body {
             SetExpr::Select(select) => {
-                let mut fields: Vec<String> = select
-                    .projection
-                    .iter()
-                    .map(|item| match item {
-                        SelectItem::UnnamedExpr(Expr::Identifier(Ident {
-                            value,
-                            quote_style: _,
-                        })) => value.clone(),
-                        SelectItem::UnnamedExpr(Expr::CompoundIdentifier(identifiers)) => {
-                            identifiers
-                                .iter()
-                                .map(|item| item.value.to_string())
-                                .collect::<Vec<String>>()
-                                .join(".")
-                        }
-                        SelectItem::ExprWithAlias {
-                            expr:
-                                Expr::Identifier(Ident {
-                                    value,
-                                    quote_style: _,
-                                }),
-                            alias: _,
-                        } => value.clone(),
-                        SelectItem::UnnamedExpr(expression) => match expression {
-                            Expr::Function(_) => String::from("function"),
-                            Expr::Value(_) => String::from("value"),
-                            _ => todo!("{:?}", expression),
-                        },
-                        SelectItem::ExprWithAlias { expr, alias: _ } => match expr {
-                            Expr::Function(_) => String::from("function"),
-                            Expr::Value(_) => String::from("value"),
-                            _ => todo!("{:?}", expr),
-                        },
-                        _ => todo!("{:?}", item),
-                    })
-                    .collect();
-
-                if select.from.len() == 1 {
-                    let mut tables: Vec<TableFactor> =
-                        vec![select.from.first().unwrap().clone().relation];
-
-                    for joined in select.from.first().unwrap().clone().joins {
-                        tables.push(joined.relation)
-                    }
-
-                    for table in tables {
-                        match table {
-                            TableFactor::Table {
-                                name: ObjectName(name_identifiers),
-                                alias,
-                                args: _,
-                                with_hints: _,
-                            } => {
-                                let original_name =
-                                    name_identifiers.iter().map(|id| &id.value).join(".");
-
-                                match alias {
-                                    Some(TableAlias {
-                                        name: aliased_name,
-                                        columns: _,
-                                    }) => {
-                                        fields = fields
-                                            .iter()
-                                            .map(|field| {
-                                                field.replace(
-                                                    format!("{}.", aliased_name.value).as_str(),
-                                                    format!("{}.", original_name).as_str(),
-                                                )
-                                            })
-                                            .collect()
-                                    }
-                                    None => {
-                                        fields = fields
-                                            .iter()
-                                            .map(|field| format!("{}.{}", original_name, field))
-                                            .collect()
-                                    }
-                                }
-                            }
-                            _ => unimplemented!(),
-                        }
-                    }
-                }
-
-                Ok(fields)
+                unimplemented!();
             }
             _ => unimplemented!(),
         },
-        _ => unimplemented!(),
+        _ => anyhow::bail!("get_projected_origin is only implemented for queries"),
     }
 }
 
@@ -112,19 +39,45 @@ mod tests {
             .pop()
             .unwrap();
 
-        let unnested_fields = get_schema_fields(&query_ast).unwrap();
-        assert_eq!(unnested_fields, vec!["users.id"])
+        let unnested_fields = get_projected_origin(
+            &query_ast,
+            &[Field::new("id", arrow::datatypes::DataType::Int64, false)],
+        )
+        .unwrap();
+
+        assert_eq!(
+            unnested_fields,
+            vec![ProjectedOrigin::TableColumn {
+                table: String::from("users"),
+                column: String::from("id"),
+            }]
+        )
     }
 
     #[test]
     fn test_all_fields() {
         let dialect = PostgreSqlDialect {};
-        let _query_ast = Parser::parse_sql(&dialect, "SELECT * FROM users")
+        let query_ast = Parser::parse_sql(&dialect, "SELECT * FROM users")
             .unwrap()
             .pop()
             .unwrap();
 
-        // TODO: Refactor function to take schema as well, in order to handle these
+        let unnested_fields = get_projected_origin(
+            &query_ast,
+            &[
+                Field::new("id", arrow::datatypes::DataType::Int64, false),
+                Field::new("name", arrow::datatypes::DataType::Utf8, false),
+            ],
+        )
+        .unwrap();
+
+        assert_eq!(
+            unnested_fields,
+            vec![ProjectedOrigin::TableColumn {
+                table: String::from("users"),
+                column: String::from("id"),
+            }]
+        )
     }
 
     #[test]
@@ -135,8 +88,23 @@ mod tests {
             .pop()
             .unwrap();
 
-        let unnested_fields = get_schema_fields(&query_ast).unwrap();
-        assert_eq!(unnested_fields, vec!["users.id"])
+        let unnested_fields = get_projected_origin(
+            &query_ast,
+            &[Field::new(
+                "user_id",
+                arrow::datatypes::DataType::Int64,
+                false,
+            )],
+        )
+        .unwrap();
+
+        assert_eq!(
+            unnested_fields,
+            vec![ProjectedOrigin::TableColumn {
+                table: String::from("users"),
+                column: String::from("id"),
+            }]
+        )
     }
 
     #[test]
@@ -147,8 +115,19 @@ mod tests {
             .pop()
             .unwrap();
 
-        let unnested_fields = get_schema_fields(&query_ast).unwrap();
-        assert_eq!(unnested_fields, vec!["users.id"])
+        let unnested_fields = get_projected_origin(
+            &query_ast,
+            &[Field::new("u.id", arrow::datatypes::DataType::Int64, false)],
+        )
+        .unwrap();
+
+        assert_eq!(
+            unnested_fields,
+            vec![ProjectedOrigin::TableColumn {
+                table: String::from("users"),
+                column: String::from("id"),
+            }]
+        )
     }
 
     #[test]
@@ -162,8 +141,33 @@ mod tests {
         .pop()
         .unwrap();
 
-        let unnested_fields = get_schema_fields(&query_ast).unwrap();
-        assert_eq!(unnested_fields, vec!["users.id", "posts.id", "posts.title"])
+        let unnested_fields = get_projected_origin(
+            &query_ast,
+            &[
+                Field::new("u.id", arrow::datatypes::DataType::Int64, false),
+                Field::new("p.id", arrow::datatypes::DataType::Int64, false),
+                Field::new("p.title", arrow::datatypes::DataType::Utf8, false),
+            ],
+        )
+        .unwrap();
+
+        assert_eq!(
+            unnested_fields,
+            vec![
+                ProjectedOrigin::TableColumn {
+                    table: String::from("users"),
+                    column: String::from("id"),
+                },
+                ProjectedOrigin::TableColumn {
+                    table: String::from("posts"),
+                    column: String::from("id"),
+                },
+                ProjectedOrigin::TableColumn {
+                    table: String::from("posts"),
+                    column: String::from("title"),
+                }
+            ]
+        )
     }
 
     #[test]
@@ -174,7 +178,37 @@ mod tests {
             .pop()
             .unwrap();
 
-        let unnested_fields = get_schema_fields(&query_ast).unwrap();
-        assert_eq!(unnested_fields, vec!["function"])
+        let unnested_fields = get_projected_origin(
+            &query_ast,
+            &[Field::new(
+                "version()",
+                arrow::datatypes::DataType::Int64,
+                false,
+            )],
+        )
+        .unwrap();
+
+        assert_eq!(unnested_fields, vec![ProjectedOrigin::Function])
+    }
+
+    #[test]
+    fn test_value() {
+        let dialect = PostgreSqlDialect {};
+        let query_ast = Parser::parse_sql(&dialect, "SELECT 'Hello world' as greeting")
+            .unwrap()
+            .pop()
+            .unwrap();
+
+        let unnested_fields = get_projected_origin(
+            &query_ast,
+            &[Field::new(
+                "greeting",
+                arrow::datatypes::DataType::Utf8,
+                false,
+            )],
+        )
+        .unwrap();
+
+        assert_eq!(unnested_fields, vec![ProjectedOrigin::Value])
     }
 }
