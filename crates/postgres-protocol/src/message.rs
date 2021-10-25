@@ -50,7 +50,7 @@ impl From<CloseKind> for u8 {
 
 #[derive(Debug, PartialEq, Clone)]
 pub struct DataRow {
-    pub field_data: Vec<Vec<u8>>,
+    pub field_data: Vec<Option<Vec<u8>>>,
 }
 
 #[derive(Debug, PartialEq, Clone)]
@@ -583,8 +583,15 @@ impl BackendMessage {
                     body.write_be(field_data.len() as i16)?;
 
                     for data in &field_data {
-                        body.write_be(data.len() as i32)?;
-                        body.extend_from_slice(&data[..]);
+                        match data {
+                            Some(data) => {
+                                body.write_be(data.len() as i32)?;
+                                body.extend_from_slice(&data[..]);
+                            }
+                            None => {
+                                body.write_be(-1_i32)?;
+                            }
+                        }
                     }
 
                     Ok(())
@@ -775,8 +782,13 @@ impl BackendMessage {
                 for _ in 0..num_fields {
                     let field_len: i32 = stream.read_be()?;
 
-                    let mut field_bytes = vec![0; field_len as usize];
-                    stream.read_exact(&mut field_bytes)?;
+                    let field_bytes = if field_len != -1 {
+                        let mut field_bytes = vec![0; field_len as usize];
+                        stream.read_exact(&mut field_bytes)?;
+                        Some(field_bytes)
+                    } else {
+                        None
+                    };
 
                     field_data.push(field_bytes)
                 }

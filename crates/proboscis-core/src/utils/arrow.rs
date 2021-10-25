@@ -9,17 +9,19 @@ use omnom::prelude::*;
 use postgres_protocol::message::{DataRow, RowDescription};
 use std::{collections::BTreeMap, sync::Arc, vec};
 
-fn column_data_to_array(data: &[Vec<u8>], data_type: &DataType) -> ArrayRef {
+fn column_data_to_array(data: &[Option<Vec<u8>>], data_type: &DataType) -> ArrayRef {
     match data_type {
         DataType::Int8 => {
             let data_array = data
                 .iter()
                 .map(|d| {
-                    let mut cursor = std::io::Cursor::new(d);
-                    let value: i8 = cursor.read_be().unwrap();
-                    value
+                    d.as_ref().map(|d| {
+                        let mut cursor = std::io::Cursor::new(d);
+                        let value: i8 = cursor.read_be().unwrap();
+                        value
+                    })
                 })
-                .collect::<Vec<i8>>();
+                .collect::<Vec<Option<i8>>>();
 
             Arc::new(Int8Array::from(data_array))
         }
@@ -27,16 +29,18 @@ fn column_data_to_array(data: &[Vec<u8>], data_type: &DataType) -> ArrayRef {
             let data_array = data
                 .iter()
                 .map(|d| {
-                    let mut bytes = d.clone();
-                    while bytes.len() < 2 {
-                        bytes.push(0);
-                    }
+                    d.as_ref().map(|d| {
+                        let mut bytes = d.clone();
+                        while bytes.len() < 2 {
+                            bytes.push(0);
+                        }
 
-                    let mut cursor = std::io::Cursor::new(bytes);
-                    let value: i16 = cursor.read_be().unwrap();
-                    value
+                        let mut cursor = std::io::Cursor::new(bytes);
+                        let value: i16 = cursor.read_be().unwrap();
+                        value
+                    })
                 })
-                .collect::<Vec<i16>>();
+                .collect::<Vec<Option<i16>>>();
 
             Arc::new(Int16Array::from(data_array))
         }
@@ -44,16 +48,18 @@ fn column_data_to_array(data: &[Vec<u8>], data_type: &DataType) -> ArrayRef {
             let data_array = data
                 .iter()
                 .map(|d| {
-                    let mut bytes = d.clone();
-                    while bytes.len() < 4 {
-                        bytes.push(0);
-                    }
+                    d.as_ref().map(|d| {
+                        let mut bytes = d.clone();
+                        while bytes.len() < 4 {
+                            bytes.push(0);
+                        }
 
-                    let mut cursor = std::io::Cursor::new(bytes);
-                    let value: i32 = cursor.read_be().unwrap();
-                    value
+                        let mut cursor = std::io::Cursor::new(bytes);
+                        let value: i32 = cursor.read_be().unwrap();
+                        value
+                    })
                 })
-                .collect::<Vec<i32>>();
+                .collect::<Vec<Option<i32>>>();
 
             Arc::new(Int32Array::from(data_array))
         }
@@ -61,43 +67,51 @@ fn column_data_to_array(data: &[Vec<u8>], data_type: &DataType) -> ArrayRef {
             let data_array = data
                 .iter()
                 .map(|d| {
-                    let mut bytes = d.clone();
-                    while bytes.len() < 8 {
-                        bytes.push(0);
-                    }
+                    d.as_ref().map(|d| {
+                        let mut bytes = d.clone();
+                        while bytes.len() < 8 {
+                            bytes.push(0);
+                        }
 
-                    let mut cursor = std::io::Cursor::new(bytes);
-                    let value: i64 = cursor.read_be().unwrap();
-                    value
+                        let mut cursor = std::io::Cursor::new(bytes);
+                        let value: i64 = cursor.read_be().unwrap();
+                        value
+                    })
                 })
-                .collect::<Vec<i64>>();
+                .collect::<Vec<Option<i64>>>();
 
             Arc::new(Int64Array::from(data_array))
         }
         DataType::Utf8 => {
-            let data_array: Vec<String> = data
+            let data_array: Vec<Option<String>> = data
                 .iter()
-                .map(|d| String::from_utf8(d.to_vec()).unwrap())
+                .map(|d| d.as_ref().map(|d| String::from_utf8(d.to_vec()).unwrap()))
                 .collect();
 
             Arc::new(GenericStringArray::<i32>::from(
-                data_array.iter().map(|s| s.as_ref()).collect::<Vec<&str>>(),
+                data_array
+                    .iter()
+                    .map(|s| s.as_ref().map(|s| s.as_ref()))
+                    .collect::<Vec<Option<&str>>>(),
             ))
         }
         DataType::LargeUtf8 => {
-            let data_array: Vec<String> = data
+            let data_array: Vec<Option<String>> = data
                 .iter()
-                .map(|d| String::from_utf8(d.to_vec()).unwrap())
+                .map(|d| d.as_ref().map(|d| String::from_utf8(d.to_vec()).unwrap()))
                 .collect();
 
             Arc::new(GenericStringArray::<i64>::from(
-                data_array.iter().map(|s| s.as_ref()).collect::<Vec<&str>>(),
+                data_array
+                    .iter()
+                    .map(|s| s.as_ref().map(|s| s.as_ref()))
+                    .collect::<Vec<Option<&str>>>(),
             ))
         }
         DataType::List(field) => {
             let data_array: Vec<Option<Vec<Option<u8>>>> = data
                 .iter()
-                .map(|d| Some(d.iter().map(|d| Some(*d)).collect()))
+                .map(|d| d.as_ref().map(|d| d.iter().map(|d| Some(*d)).collect()))
                 .collect();
 
             let array = ListArray::from_iter_primitive::<UInt8Type, _, _>(data_array);
@@ -112,15 +126,16 @@ fn column_data_to_array(data: &[Vec<u8>], data_type: &DataType) -> ArrayRef {
 
             make_array(list_data)
         }
-        _ => unimplemented!(),
+        _ => todo!("{}", data_type),
     }
 }
 
 fn protocol_rows_to_arrow_columns(
     schema: &Schema,
-    rows: Vec<Vec<Vec<u8>>>,
+    rows: Vec<Vec<Option<Vec<u8>>>>,
 ) -> Result<Vec<ArrayRef>> {
-    let mut columns_data: Vec<Vec<Vec<u8>>> = schema.fields().iter().map(|_| vec![]).collect();
+    let mut columns_data: Vec<Vec<Option<Vec<u8>>>> =
+        schema.fields().iter().map(|_| vec![]).collect();
     let columns_data_types: Vec<DataType> = schema
         .fields()
         .iter()
@@ -358,7 +373,7 @@ pub fn serialize_record_batch_to_data_rows(batch: &RecordBatch) -> Vec<DataRow> 
                     }
                     _ => unimplemented!(),
                 }
-                row_data.push(cell)
+                row_data.push(Some(cell))
             }
 
             DataRow {
@@ -385,8 +400,8 @@ mod tests {
 
     #[test]
     fn test_name_array() {
-        let row_data: Vec<Vec<Vec<u8>>> =
-            iter::repeat(vec![rand::thread_rng().gen::<[u8; 32]>().to_vec()])
+        let row_data: Vec<Vec<Option<Vec<u8>>>> =
+            iter::repeat(vec![Some(rand::thread_rng().gen::<[u8; 32]>().to_vec())])
                 .take(4)
                 .collect();
 
@@ -404,7 +419,7 @@ mod tests {
 
         assert_eq!(4, deserialized.len());
 
-        let byte_rows: Vec<Vec<Vec<u8>>> = deserialized
+        let byte_rows: Vec<Vec<Option<Vec<u8>>>> = deserialized
             .iter()
             .map(|data_row| data_row.field_data.clone())
             .collect();
@@ -437,8 +452,8 @@ mod tests {
 
         let data = vec![DataRow {
             field_data: vec![
-                vec![112, 111, 115, 116, 103, 114, 101, 115],
-                vec![123, 112, 117, 98, 108, 105, 99, 125],
+                Some(vec![112, 111, 115, 116, 103, 114, 101, 115]),
+                Some(vec![123, 112, 117, 98, 108, 105, 99, 125]),
             ],
         }];
 
