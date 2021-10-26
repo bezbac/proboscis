@@ -5,7 +5,7 @@ use crate::{
         algorithm::{anonymize, NumericAggregation},
         conversion::{data_frame_to_record_batch, record_batch_to_data_frame},
     },
-    util::{get_projected_origin, TableColumn},
+    util::{trace_projection_origin, ProjectedOrigin, TableColumn},
 };
 use anyhow::Result;
 use arrow::record_batch::RecordBatch;
@@ -16,6 +16,9 @@ pub struct AnonymizationTransformer {
     pub identifier_columns: Vec<String>,
     pub quasi_identifier_columns: HashMap<String, Option<NumericAggregation>>,
     pub criteria: AnonymizationCriteria,
+
+    // Skip transformation if the origin of the projection cannot be traced
+    pub skip_if_cannot_trace: bool,
 }
 
 // The identifier & pseudo identifiers contained in the query
@@ -24,34 +27,22 @@ type RelevantColumns = (Vec<String>, HashMap<String, Option<NumericAggregation>>
 impl AnonymizationTransformer {
     fn get_relevant_columns(
         &self,
-        query: &[Statement],
+        origins: &[ProjectedOrigin],
         schema: &arrow::datatypes::Schema,
     ) -> Result<RelevantColumns> {
-        let origins = get_projected_origin(
-            query
-                .first()
-                .ok_or_else(|| anyhow::anyhow!("Missing query"))?,
-            schema.fields(),
-        )?;
-
         let quasi_identifier_columns: HashMap<String, Option<NumericAggregation>> = origins
             .iter()
             .enumerate()
             .filter_map(|(idx, origin)| match origin {
-                crate::util::ProjectedOrigin::Function => return None,
-                crate::util::ProjectedOrigin::Value => return None,
+                crate::util::ProjectedOrigin::Function => None,
+                crate::util::ProjectedOrigin::Value => None,
                 crate::util::ProjectedOrigin::TableColumn(TableColumn { table, column }) => {
                     let normalized_column_name = &format!("{}.{}", table, column);
 
-                    Some((
-                        schema.field(idx).name().to_string(),
-                        *self
-                            .quasi_identifier_columns
-                            .get(normalized_column_name)
-                            .unwrap(),
-                    ))
+                    self.quasi_identifier_columns
+                        .get(normalized_column_name)
+                        .map(|aggregation| (schema.field(idx).name().to_string(), *aggregation))
                 }
-                _ => todo!(),
             })
             .collect();
 
@@ -59,8 +50,8 @@ impl AnonymizationTransformer {
             .iter()
             .enumerate()
             .filter_map(|(idx, origin)| match origin {
-                crate::util::ProjectedOrigin::Function => return None,
-                crate::util::ProjectedOrigin::Value => return None,
+                crate::util::ProjectedOrigin::Function => None,
+                crate::util::ProjectedOrigin::Value => None,
                 crate::util::ProjectedOrigin::TableColumn(TableColumn { table, column }) => {
                     let normalized_column_name = &format!("{}.{}", table, column);
 
@@ -72,7 +63,6 @@ impl AnonymizationTransformer {
 
                     Some(schema.field(idx).name().to_string())
                 }
-                _ => todo!(),
             })
             .collect();
 
@@ -86,7 +76,22 @@ impl Transformer for AnonymizationTransformer {
         query: &[Statement],
         schema: &arrow::datatypes::Schema,
     ) -> Result<arrow::datatypes::Schema> {
-        let (identifier_columns, quasi_identifiers) = self.get_relevant_columns(query, schema)?;
+        let origins = match trace_projection_origin(query.first().unwrap(), schema.fields()) {
+            Ok(ast) => ast,
+            Err(err) => {
+                return if self.skip_if_cannot_trace {
+                    tracing::warn!(
+                        "Could not trace origin of projected columns, skipping transformation"
+                    );
+                    Ok(schema.clone())
+                } else {
+                    Err(err)
+                }
+            }
+        };
+
+        let (identifier_columns, quasi_identifiers) =
+            self.get_relevant_columns(&origins, schema)?;
 
         if quasi_identifiers.is_empty() && identifier_columns.is_empty() {
             return Ok(schema.clone());
@@ -137,8 +142,23 @@ impl Transformer for AnonymizationTransformer {
     }
 
     fn transform_records(&self, query: &[Statement], data: &RecordBatch) -> Result<RecordBatch> {
+        let origins = match trace_projection_origin(query.first().unwrap(), data.schema().fields())
+        {
+            Ok(ast) => ast,
+            Err(err) => {
+                return if self.skip_if_cannot_trace {
+                    tracing::warn!(
+                        "Could not trace origin of projected columns, skipping transformation"
+                    );
+                    Ok(data.clone())
+                } else {
+                    Err(err)
+                }
+            }
+        };
+
         let (identifier_columns, quasi_identifiers) =
-            self.get_relevant_columns(query, &data.schema())?;
+            self.get_relevant_columns(&origins, &data.schema())?;
 
         if quasi_identifiers.is_empty() && identifier_columns.is_empty() {
             return Ok(data.clone());
@@ -224,6 +244,7 @@ mod tests {
             quasi_identifier_columns,
             identifier_columns: vec![],
             criteria: AnonymizationCriteria::KAnonymous { k: 2 },
+            skip_if_cannot_trace: false,
         };
 
         let dialect = PostgreSqlDialect {};
@@ -300,6 +321,7 @@ mod tests {
             quasi_identifier_columns,
             identifier_columns: vec![],
             criteria: AnonymizationCriteria::KAnonymous { k: 2 },
+            skip_if_cannot_trace: false,
         };
 
         let dialect = PostgreSqlDialect {};
