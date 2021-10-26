@@ -1,5 +1,7 @@
 use arrow::datatypes::Field;
-use sqlparser::ast::{Expr, Ident, SelectItem, SetExpr, Statement, TableFactor, TableWithJoins};
+use sqlparser::ast::{
+    Expr, Ident, SelectItem, SetExpr, Statement, TableAlias, TableFactor, TableWithJoins,
+};
 use std::collections::VecDeque;
 
 #[derive(Clone, Debug, PartialEq)]
@@ -58,7 +60,7 @@ pub fn get_projected_origin(
                         }
 
                         if identifiers.len() == 1 {
-                            let identifier = identifiers.first().unwrap();
+                            let identifier = identifiers[0].clone();
                             match &select.from.as_slice() {
                                 &[TableWithJoins { relation, joins: _ }] => match relation {
                                     TableFactor::Table {
@@ -75,6 +77,36 @@ pub fn get_projected_origin(
                                     _ => anyhow::bail!(""),
                                 },
                                 _ => anyhow::bail!(""),
+                            }
+                        }
+
+                        if identifiers.len() == 2 {
+                            let table_identifier = identifiers[0].clone();
+                            let column_identifier = identifiers[1].clone();
+
+                            for table in &select.from {
+                                for factor in vec![vec![&table.relation], table.joins.iter().map(|join| &join.relation).collect()].concat() {
+                                    if let TableFactor::Table {
+                                        name,
+                                        alias,
+                                        args: _,
+                                        with_hints: _,
+                                    } = factor
+                                    {
+                                        let alias_name = alias
+                                            .as_ref()
+                                            .map(|TableAlias { name, columns: _ }| name.to_string());
+
+                                        if name.to_string() == table_identifier
+                                            || alias_name == Some(table_identifier.clone())
+                                        {
+                                            return Ok(TableColumn {
+                                                table: name.to_string(),
+                                                column: column_identifier.to_string(),
+                                            });
+                                        }
+                                    };
+                                }
                             }
                         }
 
@@ -325,7 +357,7 @@ mod tests {
         let dialect = PostgreSqlDialect {};
         let query_ast = Parser::parse_sql(
             &dialect,
-            "SELECT u.id, p.id, p.text FROM users u JOIN posts p ON p.author = u.id",
+            "SELECT u.id, p.id, p.title FROM users u JOIN posts p ON p.author = u.id",
         )
         .unwrap()
         .pop()
