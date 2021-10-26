@@ -1,5 +1,7 @@
 use crate::{
-    column_transformations::ColumnTransformation, traits::Transformer, util::get_schema_fields,
+    column_transformations::ColumnTransformation,
+    traits::Transformer,
+    util::{trace_projection_origin, ProjectedOrigin, TableColumn},
 };
 use anyhow::Result;
 use arrow::{
@@ -12,6 +14,9 @@ use std::{collections::HashMap, sync::Arc};
 #[derive(Default)]
 pub struct TableColumnTransformer {
     transformations: HashMap<String, Vec<Box<dyn ColumnTransformation>>>,
+
+    // Skip transformation if the origin of the projection cannot be traced
+    skip_if_cannot_trace: bool,
 }
 
 impl TableColumnTransformer {
@@ -32,19 +37,26 @@ impl TableColumnTransformer {
 
     fn get_column_transformations(
         &self,
-        statement: &Statement,
+        origins: &[ProjectedOrigin],
         schema: &Schema,
     ) -> HashMap<usize, &Vec<Box<dyn ColumnTransformation>>> {
-        let normalized_field_names = get_schema_fields(statement).unwrap();
-
         schema
             .fields()
             .iter()
-            .zip(normalized_field_names.iter())
+            .zip(origins.iter())
             .enumerate()
-            .filter_map(|(index, (_, normalized_field_name))| {
+            .filter_map(|(index, (_, origin))| {
+                // TODO: Reconsider using a string here
+                let normalized_field_name = match origin {
+                    crate::util::ProjectedOrigin::Function => return None,
+                    crate::util::ProjectedOrigin::Value => return None,
+                    crate::util::ProjectedOrigin::TableColumn(TableColumn { table, column }) => {
+                        format!("{}.{}", table, column)
+                    }
+                };
+
                 self.transformations
-                    .get(normalized_field_name)
+                    .get(&normalized_field_name)
                     .map(|transformations| (index, transformations))
             })
             .collect()
@@ -59,8 +71,21 @@ fn transform_field(field: &Field, transformation: &dyn ColumnTransformation) -> 
 
 impl Transformer for TableColumnTransformer {
     fn transform_schema(&self, query: &[Statement], schema: &Schema) -> Result<Schema> {
-        let column_transformations =
-            self.get_column_transformations(query.first().unwrap(), schema);
+        let origins = match trace_projection_origin(query.first().unwrap(), schema.fields()) {
+            Ok(ast) => ast,
+            Err(err) => {
+                return if self.skip_if_cannot_trace {
+                    tracing::warn!(
+                        "Could not trace origin of projected columns, skipping transformation"
+                    );
+                    Ok(schema.clone())
+                } else {
+                    Err(err)
+                }
+            }
+        };
+
+        let column_transformations = self.get_column_transformations(&origins, schema);
 
         if column_transformations.keys().len() == 0 {
             return Ok(schema.clone());
@@ -87,8 +112,22 @@ impl Transformer for TableColumnTransformer {
     }
 
     fn transform_records(&self, query: &[Statement], data: &RecordBatch) -> Result<RecordBatch> {
-        let column_transformations =
-            self.get_column_transformations(query.first().unwrap(), &data.schema());
+        let origins = match trace_projection_origin(query.first().unwrap(), data.schema().fields())
+        {
+            Ok(ast) => ast,
+            Err(err) => {
+                return if self.skip_if_cannot_trace {
+                    tracing::warn!(
+                        "Could not trace origin of projected columns, skipping transformation"
+                    );
+                    Ok(data.clone())
+                } else {
+                    Err(err)
+                }
+            }
+        };
+
+        let column_transformations = self.get_column_transformations(&origins, &data.schema());
 
         if column_transformations.keys().len() == 0 {
             return Ok(data.clone());

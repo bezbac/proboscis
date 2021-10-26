@@ -10,6 +10,7 @@ async-trait = "0.1.50"
 sqlparser = "0.9.0"
 itertools = "0.10.1"
 rand = "0.8.4"
+tracing = "0.1"
 
 proboscis-core = { version = "0.1.0", path = "../proboscis-core" }
 

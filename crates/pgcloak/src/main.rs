@@ -160,6 +160,9 @@ async fn main() -> Result<()> {
                 identifier_columns,
                 quasi_identifier_columns,
                 criteria: AnonymizationCriteria::KAnonymous { k: config.k },
+
+                // TODO: Make this configurable
+                skip_if_cannot_trace: true,
             })),
         ),
     );

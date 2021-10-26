@@ -1375,6 +1375,7 @@ dependencies = [
  "proboscis-core",
  "rand 0.8.4",
  "sqlparser",
+ "tracing",
 ]
 
 [[package]]

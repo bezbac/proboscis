@@ -82,6 +82,7 @@ impl TransformingResolver {
             Ok(ast) => ast,
             Err(err) => {
                 return if self.skip_if_cannot_parse {
+                    tracing::warn!("Could not parse query, skipping transformation");
                     Ok(data.clone())
                 } else {
                     Err(err)
@@ -112,6 +113,7 @@ impl TransformingResolver {
             Ok(ast) => ast,
             Err(err) => {
                 return if self.skip_if_cannot_parse {
+                    tracing::warn!("Could not parse query, skipping transformation");
                     Ok(schema.clone())
                 } else {
                     Err(err)

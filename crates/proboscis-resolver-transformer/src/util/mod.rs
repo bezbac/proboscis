@@ -1,27 +1,126 @@
-use itertools::Itertools;
+use arrow::datatypes::Field;
 use sqlparser::ast::{
-    Expr, Ident, ObjectName, SelectItem, SetExpr, Statement, TableAlias, TableFactor,
+    Expr, Ident, SelectItem, SetExpr, Statement, TableAlias, TableFactor, TableWithJoins,
 };
+use std::collections::VecDeque;
 
-pub fn get_schema_fields(ast: &Statement) -> anyhow::Result<Vec<String>> {
+#[derive(Clone, Debug, PartialEq)]
+pub struct TableColumn {
+    pub table: String,
+    pub column: String,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub enum ProjectedOrigin {
+    TableColumn(TableColumn),
+    Value,
+    Function,
+}
+
+pub fn trace_projection_origin(
+    ast: &Statement,
+    fields: &[Field],
+) -> anyhow::Result<Vec<ProjectedOrigin>> {
     match ast {
         Statement::Query(query) => match &query.body {
             SetExpr::Select(select) => {
-                let mut fields: Vec<String> = select
-                    .projection
-                    .iter()
-                    .map(|item| match item {
-                        SelectItem::UnnamedExpr(Expr::Identifier(Ident {
-                            value,
-                            quote_style: _,
-                        })) => value.clone(),
-                        SelectItem::UnnamedExpr(Expr::CompoundIdentifier(identifiers)) => {
-                            identifiers
-                                .iter()
-                                .map(|item| item.value.to_string())
-                                .collect::<Vec<String>>()
-                                .join(".")
+                let mut result = vec![];
+                let mut remaining_fields = fields.iter().collect::<VecDeque<_>>();
+
+                let get_table_column =
+                    |identifiers: &[String], field_name: &String| -> anyhow::Result<TableColumn> {
+                        if identifiers.is_empty() {
+                            // Wildcard
+                            match &select.from.as_slice() {
+                                [TableWithJoins {
+                                    relation:
+                                        TableFactor::Table {
+                                            name,
+                                            alias: _,
+                                            args: _,
+                                            with_hints: _,
+                                        },
+                                    joins: _,
+                                }] => {
+                                    return Ok(TableColumn {
+                                        table: name.to_string(),
+                                        column: field_name.to_string(),
+                                    })
+                                }
+                                _ => anyhow::bail!(""),
+                            }
                         }
+
+                        if identifiers.len() == 1 {
+                            let identifier = identifiers[0].clone();
+                            match &select.from.as_slice() {
+                                [TableWithJoins {
+                                    relation:
+                                        TableFactor::Table {
+                                            name,
+                                            alias: _,
+                                            args: _,
+                                            with_hints: _,
+                                        },
+                                    joins: _,
+                                }] => {
+                                    return Ok(TableColumn {
+                                        table: name.to_string(),
+                                        column: identifier,
+                                    })
+                                }
+                                _ => anyhow::bail!(""),
+                            }
+                        }
+
+                        if identifiers.len() == 2 {
+                            let table_identifier = identifiers[0].clone();
+                            let column_identifier = identifiers[1].clone();
+
+                            for table in &select.from {
+                                for factor in vec![
+                                    vec![&table.relation],
+                                    table.joins.iter().map(|join| &join.relation).collect(),
+                                ]
+                                .concat()
+                                {
+                                    if let TableFactor::Table {
+                                        name,
+                                        alias,
+                                        args: _,
+                                        with_hints: _,
+                                    } = factor
+                                    {
+                                        let alias_name = alias.as_ref().map(
+                                            |TableAlias { name, columns: _ }| name.to_string(),
+                                        );
+
+                                        if name.to_string() == table_identifier
+                                            || alias_name == Some(table_identifier.clone())
+                                        {
+                                            return Ok(TableColumn {
+                                                table: name.to_string(),
+                                                column: column_identifier,
+                                            });
+                                        }
+                                    };
+                                }
+                            }
+                        }
+
+                        anyhow::bail!("");
+                    };
+
+                for item in &select.projection {
+                    match item {
+                        SelectItem::Wildcard => {
+                            while let Some(field) = remaining_fields.pop_front() {
+                                dbg!(field.metadata());
+                                let table_column = get_table_column(&[], field.name())?;
+                                result.push(ProjectedOrigin::TableColumn(table_column))
+                            }
+                        }
+
                         SelectItem::ExprWithAlias {
                             expr:
                                 Expr::Identifier(Ident {
@@ -29,73 +128,69 @@ pub fn get_schema_fields(ast: &Statement) -> anyhow::Result<Vec<String>> {
                                     quote_style: _,
                                 }),
                             alias: _,
-                        } => value.clone(),
-                        SelectItem::UnnamedExpr(expression) => match expression {
-                            Expr::Function(_) => String::from("function"),
-                            Expr::Value(_) => String::from("value"),
-                            _ => todo!("{:?}", expression),
-                        },
-                        SelectItem::ExprWithAlias { expr, alias: _ } => match expr {
-                            Expr::Function(_) => String::from("function"),
-                            Expr::Value(_) => String::from("value"),
-                            _ => todo!("{:?}", expr),
-                        },
-                        _ => todo!("{:?}", item),
-                    })
-                    .collect();
-
-                if select.from.len() == 1 {
-                    let mut tables: Vec<TableFactor> =
-                        vec![select.from.first().unwrap().clone().relation];
-
-                    for joined in select.from.first().unwrap().clone().joins {
-                        tables.push(joined.relation)
-                    }
-
-                    for table in tables {
-                        match table {
-                            TableFactor::Table {
-                                name: ObjectName(name_identifiers),
-                                alias,
-                                args: _,
-                                with_hints: _,
-                            } => {
-                                let original_name =
-                                    name_identifiers.iter().map(|id| &id.value).join(".");
-
-                                match alias {
-                                    Some(TableAlias {
-                                        name: aliased_name,
-                                        columns: _,
-                                    }) => {
-                                        fields = fields
-                                            .iter()
-                                            .map(|field| {
-                                                field.replace(
-                                                    format!("{}.", aliased_name.value).as_str(),
-                                                    format!("{}.", original_name).as_str(),
-                                                )
-                                            })
-                                            .collect()
-                                    }
-                                    None => {
-                                        fields = fields
-                                            .iter()
-                                            .map(|field| format!("{}.{}", original_name, field))
-                                            .collect()
-                                    }
-                                }
-                            }
-                            _ => unimplemented!(),
+                        } => {
+                            let field = remaining_fields.pop_front().unwrap();
+                            let column = value.clone();
+                            let table_column = get_table_column(&[column], field.name())?;
+                            result.push(ProjectedOrigin::TableColumn(table_column))
                         }
+                        SelectItem::ExprWithAlias {
+                            expr: Expr::Value(_),
+                            alias: _,
+                        } => {
+                            remaining_fields.pop_front();
+                            result.push(ProjectedOrigin::Value)
+                        }
+                        SelectItem::ExprWithAlias {
+                            expr: Expr::Function(_),
+                            alias: _,
+                        } => {
+                            remaining_fields.pop_front();
+                            result.push(ProjectedOrigin::Function)
+                        }
+
+                        SelectItem::UnnamedExpr(Expr::Identifier(Ident {
+                            value,
+                            quote_style: _,
+                        })) => {
+                            let field = remaining_fields.pop_front().unwrap();
+                            let column = value.clone();
+                            let table_column = get_table_column(&[column], field.name())?;
+                            result.push(ProjectedOrigin::TableColumn(table_column))
+                        }
+                        SelectItem::UnnamedExpr(Expr::CompoundIdentifier(identifiers)) => {
+                            if identifiers.len() > 2 {
+                                anyhow::bail!("unsupported")
+                            }
+
+                            let identifiers: Vec<String> = identifiers
+                                .iter()
+                                .map(|ident| ident.value.to_string())
+                                .collect();
+
+                            let field = remaining_fields.pop_front().unwrap();
+
+                            let table_column = get_table_column(&identifiers, field.name())?;
+                            result.push(ProjectedOrigin::TableColumn(table_column))
+                        }
+                        SelectItem::UnnamedExpr(Expr::Function(_)) => {
+                            remaining_fields.pop_front();
+                            result.push(ProjectedOrigin::Function)
+                        }
+                        SelectItem::UnnamedExpr(Expr::Value(_)) => {
+                            remaining_fields.pop_front();
+                            result.push(ProjectedOrigin::Value)
+                        }
+
+                        _ => anyhow::bail!("unimplemented {:?}", item),
                     }
                 }
 
-                Ok(fields)
+                Ok(result)
             }
-            _ => unimplemented!(),
+            _ => anyhow::bail!("unsupported"),
         },
-        _ => unimplemented!(),
+        _ => anyhow::bail!("unsupported"),
     }
 }
 
@@ -112,19 +207,51 @@ mod tests {
             .pop()
             .unwrap();
 
-        let unnested_fields = get_schema_fields(&query_ast).unwrap();
-        assert_eq!(unnested_fields, vec!["users.id"])
+        let unnested_fields = trace_projection_origin(
+            &query_ast,
+            &[Field::new("id", arrow::datatypes::DataType::Int64, false)],
+        )
+        .unwrap();
+
+        assert_eq!(
+            unnested_fields,
+            vec![ProjectedOrigin::TableColumn(TableColumn {
+                table: String::from("users"),
+                column: String::from("id"),
+            })]
+        )
     }
 
     #[test]
-    fn test_all_fields() {
+    fn test_wildcard() {
         let dialect = PostgreSqlDialect {};
-        let _query_ast = Parser::parse_sql(&dialect, "SELECT * FROM users")
+        let query_ast = Parser::parse_sql(&dialect, "SELECT * FROM users")
             .unwrap()
             .pop()
             .unwrap();
 
-        // TODO: Refactor function to take schema as well, in order to handle these
+        let unnested_fields = trace_projection_origin(
+            &query_ast,
+            &[
+                Field::new("id", arrow::datatypes::DataType::Int64, false),
+                Field::new("name", arrow::datatypes::DataType::Utf8, false),
+            ],
+        )
+        .unwrap();
+
+        assert_eq!(
+            unnested_fields,
+            vec![
+                ProjectedOrigin::TableColumn(TableColumn {
+                    table: String::from("users"),
+                    column: String::from("id"),
+                }),
+                ProjectedOrigin::TableColumn(TableColumn {
+                    table: String::from("users"),
+                    column: String::from("name"),
+                })
+            ]
+        )
     }
 
     #[test]
@@ -135,8 +262,23 @@ mod tests {
             .pop()
             .unwrap();
 
-        let unnested_fields = get_schema_fields(&query_ast).unwrap();
-        assert_eq!(unnested_fields, vec!["users.id"])
+        let unnested_fields = trace_projection_origin(
+            &query_ast,
+            &[Field::new(
+                "user_id",
+                arrow::datatypes::DataType::Int64,
+                false,
+            )],
+        )
+        .unwrap();
+
+        assert_eq!(
+            unnested_fields,
+            vec![ProjectedOrigin::TableColumn(TableColumn {
+                table: String::from("users"),
+                column: String::from("id"),
+            })]
+        )
     }
 
     #[test]
@@ -147,8 +289,19 @@ mod tests {
             .pop()
             .unwrap();
 
-        let unnested_fields = get_schema_fields(&query_ast).unwrap();
-        assert_eq!(unnested_fields, vec!["users.id"])
+        let unnested_fields = trace_projection_origin(
+            &query_ast,
+            &[Field::new("id", arrow::datatypes::DataType::Int64, false)],
+        )
+        .unwrap();
+
+        assert_eq!(
+            unnested_fields,
+            vec![ProjectedOrigin::TableColumn(TableColumn {
+                table: String::from("users"),
+                column: String::from("id"),
+            })]
+        )
     }
 
     #[test]
@@ -156,14 +309,39 @@ mod tests {
         let dialect = PostgreSqlDialect {};
         let query_ast = Parser::parse_sql(
             &dialect,
-            "SELECT u.id, p.id, p.title FROM users u JOIN posts p",
+            "SELECT u.id, p.id, p.title FROM users u JOIN posts p ON p.author = u.id",
         )
         .unwrap()
         .pop()
         .unwrap();
 
-        let unnested_fields = get_schema_fields(&query_ast).unwrap();
-        assert_eq!(unnested_fields, vec!["users.id", "posts.id", "posts.title"])
+        let unnested_fields = trace_projection_origin(
+            &query_ast,
+            &[
+                Field::new("id", arrow::datatypes::DataType::Int64, false),
+                Field::new("id", arrow::datatypes::DataType::Int64, false),
+                Field::new("title", arrow::datatypes::DataType::Utf8, false),
+            ],
+        )
+        .unwrap();
+
+        assert_eq!(
+            unnested_fields,
+            vec![
+                ProjectedOrigin::TableColumn(TableColumn {
+                    table: String::from("users"),
+                    column: String::from("id"),
+                }),
+                ProjectedOrigin::TableColumn(TableColumn {
+                    table: String::from("posts"),
+                    column: String::from("id"),
+                }),
+                ProjectedOrigin::TableColumn(TableColumn {
+                    table: String::from("posts"),
+                    column: String::from("title"),
+                })
+            ]
+        )
     }
 
     #[test]
@@ -174,7 +352,147 @@ mod tests {
             .pop()
             .unwrap();
 
-        let unnested_fields = get_schema_fields(&query_ast).unwrap();
-        assert_eq!(unnested_fields, vec!["function"])
+        let unnested_fields = trace_projection_origin(
+            &query_ast,
+            &[Field::new(
+                "version",
+                arrow::datatypes::DataType::Int64,
+                false,
+            )],
+        )
+        .unwrap();
+
+        assert_eq!(unnested_fields, vec![ProjectedOrigin::Function])
     }
+
+    #[test]
+    fn test_value() {
+        let dialect = PostgreSqlDialect {};
+        let query_ast = Parser::parse_sql(&dialect, "SELECT 'Hello world' as greeting")
+            .unwrap()
+            .pop()
+            .unwrap();
+
+        let unnested_fields = trace_projection_origin(
+            &query_ast,
+            &[Field::new(
+                "greeting",
+                arrow::datatypes::DataType::Utf8,
+                false,
+            )],
+        )
+        .unwrap();
+
+        assert_eq!(unnested_fields, vec![ProjectedOrigin::Value])
+    }
+
+    // #[test]
+    // fn test_wildcard_multiple_tables() {
+    //     let dialect = PostgreSqlDialect {};
+    //     let query_ast = Parser::parse_sql(&dialect, "SELECT * FROM users, posts")
+    //         .unwrap()
+    //         .pop()
+    //         .unwrap();
+
+    //     let unnested_fields = get_projected_origin(
+    //         &query_ast,
+    //         &[
+    //             Field::new("id", arrow::datatypes::DataType::Int64, false),
+    //             Field::new("name", arrow::datatypes::DataType::Utf8, false),
+    //             Field::new("id", arrow::datatypes::DataType::Int64, false),
+    //             Field::new("author", arrow::datatypes::DataType::Int64, false),
+    //             Field::new("text", arrow::datatypes::DataType::Utf8, false),
+    //         ],
+    //     )
+    //     .unwrap();
+
+    //     assert_eq!(
+    //         unnested_fields,
+    //         vec![
+    //             ProjectedOrigin::TableColumn(TableColumn {
+    //                 table: String::from("users"),
+    //                 column: String::from("id")
+    //             }),
+    //             ProjectedOrigin::TableColumn(TableColumn {
+    //                 table: String::from("users"),
+    //                 column: String::from("name")
+    //             }),
+    //             ProjectedOrigin::TableColumn(TableColumn {
+    //                 table: String::from("posts"),
+    //                 column: String::from("id")
+    //             }),
+    //             ProjectedOrigin::TableColumn(TableColumn {
+    //                 table: String::from("posts"),
+    //                 column: String::from("author")
+    //             }),
+    //             ProjectedOrigin::TableColumn(TableColumn {
+    //                 table: String::from("posts"),
+    //                 column: String::from("text")
+    //             })
+    //         ]
+    //     )
+    // }
+
+    // #[test]
+    // fn test_aggregation_sum() {
+    //     let dialect = PostgreSqlDialect {};
+    //     let query_ast = Parser::parse_sql(&dialect, "SELECT SUM(u.id) FROM users u")
+    //         .unwrap()
+    //         .pop()
+    //         .unwrap();
+
+    //     let unnested_fields = get_projected_origin(
+    //         &query_ast,
+    //         &[Field::new(
+    //             "greeting",
+    //             arrow::datatypes::DataType::Utf8,
+    //             false,
+    //         )],
+    //     )
+    //     .unwrap();
+    // }
+
+    // #[test]
+    // fn test_subquery() {
+    //     let dialect = PostgreSqlDialect {};
+    //     let query = r#"
+    //         SELECT u.id, u.name, (
+    //             SELECT p.text
+    //             FROM posts p
+    //             WHERE p.author = u.id
+    //             LIMIT 1
+    //         ) last_post
+    //         FROM users u
+    //     "#;
+
+    //     let query_ast = Parser::parse_sql(&dialect, query).unwrap().pop().unwrap();
+
+    //     let unnested_fields = get_projected_origin(
+    //         &query_ast,
+    //         &[
+    //             Field::new("id", arrow::datatypes::DataType::Int64, false),
+    //             Field::new("name", arrow::datatypes::DataType::Utf8, false),
+    //             Field::new("last_post", arrow::datatypes::DataType::Utf8, false),
+    //         ],
+    //     )
+    //     .unwrap();
+
+    //     assert_eq!(
+    //         unnested_fields,
+    //         vec![
+    //             ProjectedOrigin::TableColumn(TableColumn {
+    //                 table: String::from("users"),
+    //                 column: String::from("id"),
+    //             }),
+    //             ProjectedOrigin::TableColumn(TableColumn {
+    //                 table: String::from("users"),
+    //                 column: String::from("name"),
+    //             }),
+    //             ProjectedOrigin::TableColumn(TableColumn {
+    //                 table: String::from("posts"),
+    //                 column: String::from("text"),
+    //             }),
+    //         ]
+    //     )
+    // }
 }
