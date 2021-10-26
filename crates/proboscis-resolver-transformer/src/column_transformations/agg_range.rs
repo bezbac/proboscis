@@ -109,3 +109,42 @@ impl ColumnTransformation for AggRange {
         })
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_number_agg_range_equal() {
+        let aggreagtion = AggRange {};
+        let array = Arc::new(Int32Array::from(vec![10 as i32, 10 as i32, 10 as i32]));
+        let result = aggreagtion.transform_data(array).unwrap();
+
+        assert_eq!(
+            vec![Some("10"), Some("10"), Some("10")],
+            result
+                .as_any()
+                .downcast_ref::<StringArray>()
+                .unwrap()
+                .iter()
+                .collect::<Vec<Option<&str>>>()
+        );
+    }
+
+    #[test]
+    fn test_number_agg_range() {
+        let aggreagtion = AggRange {};
+        let array = Arc::new(Int32Array::from(vec![10 as i32, 20 as i32, 30 as i32]));
+        let result = aggreagtion.transform_data(array).unwrap();
+
+        assert_eq!(
+            vec![Some("10 - 30"), Some("10 - 30"), Some("10 - 30")],
+            result
+                .as_any()
+                .downcast_ref::<StringArray>()
+                .unwrap()
+                .iter()
+                .collect::<Vec<Option<&str>>>()
+        );
+    }
+}

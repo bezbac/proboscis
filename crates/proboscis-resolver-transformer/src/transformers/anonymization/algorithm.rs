@@ -7,7 +7,7 @@ use std::collections::{HashMap, HashSet, VecDeque};
 use std::convert::TryFrom;
 use std::ops::Deref;
 
-use crate::column_transformations::ColumnTransformation;
+use crate::column_transformations::{AggStringJoinUnique, ColumnTransformation};
 
 fn get_span(series: &Series) -> Result<Option<i64>> {
     match series.dtype() {
@@ -224,19 +224,7 @@ fn agg_column(series: &Series, numeric_aggregation: &NumericAggregation) -> Resu
             numeric_aggregation.transformation().as_ref(),
         ),
         polars::prelude::DataType::Utf8 => {
-            let unique_strings: Vec<&str> = series
-                .utf8()?
-                .into_iter()
-                .unique()
-                .map(|v| v.map_or("None", |v| v))
-                .collect();
-
-            let new_string = unique_strings.join(", ");
-
-            Ok(Series::new(
-                series.name(),
-                vec![new_string; series.utf8()?.len()],
-            ))
+            apply_column_transformation_to_series(series, &AggStringJoinUnique {})
         }
         _ => todo!("{}", series.dtype()),
     }
@@ -348,74 +336,6 @@ mod tests {
         record_batch::RecordBatch,
     };
     use std::sync::Arc;
-
-    #[test]
-    fn string_aggregation() {
-        let series = Series::new("last_name", vec!["Müller", "Müller", "Schidt"]);
-
-        let aggregated = agg_column(&series, &NumericAggregation::Median).unwrap();
-
-        assert_eq!(
-            aggregated
-                .utf8()
-                .unwrap()
-                .into_iter()
-                .collect::<Vec<Option<&str>>>(),
-            vec![
-                Some("Müller, Schidt"),
-                Some("Müller, Schidt"),
-                Some("Müller, Schidt"),
-            ]
-        );
-    }
-
-    #[test]
-    fn number_agg_median() {
-        let series = Series::new("last_name", vec![10 as i32, 10 as i32, 10 as i32]);
-
-        let aggregated = agg_column(&series, &NumericAggregation::Median).unwrap();
-
-        assert_eq!(
-            aggregated
-                .i32()
-                .unwrap()
-                .into_iter()
-                .collect::<Vec<Option<i32>>>(),
-            vec![Some(10), Some(10), Some(10)]
-        );
-    }
-
-    #[test]
-    fn number_agg_range_equal() {
-        let series = Series::new("last_name", vec![10 as i32, 10 as i32, 10 as i32]);
-
-        let aggregated = agg_column(&series, &NumericAggregation::Range).unwrap();
-
-        assert_eq!(
-            aggregated
-                .utf8()
-                .unwrap()
-                .into_iter()
-                .collect::<Vec<Option<&str>>>(),
-            vec![Some("10"), Some("10"), Some("10")]
-        );
-    }
-
-    #[test]
-    fn number_agg_range() {
-        let series = Series::new("last_name", vec![10 as i32, 20 as i32, 30 as i32]);
-
-        let aggregated = agg_column(&series, &NumericAggregation::Range).unwrap();
-
-        assert_eq!(
-            aggregated
-                .utf8()
-                .unwrap()
-                .into_iter()
-                .collect::<Vec<Option<&str>>>(),
-            vec![Some("10 - 30"), Some("10 - 30"), Some("10 - 30")]
-        );
-    }
 
     #[test]
     fn k_anonymization() {

@@ -112,3 +112,25 @@ impl ColumnTransformation for AggMedian {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_number_agg_range_equal() {
+        let aggreagtion = AggMedian {};
+        let array = Arc::new(Int32Array::from(vec![10 as i32, 10 as i32, 10 as i32]));
+        let result = aggreagtion.transform_data(array).unwrap();
+
+        assert_eq!(
+            vec![Some(10), Some(10), Some(10)],
+            result
+                .as_any()
+                .downcast_ref::<Int32Array>()
+                .unwrap()
+                .iter()
+                .collect::<Vec<Option<i32>>>()
+        );
+    }
+}

@@ -1,10 +1,14 @@
 mod agg_median;
 mod agg_range;
+mod agg_string_common_prefix;
+mod agg_string_join_unique;
 mod randomize;
 mod replace_string;
 
 pub use agg_median::AggMedian;
 pub use agg_range::AggRange;
+pub use agg_string_common_prefix::AggStringCommonPrefix;
+pub use agg_string_join_unique::AggStringJoinUnique;
 pub use randomize::Randomize;
 pub use replace_string::ReplaceString;
 
