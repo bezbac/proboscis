@@ -5,20 +5,16 @@ use crate::{
         algorithm::{anonymize, NumericAggregation},
         conversion::{data_frame_to_record_batch, record_batch_to_data_frame},
     },
-    util::{trace_projection_origin, ProjectedOrigin, TableColumn},
+    util::{ProjectedOrigin, TableColumn},
 };
 use anyhow::Result;
 use arrow::record_batch::RecordBatch;
-use sqlparser::ast::Statement;
 use std::collections::HashMap;
 
 pub struct AnonymizationTransformer {
     pub identifier_columns: Vec<String>,
     pub quasi_identifier_columns: HashMap<String, Option<NumericAggregation>>,
     pub criteria: AnonymizationCriteria,
-
-    // Skip transformation if the origin of the projection cannot be traced
-    pub skip_if_cannot_trace: bool,
 }
 
 // The identifier & pseudo identifiers contained in the query
@@ -73,25 +69,10 @@ impl AnonymizationTransformer {
 impl Transformer for AnonymizationTransformer {
     fn transform_schema(
         &self,
-        query: &[Statement],
         schema: &arrow::datatypes::Schema,
+        origins: &[ProjectedOrigin],
     ) -> Result<arrow::datatypes::Schema> {
-        let origins = match trace_projection_origin(query.first().unwrap(), schema.fields()) {
-            Ok(ast) => ast,
-            Err(err) => {
-                return if self.skip_if_cannot_trace {
-                    tracing::warn!(
-                        "Could not trace origin of projected columns, skipping transformation"
-                    );
-                    Ok(schema.clone())
-                } else {
-                    Err(err)
-                }
-            }
-        };
-
-        let (identifier_columns, quasi_identifiers) =
-            self.get_relevant_columns(&origins, schema)?;
+        let (identifier_columns, quasi_identifiers) = self.get_relevant_columns(origins, schema)?;
 
         if quasi_identifiers.is_empty() && identifier_columns.is_empty() {
             return Ok(schema.clone());
@@ -141,24 +122,13 @@ impl Transformer for AnonymizationTransformer {
         Ok(updated_schema)
     }
 
-    fn transform_records(&self, query: &[Statement], data: &RecordBatch) -> Result<RecordBatch> {
-        let origins = match trace_projection_origin(query.first().unwrap(), data.schema().fields())
-        {
-            Ok(ast) => ast,
-            Err(err) => {
-                return if self.skip_if_cannot_trace {
-                    tracing::warn!(
-                        "Could not trace origin of projected columns, skipping transformation"
-                    );
-                    Ok(data.clone())
-                } else {
-                    Err(err)
-                }
-            }
-        };
-
+    fn transform_records(
+        &self,
+        data: &RecordBatch,
+        origins: &[ProjectedOrigin],
+    ) -> Result<RecordBatch> {
         let (identifier_columns, quasi_identifiers) =
-            self.get_relevant_columns(&origins, &data.schema())?;
+            self.get_relevant_columns(origins, &data.schema())?;
 
         if quasi_identifiers.is_empty() && identifier_columns.is_empty() {
             return Ok(data.clone());
@@ -177,7 +147,7 @@ impl Transformer for AnonymizationTransformer {
             &NumericAggregation::Median,
         )?;
 
-        let updated_schema = self.transform_schema(query, &data.schema())?;
+        let updated_schema = self.transform_schema(&data.schema(), origins)?;
 
         let result = data_frame_to_record_batch(&anonymized, updated_schema);
         Ok(result)
@@ -186,6 +156,8 @@ impl Transformer for AnonymizationTransformer {
 
 #[cfg(test)]
 mod tests {
+    use crate::util::trace_projection_origin;
+
     use super::*;
     use arrow::{
         array::{Int32Array, StringArray},
@@ -244,7 +216,6 @@ mod tests {
             quasi_identifier_columns,
             identifier_columns: vec![],
             criteria: AnonymizationCriteria::KAnonymous { k: 2 },
-            skip_if_cannot_trace: false,
         };
 
         let dialect = PostgreSqlDialect {};
@@ -253,8 +224,10 @@ mod tests {
             .pop()
             .unwrap();
 
+        let origins = trace_projection_origin(&query, batch.schema().fields()).unwrap();
+
         let transformed_schema = transformer
-            .transform_schema(&[query], &batch.schema())
+            .transform_schema(&batch.schema(), &origins)
             .unwrap();
 
         assert_eq!(
@@ -321,7 +294,6 @@ mod tests {
             quasi_identifier_columns,
             identifier_columns: vec![],
             criteria: AnonymizationCriteria::KAnonymous { k: 2 },
-            skip_if_cannot_trace: false,
         };
 
         let dialect = PostgreSqlDialect {};
@@ -330,8 +302,10 @@ mod tests {
             .pop()
             .unwrap();
 
+        let origins = trace_projection_origin(&query, batch.schema().fields()).unwrap();
+
         let transformed_schema = transformer
-            .transform_schema(&[query], &batch.schema())
+            .transform_schema(&batch.schema(), &origins)
             .unwrap();
 
         assert_eq!(

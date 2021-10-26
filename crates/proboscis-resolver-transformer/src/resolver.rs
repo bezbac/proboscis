@@ -1,4 +1,4 @@
-use crate::traits::Transformer;
+use crate::{traits::Transformer, util::trace_projection_origin};
 use anyhow::Result;
 use arrow::{datatypes::Schema, record_batch::RecordBatch};
 use async_trait::async_trait;
@@ -16,6 +16,7 @@ pub struct TransformingResolver {
     resolver: Box<dyn Resolver>,
     transformers: Vec<Box<dyn Transformer>>,
     skip_if_cannot_parse: bool,
+    skip_if_cannot_trace: bool,
 }
 
 impl TransformingResolver {
@@ -23,6 +24,7 @@ impl TransformingResolver {
         TransformingResolver {
             resolver,
             skip_if_cannot_parse: true,
+            skip_if_cannot_trace: true,
             transformers: Vec::new(),
         }
     }
@@ -90,11 +92,26 @@ impl TransformingResolver {
             }
         };
 
+        let origins =
+            match trace_projection_origin(query_ast.first().unwrap(), data.schema().fields()) {
+                Ok(ast) => ast,
+                Err(err) => {
+                    return if self.skip_if_cannot_trace {
+                        tracing::warn!(
+                            "Could not trace origin of projected columns, skipping transformation"
+                        );
+                        Ok(data.clone())
+                    } else {
+                        Err(err)
+                    }
+                }
+            };
+
         let original_schema = data.schema();
 
         let mut transformed = data.clone();
         for transformer in &self.transformers {
-            transformed = transformer.transform_records(&query_ast, &transformed)?;
+            transformed = transformer.transform_records(&transformed, &origins)?;
         }
 
         let transformed_schema_with_metadata =
@@ -121,9 +138,23 @@ impl TransformingResolver {
             }
         };
 
+        let origins = match trace_projection_origin(query_ast.first().unwrap(), schema.fields()) {
+            Ok(ast) => ast,
+            Err(err) => {
+                return if self.skip_if_cannot_trace {
+                    tracing::warn!(
+                        "Could not trace origin of projected columns, skipping transformation"
+                    );
+                    Ok(schema.clone())
+                } else {
+                    Err(err)
+                }
+            }
+        };
+
         let mut transformed = schema.clone();
         for transformer in &self.transformers {
-            transformed = transformer.transform_schema(&query_ast, &transformed)?;
+            transformed = transformer.transform_schema(&transformed, &origins)?;
         }
 
         let transformed_with_metadata = re_apply_metadata(schema, &transformed)?;

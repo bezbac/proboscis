@@ -1,22 +1,18 @@
 use crate::{
     column_transformations::ColumnTransformation,
     traits::Transformer,
-    util::{trace_projection_origin, ProjectedOrigin, TableColumn},
+    util::{ProjectedOrigin, TableColumn},
 };
 use anyhow::Result;
 use arrow::{
     datatypes::{Field, Schema},
     record_batch::RecordBatch,
 };
-use sqlparser::ast::Statement;
 use std::{collections::HashMap, sync::Arc};
 
 #[derive(Default)]
 pub struct TableColumnTransformer {
     transformations: HashMap<String, Vec<Box<dyn ColumnTransformation>>>,
-
-    // Skip transformation if the origin of the projection cannot be traced
-    skip_if_cannot_trace: bool,
 }
 
 impl TableColumnTransformer {
@@ -70,22 +66,8 @@ fn transform_field(field: &Field, transformation: &dyn ColumnTransformation) -> 
 }
 
 impl Transformer for TableColumnTransformer {
-    fn transform_schema(&self, query: &[Statement], schema: &Schema) -> Result<Schema> {
-        let origins = match trace_projection_origin(query.first().unwrap(), schema.fields()) {
-            Ok(ast) => ast,
-            Err(err) => {
-                return if self.skip_if_cannot_trace {
-                    tracing::warn!(
-                        "Could not trace origin of projected columns, skipping transformation"
-                    );
-                    Ok(schema.clone())
-                } else {
-                    Err(err)
-                }
-            }
-        };
-
-        let column_transformations = self.get_column_transformations(&origins, schema);
+    fn transform_schema(&self, schema: &Schema, origins: &[ProjectedOrigin]) -> Result<Schema> {
+        let column_transformations = self.get_column_transformations(origins, schema);
 
         if column_transformations.keys().len() == 0 {
             return Ok(schema.clone());
@@ -111,23 +93,12 @@ impl Transformer for TableColumnTransformer {
         Ok(Schema::new(new_fields))
     }
 
-    fn transform_records(&self, query: &[Statement], data: &RecordBatch) -> Result<RecordBatch> {
-        let origins = match trace_projection_origin(query.first().unwrap(), data.schema().fields())
-        {
-            Ok(ast) => ast,
-            Err(err) => {
-                return if self.skip_if_cannot_trace {
-                    tracing::warn!(
-                        "Could not trace origin of projected columns, skipping transformation"
-                    );
-                    Ok(data.clone())
-                } else {
-                    Err(err)
-                }
-            }
-        };
-
-        let column_transformations = self.get_column_transformations(&origins, &data.schema());
+    fn transform_records(
+        &self,
+        data: &RecordBatch,
+        origins: &[ProjectedOrigin],
+    ) -> Result<RecordBatch> {
+        let column_transformations = self.get_column_transformations(origins, &data.schema());
 
         if column_transformations.keys().len() == 0 {
             return Ok(data.clone());

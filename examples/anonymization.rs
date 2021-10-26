@@ -62,7 +62,6 @@ async fn run_proxy(database_connection_url: String) -> String {
                 identifier_columns,
                 quasi_identifier_columns,
                 criteria: AnonymizationCriteria::KAnonymous { k: 3 },
-                skip_if_cannot_trace: false,
             })),
         ),
     );
