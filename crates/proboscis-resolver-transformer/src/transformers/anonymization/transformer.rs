@@ -5,7 +5,7 @@ use crate::{
         algorithm::{anonymize, NumericAggregation},
         conversion::{data_frame_to_record_batch, record_batch_to_data_frame},
     },
-    util::get_projected_origin,
+    util::{get_projected_origin, TableColumn},
 };
 use anyhow::Result;
 use arrow::record_batch::RecordBatch;
@@ -40,7 +40,7 @@ impl AnonymizationTransformer {
             .filter_map(|(idx, origin)| match origin {
                 crate::util::ProjectedOrigin::Function => return None,
                 crate::util::ProjectedOrigin::Value => return None,
-                crate::util::ProjectedOrigin::TableColumn { table, column } => {
+                crate::util::ProjectedOrigin::TableColumn(TableColumn { table, column }) => {
                     let normalized_column_name = &format!("{}.{}", table, column);
 
                     Some((
@@ -51,6 +51,7 @@ impl AnonymizationTransformer {
                             .unwrap(),
                     ))
                 }
+                _ => todo!(),
             })
             .collect();
 
@@ -60,17 +61,18 @@ impl AnonymizationTransformer {
             .filter_map(|(idx, origin)| match origin {
                 crate::util::ProjectedOrigin::Function => return None,
                 crate::util::ProjectedOrigin::Value => return None,
-                crate::util::ProjectedOrigin::TableColumn { table, column } => {
+                crate::util::ProjectedOrigin::TableColumn(TableColumn { table, column }) => {
                     let normalized_column_name = &format!("{}.{}", table, column);
 
                     let is_identifier = self.identifier_columns.contains(normalized_column_name);
 
                     if !is_identifier {
-                        return None
+                        return None;
                     }
 
                     Some(schema.field(idx).name().to_string())
                 }
+                _ => todo!(),
             })
             .collect();
 
@@ -164,14 +166,14 @@ impl Transformer for AnonymizationTransformer {
 
 #[cfg(test)]
 mod tests {
-    use std::sync::Arc;
+    use super::*;
     use arrow::{
         array::{Int32Array, StringArray},
         datatypes::{DataType, Field, Schema},
     };
     use itertools::Itertools;
     use sqlparser::{dialect::PostgreSqlDialect, parser::Parser};
-    use super::*;
+    use std::sync::Arc;
 
     #[test]
     fn with_default_aggretation() {

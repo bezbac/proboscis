@@ -1,6 +1,4 @@
-use crate::{
-    column_transformations::ColumnTransformation, traits::Transformer, util::get_projected_origin,
-};
+use crate::{column_transformations::ColumnTransformation, traits::Transformer, util::{TableColumn, get_projected_origin}};
 use anyhow::Result;
 use arrow::{
     datatypes::{Field, Schema},
@@ -47,9 +45,10 @@ impl TableColumnTransformer {
                 let normalized_field_name = match origin {
                     crate::util::ProjectedOrigin::Function => return None,
                     crate::util::ProjectedOrigin::Value => return None,
-                    crate::util::ProjectedOrigin::TableColumn { table, column } => {
+                    crate::util::ProjectedOrigin::TableColumn(TableColumn { table, column }) => {
                         format!("{}.{}", table, column)
                     }
+                    _ => todo!(),
                 };
 
                 self.transformations
