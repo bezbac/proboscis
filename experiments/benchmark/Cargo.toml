@@ -1,0 +1,24 @@
+[package]
+name = "benchmark"
+version = "0.0.0"
+edition = "2018"
+publish = false
+
+[dependencies]
+tokio-postgres = { version = "0.7.1" }
+postgres-native-tls = { version = "0.5.0" }
+refinery = { version = "0.5.0", features = ["tokio-postgres"] }
+tempdir = { version = "0.3.7" }
+maplit = "1.0.2"
+testcontainers = "0.12.0"
+tracing-subscriber = "0.2"
+criterion = { version = "0.3", features = ["html_reports"] }
+tokio = { version = "1.4.0", features = ["full"] }
+postgres = "0.19.1"
+
+proboscis-core = { version = "0.1.0", path = "../../crates/proboscis-core" }
+proboscis-resolver-postgres = { version = "0.1.0", path = "../../crates/proboscis-resolver-postgres" }
+
+[[bench]]
+name = "main"
+harness = false
