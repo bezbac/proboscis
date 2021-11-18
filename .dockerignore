@@ -1,0 +1,7 @@
+target
+examples
+resources
+.pgcloak.dockerfile
+.dockerignore
+.git
+.gitignore
