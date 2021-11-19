@@ -2,6 +2,6 @@
 
 members = [
     "crates/*",
-    "experiments/*",
+    "experiments",
     "examples",
 ]

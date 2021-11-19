@@ -1,5 +1,4 @@
 target
-examples
 resources
 .pgcloak.dockerfile
 .dockerignore

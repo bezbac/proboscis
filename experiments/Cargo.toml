@@ -16,9 +16,9 @@ criterion = { version = "0.3", features = ["html_reports"] }
 tokio = { version = "1.4.0", features = ["full"] }
 postgres = "0.19.1"
 
-proboscis-core = { version = "0.1.0", path = "../../crates/proboscis-core" }
-proboscis-resolver-postgres = { version = "0.1.0", path = "../../crates/proboscis-resolver-postgres" }
+proboscis-core = { version = "0.1.0", path = "../crates/proboscis-core" }
+proboscis-resolver-postgres = { version = "0.1.0", path = "../crates/proboscis-resolver-postgres" }
 
 [[bench]]
-name = "main"
+name = "competetive"
 harness = false
