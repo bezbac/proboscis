@@ -91,7 +91,7 @@ pub fn start_pgpool<'a>(
 ) {
     let target_config = TargetConfig::from_uri(connection_url).unwrap();
 
-    let generic_postgres = images::generic::GenericImage::new("bitnami/pgpool:latest")
+    let pgpool_image = images::generic::GenericImage::new("bitnami/pgpool:latest")
         .with_wait_for(WaitFor::message_on_stderr("pgpool-II successfully started"))
         .with_env_var(
             "PGPOOL_BACKEND_NODES",
@@ -121,7 +121,7 @@ pub fn start_pgpool<'a>(
         );
 
     let node = docker.run_with_args(
-        generic_postgres,
+        pgpool_image,
         RunArgs::default().with_network("benchmark-network"),
     );
 
@@ -144,10 +144,11 @@ pub fn start_pgcloak<'a>(
 ) {
     let target_config = TargetConfig::from_uri(connection_url).unwrap();
 
-    let generic_postgres = images::generic::GenericImage::new("pgcloak");
+    let pgcloak_image = images::generic::GenericImage::new("pgcloak")
+        .with_wait_for(WaitFor::message_on_stderr("Listening on"));
 
     let node = docker.run_with_args(
-        generic_postgres,
+        pgcloak_image,
         RunArgs::default().with_network("benchmark-network"),
     );
 
@@ -155,7 +156,7 @@ pub fn start_pgcloak<'a>(
         "postgres://{}:{}@0.0.0.0:{}/postgres",
         target_config.user.as_ref().unwrap(),
         target_config.password.as_ref().unwrap(),
-        node.get_host_port(5432).unwrap(),
+        node.get_host_port(6432).unwrap(),
     );
 
     (connection_string, node)

@@ -28,6 +28,18 @@ cargo run -p pgcloak -- -c pgcloak.example.toml -v DEBUG
 
 The proxy should now be avaliable under postgresql://admin:password@localhost:6432/postgres
 
+# Experiments
+
+```
+docker build -t pgcloak -f pgcloak.dockerfile .
+```
+
+## Running the dockerized version
+
+```
+docker run -it --init --rm -v $PWD:/app -p 6432:6432 pgcloak -v debug -c pgcloak.example.toml
+```
+
 # Acknowledgements
 
 Repos:
