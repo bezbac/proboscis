@@ -120,15 +120,12 @@ name = "benchmark"
 version = "0.0.0"
 dependencies = [
  "criterion",
- "maplit",
  "postgres",
  "postgres-native-tls",
- "proboscis-core",
  "proboscis-resolver-postgres",
  "refinery",
  "tempdir",
  "testcontainers",
- "tokio",
  "tokio-postgres",
  "tracing-subscriber",
 ]

@@ -1,8 +1,6 @@
 use criterion::{black_box, criterion_group, criterion_main, Criterion};
-use maplit::hashmap;
 use postgres::NoTls;
-use proboscis_core::{Config, Proxy};
-use proboscis_resolver_postgres::{PostgresResolver, TargetConfig};
+use proboscis_resolver_postgres::TargetConfig;
 use std::time::Duration;
 use testcontainers::{
     clients::{self, Cli},
@@ -10,7 +8,6 @@ use testcontainers::{
     images::{self, generic::WaitFor},
     Container, Docker, RunArgs,
 };
-use tokio::{net::TcpListener, runtime::Runtime};
 
 /// Returns an available localhost port
 pub fn free_local_port() -> Option<u16> {
@@ -138,6 +135,32 @@ pub fn start_pgpool<'a>(
     (connection_string, node)
 }
 
+pub fn start_pgcloak<'a>(
+    docker: &'a Cli,
+    connection_url: &str,
+) -> (
+    String,
+    Container<'a, clients::Cli, images::generic::GenericImage>,
+) {
+    let target_config = TargetConfig::from_uri(connection_url).unwrap();
+
+    let generic_postgres = images::generic::GenericImage::new("pgcloak");
+
+    let node = docker.run_with_args(
+        generic_postgres,
+        RunArgs::default().with_network("benchmark-network"),
+    );
+
+    let connection_string = format!(
+        "postgres://{}:{}@0.0.0.0:{}/postgres",
+        target_config.user.as_ref().unwrap(),
+        target_config.password.as_ref().unwrap(),
+        node.get_host_port(5432).unwrap(),
+    );
+
+    (connection_string, node)
+}
+
 fn simple_query(connection_url: &str) {
     let mut client = postgres::Client::connect(connection_url, NoTls).unwrap();
 
@@ -173,50 +196,13 @@ fn criterion_benchmark(c: &mut Criterion) {
     );
     drop(_pgbouncer_node);
 
-    let rt = Runtime::new().unwrap();
-
-    let proxy_user = "admin";
-    let proxy_password = "password";
-    let proxy_port = free_local_port().unwrap();
-
-    let proxy_connection_url = format!(
-        "postgres://{}:{}@0.0.0.0:{}",
-        proxy_user, proxy_password, proxy_port
-    );
-
-    let connection_url = database_connection_url.clone();
-    let handle = rt.spawn(async move {
-        let mut proxy = Proxy::new(
-            Config {
-                credentials: hashmap! {
-                    proxy_user.to_string() => proxy_password.to_string(),
-                },
-                tls_config: None,
-            },
-            Box::new(
-                PostgresResolver::new(TargetConfig::from_uri(&connection_url).unwrap(), 10)
-                    .await
-                    .unwrap(),
-            ),
-        );
-
-        let listener = TcpListener::bind(format!("0.0.0.0:{}", proxy_port))
-            .await
-            .unwrap();
-
-        tokio::spawn(async move {
-            if let Err(e) = proxy.listen(listener).await {
-                eprintln!("proxy error: {}", e);
-            }
-        });
-    });
-
+    let (pgcloak_connection_url, _pgcloak_node) =
+        start_pgbouncer(&docker, &database_connection_url);
     group.bench_function(
-        "postgres 13.4 (proboscis - session pooling - 10 max connections)",
-        |b| b.iter(|| simple_query(black_box(&proxy_connection_url))),
+        "postgres 13.4 (pgcloak - session pooling - 10 max connections)",
+        |b| b.iter(|| simple_query(black_box(&pgcloak_connection_url))),
     );
-
-    handle.abort();
+    drop(_pgcloak_node);
 }
 
 criterion_group!(benches, criterion_benchmark);
