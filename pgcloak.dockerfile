@@ -29,4 +29,5 @@ WORKDIR /app
 
 COPY --from=builder /app/target/release/pgcloak /usr/local/bin
 
+EXPOSE 6432
 ENTRYPOINT ["/usr/local/bin/pgcloak"]

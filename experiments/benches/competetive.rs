@@ -149,14 +149,18 @@ pub fn start_pgcloak<'a>(
 ) {
     let tempdir = TempDir::new("").unwrap();
 
-    let data = r#"
+    let target_config = TargetConfig::from_uri(connection_url).unwrap();
+    let connection_string = format!(
+        "postgres://postgres:{}@{}:{}/postgres",
+        target_config.password.unwrap(),
+        "benchmark-postgres",
+        target_config.port,
+    );
+
+    let config_content = r#"
 max_pool_size = 10
 k = 3
-connection_uri = "postgresql://postgres:postgres@localhost:5432/postgres"
-
-[tls]
-pcks_path = "./examples/openssl/identity.p12"
-password = "password"
+connection_uri = "CONNECTION_URI"
 
 [listener]
 host = "0.0.0.0"
@@ -169,36 +173,33 @@ password = "password"
 [[columns]]
 type = "identifier"
 name = "contacts.first_name"
+"#
+    .replace("CONNECTION_URI", &connection_string);
 
-[[columns]]
-type = "identifier"
-name = "contacts.last_name"
+    dbg!(&config_content);
 
-[[columns]]
-type = "pseudo_identifier"
-name = "contacts.age"
-"#;
     let config_file_path = tempdir.path().join("pgcloak.toml");
-    fs::write(config_file_path, data).expect("Unable to write file");
+    fs::write(config_file_path, config_content).expect("Unable to write file");
 
     let tempdir_str = tempdir.path().as_os_str().to_str().unwrap();
 
-    let target_config = TargetConfig::from_uri(connection_url).unwrap();
-
     let pgcloak_image = images::generic::GenericImage::new("pgcloak")
         .with_volume(tempdir_str, "/app")
-        .with_wait_for(WaitFor::message_on_stderr("Listening on"));
+        .with_wait_for(WaitFor::message_on_stdout("Listening on"));
 
     let node = docker.run_with_args(
         pgcloak_image,
-        RunArgs::default().with_network("benchmark-network"),
+        RunArgs::default()
+            .with_network("benchmark-network")
+            .with_mapped_port(Port {
+                local: 6432,
+                internal: 6432,
+            }),
     );
 
     let connection_string = format!(
         "postgres://{}:{}@0.0.0.0:{}/postgres",
-        target_config.user.as_ref().unwrap(),
-        target_config.password.as_ref().unwrap(),
-        node.get_host_port(6432).unwrap(),
+        "admin", "password", 6432,
     );
 
     (connection_string, node, tempdir)
@@ -225,14 +226,14 @@ fn criterion_benchmark(c: &mut Criterion) {
         b.iter(|| simple_query(black_box(&database_connection_url)))
     });
 
-    let (pgcloak_connection_url, _pgcloak_node, tempdir) =
+    let (pgcloak_connection_url, _pgcloak_node, _pgcloak_tempdir) =
         start_pgcloak(&docker, &database_connection_url);
     group.bench_function(
         "postgres 13.4 (pgcloak - session pooling - 10 max connections)",
         |b| b.iter(|| simple_query(black_box(&pgcloak_connection_url))),
     );
     drop(_pgcloak_node);
-    tempdir.close().unwrap();
+    drop(_pgcloak_tempdir);
 
     let (pgpool_connection_url, _pgpool_node) = start_pgpool(&docker, &database_connection_url);
     group.bench_function("postgres 13.4 (pg_pool)", |b| {
