@@ -481,7 +481,6 @@ dependencies = [
  "proboscis-resolver-postgres",
  "proboscis-resolver-transformer",
  "refinery",
- "tempdir",
  "testcontainers",
  "tokio",
  "tokio-postgres",

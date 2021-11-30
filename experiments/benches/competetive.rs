@@ -1,7 +1,11 @@
 use criterion::{black_box, criterion_group, criterion_main, Criterion};
 use postgres::NoTls;
 use proboscis_resolver_postgres::TargetConfig;
-use std::time::Duration;
+use std::{
+    fs::{self},
+    time::Duration,
+};
+use tempdir::TempDir;
 use testcontainers::{
     clients::{self, Cli},
     core::Port,
@@ -141,10 +145,48 @@ pub fn start_pgcloak<'a>(
 ) -> (
     String,
     Container<'a, clients::Cli, images::generic::GenericImage>,
+    TempDir,
 ) {
+    let tempdir = TempDir::new("").unwrap();
+
+    let data = r#"
+max_pool_size = 10
+k = 3
+connection_uri = "postgresql://postgres:postgres@localhost:5432/postgres"
+
+[tls]
+pcks_path = "./examples/openssl/identity.p12"
+password = "password"
+
+[listener]
+host = "0.0.0.0"
+port = "6432"
+
+[[credentials]]
+username = "admin"
+password = "password"
+
+[[columns]]
+type = "identifier"
+name = "contacts.first_name"
+
+[[columns]]
+type = "identifier"
+name = "contacts.last_name"
+
+[[columns]]
+type = "pseudo_identifier"
+name = "contacts.age"
+"#;
+    let config_file_path = tempdir.path().join("pgcloak.toml");
+    fs::write(config_file_path, data).expect("Unable to write file");
+
+    let tempdir_str = tempdir.path().as_os_str().to_str().unwrap();
+
     let target_config = TargetConfig::from_uri(connection_url).unwrap();
 
     let pgcloak_image = images::generic::GenericImage::new("pgcloak")
+        .with_volume(tempdir_str, "/app")
         .with_wait_for(WaitFor::message_on_stderr("Listening on"));
 
     let node = docker.run_with_args(
@@ -159,7 +201,7 @@ pub fn start_pgcloak<'a>(
         node.get_host_port(6432).unwrap(),
     );
 
-    (connection_string, node)
+    (connection_string, node, tempdir)
 }
 
 fn simple_query(connection_url: &str) {
@@ -183,6 +225,15 @@ fn criterion_benchmark(c: &mut Criterion) {
         b.iter(|| simple_query(black_box(&database_connection_url)))
     });
 
+    let (pgcloak_connection_url, _pgcloak_node, tempdir) =
+        start_pgcloak(&docker, &database_connection_url);
+    group.bench_function(
+        "postgres 13.4 (pgcloak - session pooling - 10 max connections)",
+        |b| b.iter(|| simple_query(black_box(&pgcloak_connection_url))),
+    );
+    drop(_pgcloak_node);
+    tempdir.close().unwrap();
+
     let (pgpool_connection_url, _pgpool_node) = start_pgpool(&docker, &database_connection_url);
     group.bench_function("postgres 13.4 (pg_pool)", |b| {
         b.iter(|| simple_query(black_box(&pgpool_connection_url)))
@@ -196,14 +247,6 @@ fn criterion_benchmark(c: &mut Criterion) {
         |b| b.iter(|| simple_query(black_box(&pgbouncer_connection_url))),
     );
     drop(_pgbouncer_node);
-
-    let (pgcloak_connection_url, _pgcloak_node) =
-        start_pgbouncer(&docker, &database_connection_url);
-    group.bench_function(
-        "postgres 13.4 (pgcloak - session pooling - 10 max connections)",
-        |b| b.iter(|| simple_query(black_box(&pgcloak_connection_url))),
-    );
-    drop(_pgcloak_node);
 }
 
 criterion_group!(benches, criterion_benchmark);
