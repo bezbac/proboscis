@@ -120,6 +120,7 @@ name = "benchmark"
 version = "0.0.0"
 dependencies = [
  "indoc",
+ "itertools",
  "postgres",
  "postgres-native-tls",
  "proboscis-resolver-postgres",
