@@ -3,10 +3,12 @@ RUN cargo install cargo-chef
 
 WORKDIR app
 
+## PLANNER
 FROM chef AS planner
 COPY . .
 RUN cargo chef prepare  --recipe-path recipe.json
 
+## BUILDER
 FROM chef AS builder
 
 RUN apt update \
@@ -20,6 +22,7 @@ COPY . .
 
 RUN cargo build -p pgcloak --release
 
+## RUNTIME
 FROM debian:buster-slim AS runtime
 
 RUN apt update \
