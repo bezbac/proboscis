@@ -1,10 +1,6 @@
-use itertools::Itertools;
-use postgres::NoTls;
+use std::fs;
+
 use proboscis_resolver_postgres::TargetConfig;
-use std::{
-    fs::{self},
-    time::Instant,
-};
 use tempdir::TempDir;
 use testcontainers::{
     clients::{self, Cli},
@@ -201,72 +197,4 @@ name = "contacts.first_name"
     );
 
     (connection_string, node, tempdir)
-}
-
-fn simple_query(connection_url: &str) {
-    let mut client = postgres::Client::connect(connection_url, NoTls).unwrap();
-
-    let rows = client.query("SELECT 0, 'Alex'", &[]).unwrap();
-
-    let sum: &str = rows[0].get(1);
-    assert_eq!(sum, "Alex");
-}
-
-fn benchmark_function(function: &dyn Fn() -> ()) {
-    let iterations = 1000;
-    let before_all = Instant::now();
-
-    let mut milis = vec![];
-
-    for _ in 0..iterations {
-        let before_each = Instant::now();
-        function();
-        milis.push(before_each.elapsed().as_millis());
-    }
-
-    println!(
-        "Total time ({} iterations): {:.2?}",
-        iterations,
-        before_all.elapsed()
-    );
-
-    println!(
-        "Avg time: {:.2?}ms",
-        milis.iter().sum1::<u128>().unwrap() / milis.len() as u128
-    );
-
-    println!("Min time: {:.2?}ms", milis.iter().min().unwrap());
-    println!("Max time: {:.2?}ms", milis.iter().max().unwrap());
-}
-
-fn main() {
-    let docker = clients::Cli::default();
-
-    let (database_connection_url, _postgres_node) = start_dockerized_postgres(&docker);
-
-    // postgres 13.4 (no proxy)
-    println!("no proxy");
-    benchmark_function(&|| simple_query(&database_connection_url));
-
-    // postgres 13.4 (pgcloak - session pooling - 10 max connections)
-    println!("pgcloak");
-    let (pgcloak_connection_url, _pgcloak_node, _pgcloak_tempdir) =
-        start_pgcloak(&docker, &database_connection_url);
-
-    benchmark_function(&|| simple_query(&pgcloak_connection_url));
-    drop(_pgcloak_node);
-    drop(_pgcloak_tempdir);
-
-    // postgres 13.4 (pg_pool)
-    println!("pgpool");
-    let (pgpool_connection_url, _pgpool_node) = start_pgpool(&docker, &database_connection_url);
-    benchmark_function(&|| simple_query(&pgpool_connection_url));
-    drop(_pgpool_node);
-
-    // postgres 13.4 (pg_bouncer - session pooling - 10 max connections)
-    println!("pgbouncer");
-    let (pgbouncer_connection_url, _pgbouncer_node) =
-        start_pgbouncer(&docker, &database_connection_url);
-    benchmark_function(&|| simple_query(&pgbouncer_connection_url));
-    drop(_pgbouncer_node);
 }

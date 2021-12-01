@@ -18,5 +18,9 @@ itertools = "0.10.1"
 proboscis-resolver-postgres = { version = "0.1.0", path = "../crates/proboscis-resolver-postgres" }
 
 [[example]]
-name = "competetive"
-path = "competetive.rs"
+name = "competetive_latency"
+path = "competetive_latency.rs"
+
+[[example]]
+name = "competetive_throughput"
+path = "competetive_throughput.rs"
