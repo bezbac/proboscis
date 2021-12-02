@@ -1,33 +1,48 @@
+use futures::StreamExt;
+use itertools::Itertools;
+use shiplift::Docker;
 use std::{
-    process::Command,
     sync::mpsc::{channel, TryRecvError},
     thread,
     time::{Duration, Instant},
 };
 
-use itertools::Itertools;
+pub fn with_docker_stats(container_id: &str, function: &dyn Fn() -> ()) {
+    let cloned_container_id = container_id.to_string();
 
-pub fn benchmark_function(function: &dyn Fn() -> ()) {
     let (tx, rx) = channel();
-    let receiver = thread::spawn(move || loop {
-        let output = Command::new("sh")
-            .arg("-c")
-            .arg("docker stats --no-stream")
-            .output()
-            .expect("failed to execute process");
+    let receiver = thread::spawn(move || {
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
 
-        dbg!(output);
+        let docker = Docker::new();
+        let containers = docker.containers();
 
-        thread::sleep(Duration::from_millis(100));
-        match rx.try_recv() {
-            Ok(_) | Err(TryRecvError::Disconnected) => {
-                println!("Terminating.");
-                break;
+        loop {
+            let output = rt.block_on(containers.get(&cloned_container_id).stats().next());
+
+            // dbg!(output);
+
+            thread::sleep(Duration::from_millis(100));
+            match rx.try_recv() {
+                Ok(_) | Err(TryRecvError::Disconnected) => {
+                    println!("Terminating.");
+                    break;
+                }
+                Err(TryRecvError::Empty) => {}
             }
-            Err(TryRecvError::Empty) => {}
         }
     });
 
+    function();
+
+    let _ = tx.send(());
+    receiver.join().expect("The receiver thread has panicked");
+}
+
+pub fn benchmark_function(function: &dyn Fn() -> ()) {
     let iterations = 1000;
     let before_all = Instant::now();
 
@@ -52,7 +67,4 @@ pub fn benchmark_function(function: &dyn Fn() -> ()) {
 
     println!("Min time: {:.2?}ms", milis.iter().min().unwrap());
     println!("Max time: {:.2?}ms", milis.iter().max().unwrap());
-
-    let _ = tx.send(());
-    receiver.join().expect("The receiver thread has panicked");
 }
