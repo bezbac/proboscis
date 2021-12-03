@@ -136,7 +136,14 @@ fn main() {
 
             # Violin Plot
             fig, ax = plt.subplots()
-            vp = ax.violinplot(['baseline_durations_in_ms, 'pgcloak_durations_in_ms, 'pgpool_durations_in_ms, 'pgbouncer_durations_in_ms], [2, 4, 6, 8], widths=2, showmeans=True, showmedians=True, showextrema=False)
+            vp = ax.violinplot(
+                ['baseline_durations_in_ms, 'pgcloak_durations_in_ms, 'pgpool_durations_in_ms, 'pgbouncer_durations_in_ms],
+                [2, 4, 6, 8],
+                widths=2,
+                showmeans=True,
+                showmedians=True,
+                showextrema=False
+            )
 
             plt.show()
         }
