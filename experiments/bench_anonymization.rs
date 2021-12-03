@@ -10,46 +10,12 @@ use std::convert::TryFrom;
 use std::fs;
 use testcontainers::clients::{self};
 
-pub fn record_batch_to_data_frame(data: &RecordBatch) -> DataFrame {
-    use polars::prelude::*;
-
-    let series: Vec<Series> = data
-        .columns()
-        .iter()
-        .zip(data.schema().fields())
-        .map(|(column, field)| {
-            Series::try_from((field.name().as_str(), vec![column.clone()])).unwrap()
-        })
-        .collect();
-
-    DataFrame::new(series).unwrap()
-}
-
 fn query_data_into_dataframe(
     postgres_connection_string: &str,
     queries: &[&str],
 ) -> polars::frame::DataFrame {
-    use connectorx::prelude::*;
-    use connectorx::sources::postgres::{rewrite_tls_args, BinaryProtocol, PostgresSource};
-    use url::Url;
-
-    let url = Url::parse(postgres_connection_string).unwrap();
-    let (config, _tls) = rewrite_tls_args(&url).unwrap();
-
-    let mut destination = ArrowDestination::new();
-    let source = PostgresSource::new(config, NoTls, 1).expect("cannot create the source");
-
-    let dispatcher = Dispatcher::<
-        PostgresSource<BinaryProtocol, NoTls>,
-        ArrowDestination,
-        PostgresArrowTransport<BinaryProtocol, NoTls>,
-    >::new(source, &mut destination, queries, None);
-
-    dispatcher.run().expect("run failed");
-
-    let data = destination.arrow().unwrap();
-
-    record_batch_to_data_frame(&data.first().unwrap())
+    // TODO: IMPLEMENT THIS
+    unimplemented!();
 }
 
 fn main() {
