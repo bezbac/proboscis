@@ -1,6 +1,8 @@
 mod utils;
 
+use crate::utils::benchmark::print_benchmark_stats;
 use crate::utils::docker::start_dockerized_postgres;
+use crate::utils::docker::start_pgcloak;
 use arrow::record_batch::RecordBatch;
 use polars::frame::DataFrame;
 use postgres::{Client, NoTls};
@@ -35,7 +37,7 @@ fn query_data_into_dataframe(
     let (config, _tls) = rewrite_tls_args(&url).unwrap();
 
     let mut destination = ArrowDestination::new();
-    let source = PostgresSource::new(config, NoTls, 10).expect("cannot create the source");
+    let source = PostgresSource::new(config, NoTls, 1).expect("cannot create the source");
 
     let dispatcher = Dispatcher::<
         PostgresSource<BinaryProtocol, NoTls>,
@@ -63,4 +65,25 @@ fn main() {
 
     let result = query_data_into_dataframe(&database_connection_url, &["SELECT * FROM adults"]);
     println!("{}", result.head(Some(12)));
+
+    // PGCLOAK: Example
+    println!("pgcloak");
+    let (pgcloak_connection_url, _pgcloak_node, _pgcloak_tempdir) =
+        start_pgcloak(&docker, &database_connection_url);
+
+    let result = query_data_into_dataframe(&pgcloak_connection_url, &["SELECT * FROM adults"]);
+    println!("{}", result.head(Some(12)));
+
+    // PGCLOAK: Benchmark
+    let (docker_stats, pgcloak_durations) =
+        utils::docker::while_collecting_docker_stats(_pgcloak_node.id(), &|| {
+            utils::benchmark::benchmark_function(100, &|| {
+                let result =
+                    query_data_into_dataframe(&pgcloak_connection_url, &["SELECT * FROM adults"]);
+            })
+        });
+    print_benchmark_stats(&pgcloak_durations);
+
+    drop(_pgcloak_node);
+    drop(_pgcloak_tempdir);
 }
