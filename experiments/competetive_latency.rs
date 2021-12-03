@@ -87,25 +87,37 @@ fn main() {
         total_times.push(calculate_total_time(&pgpool_durations));
         total_times.push(calculate_total_time(&pgbouncer_durations));
 
-        fn calculate_stats(durations: &[(Instant, Instant)]) -> (u128, u128, u128) {
-            let durations_in_milis: Vec<u128> = durations
+        // fn calculate_stats(durations: &[(Instant, Instant)]) -> (u128, u128, u128) {
+        //     let durations_in_milis: Vec<u128> = durations
+        //         .iter()
+        //         .map(|(end, start)| end.duration_since(*start).as_millis())
+        //         .collect();
+
+        //     let mean = durations_in_milis.iter().sum1::<u128>().unwrap()
+        //         / durations_in_milis.len() as u128;
+        //     let min = *durations_in_milis.iter().min().unwrap();
+        //     let max = *durations_in_milis.iter().max().unwrap();
+
+        //     (mean, min, max)
+        // }
+
+        // let mut stats = vec![];
+        // stats.push(calculate_stats(&baseline_durations));
+        // stats.push(calculate_stats(&pgcloak_durations));
+        // stats.push(calculate_stats(&pgpool_durations));
+        // stats.push(calculate_stats(&pgbouncer_durations));
+
+        fn durations_in_milis(durations: &[(Instant, Instant)]) -> Vec<u128> {
+            durations
                 .iter()
                 .map(|(end, start)| end.duration_since(*start).as_millis())
-                .collect();
-
-            let mean = durations_in_milis.iter().sum1::<u128>().unwrap()
-                / durations_in_milis.len() as u128;
-            let min = *durations_in_milis.iter().min().unwrap();
-            let max = *durations_in_milis.iter().max().unwrap();
-
-            (mean, min, max)
+                .collect()
         }
 
-        let mut stats = vec![];
-        stats.push(calculate_stats(&baseline_durations));
-        stats.push(calculate_stats(&pgcloak_durations));
-        stats.push(calculate_stats(&pgpool_durations));
-        stats.push(calculate_stats(&pgbouncer_durations));
+        let baseline_durations_in_ms = durations_in_milis(&baseline_durations);
+        let pgcloak_durations_in_ms = durations_in_milis(&pgcloak_durations);
+        let pgpool_durations_in_ms = durations_in_milis(&pgpool_durations);
+        let pgbouncer_durations_in_ms = durations_in_milis(&pgbouncer_durations);
 
         python! {
             import matplotlib.pyplot as plt
@@ -113,13 +125,18 @@ fn main() {
 
             from matplotlib.ticker import FormatStrFormatter
 
+            # Total Duration
             fig, ax = plt.subplots()
-            plt.title("Benchmark duration (%s iterations)" % 'iterations)
+            plt.title("Total benchmark duration (%s iterations)" % 'iterations)
             labels = ["no-proxy", "pgcloak", "pgpool", "pgbouncer"]
 
             ax.bar(labels, 'total_times)
             ax.bar_label(ax.containers[0])
             ax.get_yaxis().set_major_formatter(FormatStrFormatter("%d ms"))
+
+            # Violin Plot
+            fig, ax = plt.subplots()
+            vp = ax.violinplot(['baseline_durations_in_ms, 'pgcloak_durations_in_ms, 'pgpool_durations_in_ms, 'pgbouncer_durations_in_ms], [2, 4, 6, 8], widths=2, showmeans=True, showmedians=True, showextrema=False)
 
             plt.show()
         }
