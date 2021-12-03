@@ -18,16 +18,25 @@ shiplift = "0.7"
 futures = "0.3.18"
 tokio = "1.14.0"
 inline-python = { version = "0.7.1", optional = true }
+connectorx = { version = "0.2.2", features = ["src_postgres", "dst_arrow"] }
+url = "2"
+arrow = "5.5.0"
 
 proboscis-resolver-postgres = { version = "0.1.0", path = "../crates/proboscis-resolver-postgres" }
+
+[dependencies.polars]
+git = "https://github.com/pola-rs/polars"
+branch = "arrow-rs"
+default-features = true
+features = ["dtype-i8", "dtype-i16", "dtype-u8", "dtype-u16"]
 
 [[example]]
 name = "competetive_latency"
 path = "competetive_latency.rs"
 
 [[example]]
-name = "competetive_throughput"
-path = "competetive_throughput.rs"
+name = "bench_anonymization"
+path = "bench_anonymization.rs"
 
 [features]
 analysis = ["inline-python"]
