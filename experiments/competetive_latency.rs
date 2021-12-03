@@ -5,7 +5,6 @@ use crate::utils::{
     docker::{start_dockerized_postgres, start_pgbouncer, start_pgcloak, start_pgpool},
 };
 use postgres::NoTls;
-use std::time::Instant;
 use testcontainers::clients::{self};
 
 fn simple_query(connection_url: &str) {
@@ -18,14 +17,17 @@ fn simple_query(connection_url: &str) {
 }
 
 fn main() {
+    let iterations = 1000;
+
     let docker = clients::Cli::default();
 
     let (database_connection_url, _postgres_node) = start_dockerized_postgres(&docker);
 
     // postgres 13.4 (no proxy)
     println!("no proxy");
-    let baseline_durations =
-        utils::benchmark::benchmark_function(&|| simple_query(&database_connection_url));
+    let baseline_durations = utils::benchmark::benchmark_function(iterations, &|| {
+        simple_query(&database_connection_url)
+    });
     print_benchmark_stats(&baseline_durations);
 
     // postgres 13.4 (pgcloak - session pooling - 10 max connections)
@@ -34,7 +36,9 @@ fn main() {
         start_pgcloak(&docker, &database_connection_url);
     let (docker_stats, pgcloak_durations) =
         utils::docker::while_collecting_docker_stats(_pgcloak_node.id(), &|| {
-            utils::benchmark::benchmark_function(&|| simple_query(&pgcloak_connection_url))
+            utils::benchmark::benchmark_function(iterations, &|| {
+                simple_query(&pgcloak_connection_url)
+            })
         });
     print_benchmark_stats(&pgcloak_durations);
     drop(_pgcloak_node);
@@ -45,7 +49,9 @@ fn main() {
     let (pgpool_connection_url, _pgpool_node) = start_pgpool(&docker, &database_connection_url);
     let (docker_stats, pgpool_durations) =
         utils::docker::while_collecting_docker_stats(_pgpool_node.id(), &|| {
-            utils::benchmark::benchmark_function(&|| simple_query(&pgpool_connection_url))
+            utils::benchmark::benchmark_function(iterations, &|| {
+                simple_query(&pgpool_connection_url)
+            })
         });
     print_benchmark_stats(&pgpool_durations);
     drop(_pgpool_node);
@@ -56,13 +62,18 @@ fn main() {
         start_pgbouncer(&docker, &database_connection_url);
     let (docker_stats, pgbouncer_durations) =
         utils::docker::while_collecting_docker_stats(_pgbouncer_node.id(), &|| {
-            utils::benchmark::benchmark_function(&|| simple_query(&pgbouncer_connection_url))
+            utils::benchmark::benchmark_function(iterations, &|| {
+                simple_query(&pgbouncer_connection_url)
+            })
         });
     print_benchmark_stats(&pgbouncer_durations);
     drop(_pgbouncer_node);
 
-    if cfg!(feature = "analysis") {
+    #[cfg(feature = "analysis")]
+    {
         use inline_python::python;
+        use itertools::Itertools;
+        use std::time::Instant;
 
         fn calculate_total_time(durations: &[(Instant, Instant)]) -> u128 {
             let first_time = durations.first().unwrap().1;
@@ -76,13 +87,39 @@ fn main() {
         total_times.push(calculate_total_time(&pgpool_durations));
         total_times.push(calculate_total_time(&pgbouncer_durations));
 
+        fn calculate_stats(durations: &[(Instant, Instant)]) -> (u128, u128, u128) {
+            let durations_in_milis: Vec<u128> = durations
+                .iter()
+                .map(|(end, start)| end.duration_since(*start).as_millis())
+                .collect();
+
+            let mean = durations_in_milis.iter().sum1::<u128>().unwrap()
+                / durations_in_milis.len() as u128;
+            let min = *durations_in_milis.iter().min().unwrap();
+            let max = *durations_in_milis.iter().max().unwrap();
+
+            (mean, min, max)
+        }
+
+        let mut stats = vec![];
+        stats.push(calculate_stats(&baseline_durations));
+        stats.push(calculate_stats(&pgcloak_durations));
+        stats.push(calculate_stats(&pgpool_durations));
+        stats.push(calculate_stats(&pgbouncer_durations));
+
         python! {
             import matplotlib.pyplot as plt
+            import numpy as np
 
-            plt.subplot(2, 1, 1)
-            plt.title("Comparison")
-            plt.plot('total_times)
-            plt.ylabel("ms")
+            from matplotlib.ticker import FormatStrFormatter
+
+            fig, ax = plt.subplots()
+            plt.title("Benchmark duration (%s iterations)" % 'iterations)
+            labels = ["no-proxy", "pgcloak", "pgpool", "pgbouncer"]
+
+            ax.bar(labels, 'total_times)
+            ax.bar_label(ax.containers[0])
+            ax.get_yaxis().set_major_formatter(FormatStrFormatter("%d ms"))
 
             plt.show()
         }
