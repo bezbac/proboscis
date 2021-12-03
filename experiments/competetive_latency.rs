@@ -122,6 +122,7 @@ fn main() {
         python! {
             import matplotlib.pyplot as plt
             import numpy as np
+            import seaborn as sns
 
             from matplotlib.ticker import FormatStrFormatter
 
@@ -136,14 +137,7 @@ fn main() {
 
             # Violin Plot
             fig, ax = plt.subplots()
-            vp = ax.violinplot(
-                ['baseline_durations_in_ms, 'pgcloak_durations_in_ms, 'pgpool_durations_in_ms, 'pgbouncer_durations_in_ms],
-                [2, 4, 6, 8],
-                widths=2,
-                showmeans=True,
-                showmedians=True,
-                showextrema=False
-            )
+            ax = sns.violinplot(data=['baseline_durations_in_ms, 'pgcloak_durations_in_ms, 'pgpool_durations_in_ms, 'pgbouncer_durations_in_ms])
 
             plt.show()
         }

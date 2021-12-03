@@ -50,7 +50,7 @@ cargo run --example competetive_latency
 
 #### Running the experiments with analyis
 
-**NOTE: This requires python3 & matplotlib to be installed**
+**NOTE: This requires python3 with matplotlib, numpy & seaborn to be installed**
 
 ```
 cargo +nightly run --features analysis --example competetive_latency
