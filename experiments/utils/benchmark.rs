@@ -1,70 +1,42 @@
-use futures::StreamExt;
 use itertools::Itertools;
-use shiplift::Docker;
-use std::{
-    sync::mpsc::{channel, TryRecvError},
-    thread,
-    time::{Duration, Instant},
-};
+use std::time::Instant;
 
-pub fn with_docker_stats(container_id: &str, function: &dyn Fn() -> ()) {
-    let cloned_container_id = container_id.to_string();
-
-    let (tx, rx) = channel();
-    let receiver = thread::spawn(move || {
-        let rt = tokio::runtime::Builder::new_current_thread()
-            .enable_all()
-            .build()
-            .unwrap();
-
-        let docker = Docker::new();
-        let containers = docker.containers();
-
-        loop {
-            let output = rt.block_on(containers.get(&cloned_container_id).stats().next());
-
-            // dbg!(output);
-
-            thread::sleep(Duration::from_millis(100));
-            match rx.try_recv() {
-                Ok(_) | Err(TryRecvError::Disconnected) => {
-                    println!("Terminating.");
-                    break;
-                }
-                Err(TryRecvError::Empty) => {}
-            }
-        }
-    });
-
-    function();
-
-    let _ = tx.send(());
-    receiver.join().expect("The receiver thread has panicked");
-}
-
-pub fn benchmark_function(function: &dyn Fn() -> ()) {
+pub fn benchmark_function(function: &dyn Fn() -> ()) -> Vec<(Instant, Instant)> {
     let iterations = 1000;
-    let before_all = Instant::now();
 
-    let mut milis = vec![];
+    let mut collection = vec![];
 
     for _ in 0..iterations {
         let before_each = Instant::now();
         function();
-        milis.push(before_each.elapsed().as_millis());
+        collection.push((Instant::now(), before_each));
     }
 
-    println!(
-        "Total time ({} iterations): {:.2?}",
-        iterations,
-        before_all.elapsed()
-    );
+    collection
+}
+
+pub fn print_benchmark_stats(times: &[(Instant, Instant)]) {
+    let first_time = times.first().unwrap().1;
+    let last_time = times.last().unwrap().0;
+    let total_time = last_time.duration_since(first_time);
+
+    println!("Total time: {:.2?}", total_time);
+
+    let durations_in_milis: Vec<u128> = times
+        .iter()
+        .map(|(end, start)| end.duration_since(*start).as_millis())
+        .collect();
 
     println!(
         "Avg time: {:.2?}ms",
-        milis.iter().sum1::<u128>().unwrap() / milis.len() as u128
+        durations_in_milis.iter().sum1::<u128>().unwrap() / durations_in_milis.len() as u128
     );
-
-    println!("Min time: {:.2?}ms", milis.iter().min().unwrap());
-    println!("Max time: {:.2?}ms", milis.iter().max().unwrap());
+    println!(
+        "Min time: {:.2?}ms",
+        durations_in_milis.iter().min().unwrap()
+    );
+    println!(
+        "Max time: {:.2?}ms",
+        durations_in_milis.iter().max().unwrap()
+    );
 }

@@ -30,14 +30,30 @@ The proxy should now be avaliable under postgresql://admin:password@localhost:64
 
 # Experiments
 
+#### Building the pgcloak docker image
+
 ```
 docker build -t pgcloak -f pgcloak.dockerfile .
 ```
 
-## Running the dockerized version
+#### Running the dockerized version
 
 ```
 docker run -it --init --rm -v $PWD:/app -p 6432:6432 pgcloak -v debug -c pgcloak.example.toml
+```
+
+#### Running the experiments without analysis
+
+```
+cargo run --example competetive_latency
+```
+
+#### Running the experiments with analyis
+
+**NOTE: This requires python3 & matplotlib to be installed**
+
+```
+cargo +nightly run --features analysis --example competetive_latency
 ```
 
 # Acknowledgements

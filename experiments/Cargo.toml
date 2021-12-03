@@ -17,6 +17,7 @@ itertools = "0.10.1"
 shiplift = "0.7"
 futures = "0.3.18"
 tokio = "1.14.0"
+inline-python = { version = "0.7.1", optional = true }
 
 proboscis-resolver-postgres = { version = "0.1.0", path = "../crates/proboscis-resolver-postgres" }
 
@@ -27,3 +28,6 @@ path = "competetive_latency.rs"
 [[example]]
 name = "competetive_throughput"
 path = "competetive_throughput.rs"
+
+[features]
+analysis = ["inline-python"]
