@@ -18,7 +18,6 @@ shiplift = "0.7"
 futures = "0.3.18"
 tokio = "1.14.0"
 inline-python = { version = "0.7.1", optional = true }
-connectorx = { version = "0.2.2", features = ["src_postgres", "dst_arrow"] }
 url = "2"
 arrow = "5.5.0"
 
