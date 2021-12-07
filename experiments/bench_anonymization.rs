@@ -2,6 +2,7 @@ mod utils;
 
 use crate::utils::data::query_data_into_dataframe;
 use crate::utils::docker::pgcloak::start_pgcloak;
+use crate::utils::docker::pgcloak::ColumnConfiguration;
 use crate::utils::docker::pgcloak::PgcloakConfig;
 use crate::utils::docker::postgres::start_dockerized_postgres;
 use postgres::{Client, NoTls};
@@ -26,7 +27,7 @@ fn main() {
     println!("{}", result.head(Some(12)));
 
     // PGCLOAK: Example
-    println!("pgcloak");
+    println!("pgcloak baseline");
     let (pgcloak_connection_url, _pgcloak_node, _pgcloak_tempdir) = start_pgcloak(
         &docker,
         &database_connection_url,
@@ -34,6 +35,26 @@ fn main() {
             k: 3,
             columns: vec![],
             max_pool_size: 10,
+        },
+    );
+
+    let result = query_data_into_dataframe(&pgcloak_connection_url, "SELECT * FROM adults");
+    println!("{}", result.head(Some(12)));
+
+    drop(_pgcloak_node);
+    drop(_pgcloak_tempdir);
+
+    // PGCLOAK: Example with anonymization
+    println!("pgcloak k-anonymization | columns: education");
+    let (pgcloak_connection_url, _pgcloak_node, _pgcloak_tempdir) = start_pgcloak(
+        &docker,
+        &database_connection_url,
+        &PgcloakConfig {
+            columns: vec![ColumnConfiguration::PseudoIdentifier {
+                name: String::from("adults.education"),
+            }],
+            max_pool_size: 10,
+            k: 3,
         },
     );
 
