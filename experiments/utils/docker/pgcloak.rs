@@ -31,12 +31,14 @@ struct ListenerConfig {
 
 #[derive(Debug, Serialize)]
 struct FullPgcloakConfig {
-    credentials: Vec<Credential>,
-    columns: Vec<ColumnConfiguration>,
-    listener: ListenerConfig,
     max_pool_size: usize,
     connection_uri: String,
     k: usize,
+    
+    listener: ListenerConfig,
+
+    credentials: Vec<Credential>,
+    columns: Vec<ColumnConfiguration>,
 }
 
 pub struct PgcloakConfig {
@@ -64,8 +66,13 @@ pub fn start_pgcloak<'a>(
         target_config.port,
     );
 
+    let mut columns = vec![ColumnConfiguration::Identifier {
+        name: String::from("__placeholder"),
+    }];
+    columns.append(&mut config.columns.clone());
+
     let full_config = FullPgcloakConfig {
-        columns: config.columns.clone(),
+        columns,
         k: config.k,
         max_pool_size: config.max_pool_size,
         credentials: vec![Credential {
