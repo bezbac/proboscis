@@ -1,8 +1,9 @@
 mod utils;
 
 use crate::utils::data::query_data_into_dataframe;
-use crate::utils::docker::start_dockerized_postgres;
-use crate::utils::docker::start_pgcloak;
+use crate::utils::docker::pgcloak::start_pgcloak;
+use crate::utils::docker::pgcloak::PgcloakConfig;
+use crate::utils::docker::postgres::start_dockerized_postgres;
 use postgres::{Client, NoTls};
 use std::fs;
 use testcontainers::clients::{self};
@@ -26,8 +27,15 @@ fn main() {
 
     // PGCLOAK: Example
     println!("pgcloak");
-    let (pgcloak_connection_url, _pgcloak_node, _pgcloak_tempdir) =
-        start_pgcloak(&docker, &database_connection_url);
+    let (pgcloak_connection_url, _pgcloak_node, _pgcloak_tempdir) = start_pgcloak(
+        &docker,
+        &database_connection_url,
+        &PgcloakConfig {
+            k: 3,
+            columns: vec![],
+            max_pool_size: 10,
+        },
+    );
 
     let result = query_data_into_dataframe(&pgcloak_connection_url, "SELECT * FROM adults");
     println!("{}", result.head(Some(12)));

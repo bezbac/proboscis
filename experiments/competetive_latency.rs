@@ -1,8 +1,12 @@
 mod utils;
 
+use crate::utils::docker::pgcloak::PgcloakConfig;
 use crate::utils::{
     benchmark::print_benchmark_stats,
-    docker::{start_dockerized_postgres, start_pgbouncer, start_pgcloak, start_pgpool},
+    docker::{
+        pgbouncer::start_pgbouncer, pgcloak::start_pgcloak, pgpool::start_pgpool,
+        postgres::start_dockerized_postgres,
+    },
 };
 use postgres::NoTls;
 use testcontainers::clients::{self};
@@ -32,10 +36,17 @@ fn main() {
 
     // postgres 13.4 (pgcloak - session pooling - 10 max connections)
     println!("pgcloak");
-    let (pgcloak_connection_url, _pgcloak_node, _pgcloak_tempdir) =
-        start_pgcloak(&docker, &database_connection_url);
+    let (pgcloak_connection_url, _pgcloak_node, _pgcloak_tempdir) = start_pgcloak(
+        &docker,
+        &database_connection_url,
+        &PgcloakConfig {
+            k: 3,
+            columns: vec![],
+            max_pool_size: 10,
+        },
+    );
     let (docker_stats, pgcloak_durations) =
-        utils::docker::while_collecting_docker_stats(_pgcloak_node.id(), &|| {
+        utils::docker::stats::while_collecting_docker_stats(_pgcloak_node.id(), &|| {
             utils::benchmark::benchmark_function(iterations, &|| {
                 simple_query(&pgcloak_connection_url)
             })
@@ -48,7 +59,7 @@ fn main() {
     println!("pgpool");
     let (pgpool_connection_url, _pgpool_node) = start_pgpool(&docker, &database_connection_url);
     let (docker_stats, pgpool_durations) =
-        utils::docker::while_collecting_docker_stats(_pgpool_node.id(), &|| {
+        utils::docker::stats::while_collecting_docker_stats(_pgpool_node.id(), &|| {
             utils::benchmark::benchmark_function(iterations, &|| {
                 simple_query(&pgpool_connection_url)
             })
@@ -61,7 +72,7 @@ fn main() {
     let (pgbouncer_connection_url, _pgbouncer_node) =
         start_pgbouncer(&docker, &database_connection_url);
     let (docker_stats, pgbouncer_durations) =
-        utils::docker::while_collecting_docker_stats(_pgbouncer_node.id(), &|| {
+        utils::docker::stats::while_collecting_docker_stats(_pgbouncer_node.id(), &|| {
             utils::benchmark::benchmark_function(iterations, &|| {
                 simple_query(&pgbouncer_connection_url)
             })

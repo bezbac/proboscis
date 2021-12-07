@@ -135,11 +135,13 @@ dependencies = [
  "postgres-native-tls",
  "proboscis-resolver-postgres",
  "refinery",
+ "serde 1.0.130",
  "shiplift",
  "tempdir",
  "testcontainers",
  "tokio",
  "tokio-postgres",
+ "toml",
  "tracing-subscriber",
  "url",
 ]
