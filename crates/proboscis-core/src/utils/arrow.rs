@@ -127,9 +127,10 @@ fn postgres_type_for_arrow_type(
 ) -> postgres::types::Type {
     match arrow_type {
         DataType::Boolean => postgres::types::Type::BOOL,
-        DataType::Int8 => postgres::types::Type::INT2,
-        DataType::Int16 => postgres::types::Type::INT4,
-        DataType::Int32 => postgres::types::Type::INT8,
+        DataType::Int8 => postgres::types::Type::CHAR,
+        DataType::Int16 => postgres::types::Type::INT2,
+        DataType::Int32 => postgres::types::Type::INT4,
+        DataType::Int64 => postgres::types::Type::INT8,
         DataType::UInt16 => postgres::types::Type::OID,
         DataType::LargeUtf8 => postgres::types::Type::TEXT,
         DataType::Utf8 => match original_type {
@@ -150,9 +151,10 @@ fn message_field_to_arrow_field(value: &postgres_protocol::message::Field) -> Fi
 
     let arrow_type = match postgres_type {
         postgres::types::Type::BOOL => DataType::Boolean,
-        postgres::types::Type::INT2 => DataType::Int8,
-        postgres::types::Type::INT4 => DataType::Int16,
-        postgres::types::Type::INT8 => DataType::Int32,
+        postgres::types::Type::CHAR => DataType::Int8,
+        postgres::types::Type::INT2 => DataType::Int16,
+        postgres::types::Type::INT4 => DataType::Int32,
+        postgres::types::Type::INT8 => DataType::Int64,
         postgres::types::Type::TEXT => DataType::LargeUtf8,
         postgres::types::Type::VARCHAR => DataType::Utf8,
         postgres::types::Type::NAME => DataType::Utf8,
@@ -162,7 +164,6 @@ fn message_field_to_arrow_field(value: &postgres_protocol::message::Field) -> Fi
             true,
         ))),
         postgres::types::Type::OID => DataType::UInt16,
-        postgres::types::Type::CHAR => DataType::Utf8,
         _ => todo!("{}", postgres_type),
     };
 
@@ -422,6 +423,15 @@ mod tests {
     fn test_symmetric_serialization_deserialization() {
         let fields = vec![
             postgres_protocol::message::Field {
+                name: "id".to_string(),
+                table_oid: 16394,
+                column_number: 1,
+                type_oid: 23,
+                type_length: 4,
+                type_modifier: -1,
+                format: 0,
+            },
+            postgres_protocol::message::Field {
                 name: "a".to_string(),
                 table_oid: 0,
                 column_number: 0,
@@ -443,6 +453,7 @@ mod tests {
 
         let data = vec![DataRow {
             field_data: vec![
+                Some(vec![0, 0, 0, 1]),
                 Some(vec![112, 111, 115, 116, 103, 114, 101, 115]),
                 Some(vec![123, 112, 117, 98, 108, 105, 99, 125]),
             ],

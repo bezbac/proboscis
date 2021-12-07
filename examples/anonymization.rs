@@ -125,5 +125,17 @@ async fn main() {
         }
     }
 
-    // TODO output
+    // Normal query
+    let result = client
+        .query("SELECT id, first_name, last_name, city FROM contacts", &[])
+        .await
+        .unwrap();
+
+    for row in result {
+        let id: Option<i32> = row.get(0);
+        let first_name: Option<&str> = row.get(1);
+        let last_name: Option<&str> = row.get(2);
+        let city: Option<&str> = row.get(3);
+        println!("{:?} {:?} {:?} {:?}", id, first_name, last_name, city)
+    }
 }
