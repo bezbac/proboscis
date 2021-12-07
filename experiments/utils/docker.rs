@@ -185,8 +185,8 @@ name = "contacts.first_name"
 
     let pgcloak_image = images::generic::GenericImage::new("pgcloak")
         .with_volume(tempdir_str, "/app")
-        .with_wait_for(WaitFor::message_on_stdout("Listening on"))
-        .with_args(vec!["-v".to_string(), "debug".to_string()]);
+        .with_wait_for(WaitFor::message_on_stdout("Listening on"));
+        // .with_args(vec!["-v".to_string(), "debug".to_string()]);
 
     let node = docker.run_with_args(
         pgcloak_image,
