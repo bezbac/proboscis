@@ -22,37 +22,37 @@ pub fn query_data_into_dataframe(
                 &Type::BOOL => Series::new(
                     column.name(),
                     rows.iter()
-                        .map(|row| row.try_get(i).ok())
+                        .map(|row| row.get::<usize, Option<bool>>(i))
                         .collect::<Vec<Option<bool>>>(),
                 ),
                 &Type::INT2 => Series::new(
                     column.name(),
                     rows.iter()
-                        .map(|row| row.try_get(i).ok())
+                        .map(|row| row.get::<usize, Option<i16>>(i))
                         .collect::<Vec<Option<i16>>>(),
                 ),
                 &Type::INT4 => Series::new(
                     column.name(),
                     rows.iter()
-                        .map(|row| row.try_get(i).ok())
+                        .map(|row| row.get::<usize, Option<i32>>(i))
                         .collect::<Vec<Option<i32>>>(),
                 ),
                 &Type::OID => Series::new(
                     column.name(),
                     rows.iter()
-                        .map(|row| row.try_get(i).ok())
+                        .map(|row| row.get::<usize, Option<u32>>(i))
                         .collect::<Vec<Option<u32>>>(),
                 ),
                 &Type::CHAR => Series::new(
                     column.name(),
                     rows.iter()
-                        .map(|row| row.try_get(i).ok())
+                        .map(|row| row.get::<usize, Option<i8>>(i))
                         .collect::<Vec<Option<i8>>>(),
                 ),
                 &Type::TEXT => Series::new(
                     column.name(),
                     rows.iter()
-                        .map(|row| row.try_get(i).ok())
+                        .map(|row| row.get::<usize, Option<&str>>(i))
                         .collect::<Vec<Option<&str>>>(),
                 ),
                 _ => unimplemented!("{:?}", column.type_()),
