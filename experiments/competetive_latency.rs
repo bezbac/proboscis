@@ -45,7 +45,7 @@ fn main() {
             max_pool_size: 10,
         },
     );
-    let (docker_stats, pgcloak_durations) =
+    let (pgcloak_docker_stats, pgcloak_durations) =
         utils::docker::stats::while_collecting_docker_stats(_pgcloak_node.id(), &|| {
             utils::benchmark::benchmark_function(iterations, &|| {
                 simple_query(&pgcloak_connection_url)
@@ -58,7 +58,7 @@ fn main() {
     // postgres 13.4 (pg_pool)
     println!("pgpool");
     let (pgpool_connection_url, _pgpool_node) = start_pgpool(&docker, &database_connection_url);
-    let (docker_stats, pgpool_durations) =
+    let (pgpool_docker_stats, pgpool_durations) =
         utils::docker::stats::while_collecting_docker_stats(_pgpool_node.id(), &|| {
             utils::benchmark::benchmark_function(iterations, &|| {
                 simple_query(&pgpool_connection_url)
@@ -71,7 +71,7 @@ fn main() {
     println!("pgbouncer");
     let (pgbouncer_connection_url, _pgbouncer_node) =
         start_pgbouncer(&docker, &database_connection_url);
-    let (docker_stats, pgbouncer_durations) =
+    let (pgbouncer_docker_stats, pgbouncer_durations) =
         utils::docker::stats::while_collecting_docker_stats(_pgbouncer_node.id(), &|| {
             utils::benchmark::benchmark_function(iterations, &|| {
                 simple_query(&pgbouncer_connection_url)
@@ -81,7 +81,18 @@ fn main() {
     drop(_pgbouncer_node);
 
     let result_labels = vec!["no proxy", "pgcloak", "pgpool", "pgbouncer"];
-    let result_durations = vec![baseline_durations, pgcloak_durations, pgpool_durations, pgbouncer_durations];
+    let result_durations = vec![
+        baseline_durations,
+        pgcloak_durations,
+        pgpool_durations,
+        pgbouncer_durations,
+    ];
+    let result_docker_stats = vec![
+        None,
+        Some(pgcloak_docker_stats),
+        Some(pgpool_docker_stats),
+        Some(pgbouncer_docker_stats),
+    ];
 
     #[cfg(feature = "analysis")]
     {
@@ -108,6 +119,21 @@ fn main() {
             })
             .collect();
 
+        let memory_stats: Vec<(&str, Vec<u64>)> = result_labels
+            .iter()
+            .zip(result_docker_stats)
+            .filter_map(|(label, data)| {
+                data.map(|data| {
+                    (
+                        *label,
+                        data.iter()
+                            .map(|(_, stats)| stats.memory_stats.usage)
+                            .collect(),
+                    )
+                })
+            })
+            .collect();
+
         python! {
             import matplotlib.pyplot as plt
             import numpy as np
@@ -129,6 +155,12 @@ fn main() {
             ax = sns.violinplot(data='durations_in_milis)
             ax.set_xticklabels('result_labels)
             ax.get_yaxis().set_major_formatter(FormatStrFormatter("%d ms"))
+
+            # Stats
+            for chart in 'memory_stats:
+                fig, ax = plt.subplots()
+                plt.title("Memory usage during benchmark (%s)" % chart[0])
+                plt.plot(chart[1], label = "Used memory")
 
             plt.show()
         }
