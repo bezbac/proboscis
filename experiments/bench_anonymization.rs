@@ -1,5 +1,6 @@
 mod utils;
 
+use crate::utils::benchmark::print_benchmark_stats;
 use crate::utils::data::query_data_into_dataframe;
 use crate::utils::docker::pgcloak::start_pgcloak;
 use crate::utils::docker::pgcloak::ColumnConfiguration;
@@ -23,7 +24,9 @@ fn main() {
 
     seed_database(&database_connection_url);
 
-    let result = query_data_into_dataframe(&database_connection_url, "SELECT * FROM adults");
+    let query = "SELECT age, sex, race, workclass, education FROM adults";
+
+    let result = query_data_into_dataframe(&database_connection_url, query);
     println!("{}", result.head(Some(12)));
 
     // PGCLOAK: Example
@@ -38,28 +41,60 @@ fn main() {
         },
     );
 
-    let result = query_data_into_dataframe(&pgcloak_connection_url, "SELECT * FROM adults");
+    let result = query_data_into_dataframe(&pgcloak_connection_url, query);
     println!("{}", result.head(Some(12)));
+
+    let (docker_stats, baseline_durations) =
+        utils::docker::stats::while_collecting_docker_stats(_pgcloak_node.id(), &|| {
+            utils::benchmark::benchmark_function(20, &|| {
+                let mut client = Client::connect(&pgcloak_connection_url, NoTls).unwrap();
+                client.query(query, &[]).unwrap();
+            })
+        });
+    print_benchmark_stats(&baseline_durations);
 
     drop(_pgcloak_node);
     drop(_pgcloak_tempdir);
 
     // PGCLOAK: Example with anonymization
-    println!("pgcloak k-anonymization | columns: education");
+    println!("pgcloak k-anonymization | k=3 | QI columns: age, sex, race, workclass, education");
     let (pgcloak_connection_url, _pgcloak_node, _pgcloak_tempdir) = start_pgcloak(
         &docker,
         &database_connection_url,
         &PgcloakConfig {
-            columns: vec![ColumnConfiguration::PseudoIdentifier {
-                name: String::from("adults.education"),
-            }],
+            columns: vec![
+                ColumnConfiguration::PseudoIdentifier {
+                    name: String::from("adults.age"),
+                },
+                ColumnConfiguration::PseudoIdentifier {
+                    name: String::from("adults.sex"),
+                },
+                ColumnConfiguration::PseudoIdentifier {
+                    name: String::from("adults.race"),
+                },
+                ColumnConfiguration::PseudoIdentifier {
+                    name: String::from("adults.workclass"),
+                },
+                ColumnConfiguration::PseudoIdentifier {
+                    name: String::from("adults.education"),
+                },
+            ],
             max_pool_size: 10,
             k: 3,
         },
     );
 
-    let result = query_data_into_dataframe(&pgcloak_connection_url, "SELECT * FROM adults");
+    let result = query_data_into_dataframe(&pgcloak_connection_url, query);
     println!("{}", result.head(Some(12)));
+
+    let (docker_stats, baseline_durations) =
+        utils::docker::stats::while_collecting_docker_stats(_pgcloak_node.id(), &|| {
+            utils::benchmark::benchmark_function(20, &|| {
+                let mut client = Client::connect(&pgcloak_connection_url, NoTls).unwrap();
+                client.query(query, &[]).unwrap();
+            })
+        });
+    print_benchmark_stats(&baseline_durations);
 
     drop(_pgcloak_node);
     drop(_pgcloak_tempdir);
