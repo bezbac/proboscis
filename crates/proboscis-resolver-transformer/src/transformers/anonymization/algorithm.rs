@@ -319,8 +319,7 @@ pub fn anonymize(
         0,
         Series::new("original_indices", original_indices_of_updated_rows),
     )?;
-    result.sort("original_indices", false)?;
-
+    result.sort_in_place("original_indices", false)?;
     result.drop_in_place("original_indices")?;
 
     Ok(result)
@@ -335,6 +334,7 @@ mod tests {
         datatypes::{DataType, Field, Schema},
         record_batch::RecordBatch,
     };
+    use polars::prelude::AnyValue;
     use std::sync::Arc;
 
     #[test]
@@ -416,6 +416,14 @@ mod tests {
         )
         .unwrap();
 
-        println!("Annonymized: {:?}", anonymized.head(Some(10)));
+        assert_eq!(AnyValue::Int32(1), anonymized.column("id").unwrap().get(0));
+        assert_eq!(AnyValue::Int32(2), anonymized.column("id").unwrap().get(1));
+        assert_eq!(AnyValue::Int32(3), anonymized.column("id").unwrap().get(2));
+        assert_eq!(AnyValue::Int32(4), anonymized.column("id").unwrap().get(3));
+        assert_eq!(AnyValue::Int32(5), anonymized.column("id").unwrap().get(4));
+        assert_eq!(AnyValue::Int32(6), anonymized.column("id").unwrap().get(5));
+        assert_eq!(AnyValue::Int32(7), anonymized.column("id").unwrap().get(6));
+        assert_eq!(AnyValue::Int32(8), anonymized.column("id").unwrap().get(7));
+        assert_eq!(AnyValue::Int32(9), anonymized.column("id").unwrap().get(8));
     }
 }
