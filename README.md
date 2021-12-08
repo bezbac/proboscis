@@ -19,6 +19,15 @@ docker-compose up
 cargo test --features e2e
 ```
 
+### Running pgcloak
+
+```
+docker-compose up
+cargo run -p pgcloak -- -c pgcloak.example.toml -v DEBUG
+```
+
+The proxy should now be avaliable under postgresql://admin:password@localhost:6432/postgres
+
 # Acknowledgements
 
 Repos:
