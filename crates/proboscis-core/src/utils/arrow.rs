@@ -270,14 +270,18 @@ fn write_be_without_trailing_zeros<V: omnom::WriteBytes, W: std::io::Write>(
     value: V,
     buffer: &mut W,
 ) -> std::io::Result<usize> {
-    let mut bytes = vec![];
-    value.write_be_bytes(&mut bytes).unwrap();
+    // TODO: Fix this function
 
-    while bytes.last() == Some(&0) {
-        bytes.pop();
-    }
+    return value.write_be_bytes(buffer);
 
-    buffer.write(&bytes)
+    // let mut bytes = vec![];
+    // value.write_be_bytes(&mut bytes).unwrap();
+
+    // while bytes.last() == Some(&0) {
+    //     bytes.pop();
+    // }
+
+    // buffer.write(&bytes)
 }
 
 pub fn serialize_record_batch_to_data_rows(batch: &RecordBatch) -> Vec<DataRow> {
