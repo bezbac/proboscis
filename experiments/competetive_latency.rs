@@ -9,6 +9,7 @@ use crate::utils::{
     },
 };
 use postgres::NoTls;
+use std::time::Instant;
 use testcontainers::clients::{self};
 
 fn simple_query(connection_url: &str) {
@@ -21,6 +22,8 @@ fn simple_query(connection_url: &str) {
 }
 
 fn main() {
+    let experiment_start_time = Instant::now();
+
     let mut result_labels = vec![];
     let mut result_durations = vec![];
     let mut result_docker_stats = vec![];
@@ -101,6 +104,7 @@ fn main() {
         use inline_python::python;
         use itertools::Itertools;
         use std::time::Instant;
+        use std::time::UNIX_EPOCH;
 
         let total_times: Vec<u128> = result_durations
             .iter()
@@ -121,13 +125,16 @@ fn main() {
             })
             .collect();
 
-        let memory_stats: Vec<(&str, Vec<u64>)> = result_labels
+        let memory_stats: Vec<(&str, Vec<u128>, Vec<u64>)> = result_labels
             .iter()
             .zip(&result_docker_stats)
             .filter_map(|(label, data)| {
                 data.as_ref().map(|data| {
                     (
                         *label,
+                        data.iter()
+                            .map(|(time, _)| time.duration_since(experiment_start_time).as_millis())
+                            .collect(),
                         data.iter()
                             .map(|(_, stats)| stats.memory_stats.usage)
                             .collect(),
@@ -136,7 +143,7 @@ fn main() {
             })
             .collect();
 
-        let cpu_stats: Vec<(&str, Vec<u64>)> = result_labels
+        let cpu_stats: Vec<(&str, Vec<u128>, Vec<u64>)> = result_labels
             .iter()
             .zip(&result_docker_stats)
             .filter_map(|(label, data)| {
@@ -144,10 +151,33 @@ fn main() {
                     (
                         *label,
                         data.iter()
+                            .map(|(time, _)| time.duration_since(experiment_start_time).as_millis())
+                            .collect(),
+                        data.iter()
                             .map(|(_, stats)| stats.cpu_stats.cpu_usage.total_usage)
                             .collect(),
                     )
                 })
+            })
+            .collect();
+
+        let run_stats: Vec<(&str, Vec<u128>, Vec<u128>)> = result_labels
+            .iter()
+            .zip(&result_durations)
+            .map(|(label, durations)| {
+                (
+                    *label,
+                    durations
+                        .iter()
+                        .map(|(end_time, start_time)| end_time.duration_since(experiment_start_time).as_millis())
+                        .collect(),
+                    durations
+                        .iter()
+                        .map(|(end_time, start_time)| {
+                            end_time.duration_since(*start_time).as_millis()
+                        })
+                        .collect(),
+                )
             })
             .collect();
 
@@ -167,22 +197,27 @@ fn main() {
 
             # Violin Plot
             fig, ax = plt.subplots()
-            plt.title("Individual run duration (%s iterations)" % 'iterations)
+            plt.title("Individual run duration distribution (%s iterations)" % 'iterations)
 
             ax = sns.violinplot(data='durations_in_milis)
             ax.set_xticklabels('result_labels)
             ax.get_yaxis().set_major_formatter(FormatStrFormatter("%d ms"))
 
             # Stats
+            for chart in 'run_stats:
+                fig, ax = plt.subplots()
+                plt.title("Individual run duration (%s)" % chart[0])
+                plt.scatter(chart[1], chart[2])
+
             for chart in 'memory_stats:
                 fig, ax = plt.subplots()
                 plt.title("Memory usage during benchmark (%s)" % chart[0])
-                plt.plot(chart[1], label = "Used memory")
+                plt.plot(chart[1], chart[2], label = "Used memory")
 
             for chart in 'cpu_stats:
                 fig, ax = plt.subplots()
                 plt.title("CPU usage during benchmark (%s)" % chart[0])
-                plt.plot(chart[1], label = "CPU")
+                plt.plot(chart[1], chart[2], label = "CPU")
 
             plt.show()
         }

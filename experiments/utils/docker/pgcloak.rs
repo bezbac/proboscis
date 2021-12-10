@@ -34,7 +34,7 @@ struct FullPgcloakConfig {
     max_pool_size: usize,
     connection_uri: String,
     k: usize,
-    
+
     listener: ListenerConfig,
 
     credentials: Vec<Credential>,
