@@ -21,6 +21,10 @@ fn simple_query(connection_url: &str) {
 }
 
 fn main() {
+    let mut result_labels = vec![];
+    let mut result_durations = vec![];
+    let mut result_docker_stats = vec![];
+
     let iterations = 1000;
 
     let docker = clients::Cli::default();
@@ -33,6 +37,9 @@ fn main() {
         simple_query(&database_connection_url)
     });
     print_benchmark_stats(&baseline_durations);
+    result_labels.push("no proxy");
+    result_durations.push(baseline_durations);
+    result_docker_stats.push(None);
 
     // postgres 13.4 (pgcloak - session pooling - 10 max connections)
     println!("pgcloak");
@@ -52,6 +59,9 @@ fn main() {
             })
         });
     print_benchmark_stats(&pgcloak_durations);
+    result_labels.push("pgcloak");
+    result_durations.push(pgcloak_durations);
+    result_docker_stats.push(Some(pgcloak_docker_stats));
     drop(_pgcloak_node);
     drop(_pgcloak_tempdir);
 
@@ -65,6 +75,9 @@ fn main() {
             })
         });
     print_benchmark_stats(&pgpool_durations);
+    result_labels.push("pgpool");
+    result_durations.push(pgpool_durations);
+    result_docker_stats.push(Some(pgpool_docker_stats));
     drop(_pgpool_node);
 
     // postgres 13.4 (pg_bouncer - session pooling - 10 max connections)
@@ -78,21 +91,10 @@ fn main() {
             })
         });
     print_benchmark_stats(&pgbouncer_durations);
+    result_labels.push("pgbouncer");
+    result_durations.push(pgbouncer_durations);
+    result_docker_stats.push(Some(pgbouncer_docker_stats));
     drop(_pgbouncer_node);
-
-    let result_labels = vec!["no proxy", "pgcloak", "pgpool", "pgbouncer"];
-    let result_durations = vec![
-        baseline_durations,
-        pgcloak_durations,
-        pgpool_durations,
-        pgbouncer_durations,
-    ];
-    let result_docker_stats = vec![
-        None,
-        Some(pgcloak_docker_stats),
-        Some(pgpool_docker_stats),
-        Some(pgbouncer_docker_stats),
-    ];
 
     #[cfg(feature = "analysis")]
     {
@@ -121,13 +123,28 @@ fn main() {
 
         let memory_stats: Vec<(&str, Vec<u64>)> = result_labels
             .iter()
-            .zip(result_docker_stats)
+            .zip(&result_docker_stats)
             .filter_map(|(label, data)| {
-                data.map(|data| {
+                data.as_ref().map(|data| {
                     (
                         *label,
                         data.iter()
                             .map(|(_, stats)| stats.memory_stats.usage)
+                            .collect(),
+                    )
+                })
+            })
+            .collect();
+
+        let cpu_stats: Vec<(&str, Vec<u64>)> = result_labels
+            .iter()
+            .zip(&result_docker_stats)
+            .filter_map(|(label, data)| {
+                data.as_ref().map(|data| {
+                    (
+                        *label,
+                        data.iter()
+                            .map(|(_, stats)| stats.cpu_stats.cpu_usage.total_usage)
                             .collect(),
                     )
                 })
@@ -161,6 +178,11 @@ fn main() {
                 fig, ax = plt.subplots()
                 plt.title("Memory usage during benchmark (%s)" % chart[0])
                 plt.plot(chart[1], label = "Used memory")
+
+            for chart in 'cpu_stats:
+                fig, ax = plt.subplots()
+                plt.title("CPU usage during benchmark (%s)" % chart[0])
+                plt.plot(chart[1], label = "CPU")
 
             plt.show()
         }
