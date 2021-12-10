@@ -169,7 +169,9 @@ fn main() {
                     *label,
                     durations
                         .iter()
-                        .map(|(end_time, start_time)| end_time.duration_since(experiment_start_time).as_millis())
+                        .map(|(end_time, start_time)| {
+                            end_time.duration_since(experiment_start_time).as_millis()
+                        })
                         .collect(),
                     durations
                         .iter()

@@ -32,7 +32,7 @@ pub fn while_collecting_docker_stats<T: Sized>(
 
             collection.push((Instant::now(), stats));
 
-            thread::sleep(Duration::from_millis(40));
+            thread::sleep(Duration::from_millis(10));
             match rx.try_recv() {
                 Ok(_) | Err(TryRecvError::Disconnected) => {
                     println!("Terminating.");
