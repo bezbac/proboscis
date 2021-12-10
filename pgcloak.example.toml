@@ -2,9 +2,9 @@ max_pool_size = 10
 k = 3
 connection_uri = "postgresql://postgres:postgres@localhost:5432/postgres"
 
-[tls]
-pcks_path = "./examples/openssl/identity.p12"
-password = "password"
+# [tls]
+# pcks_path = "./examples/openssl/identity.p12"
+# password = "password"
 
 [listener]
 host = "0.0.0.0"

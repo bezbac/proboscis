@@ -26,7 +26,18 @@ docker-compose up
 cargo run -p pgcloak -- -c pgcloak.example.toml -v DEBUG
 ```
 
-The proxy should now be avaliable under postgresql://admin:password@localhost:6432/postgres
+The proxy should now be avaliable under `postgresql://admin:password@localhost:6432/postgres`
+Example query:
+
+```
+psql -Atx postgresql://admin:password@localhost:6432/postgres -c 'SELECT 0'
+```
+
+#### Benchmarking using hyperfine
+
+````
+hyperfine --warmup 5 "psql -Atx postgresql://admin:password@localhost:6432/postgres?sslmode=disable -c 'SELECT 0'"
+```
 
 # Acknowledgements
 
@@ -38,3 +49,4 @@ Repos:
 Other:
 
 - Jan Urbanski's slides from "Postgres on the wire" [Link](https://www.pgcon.org/2014/schedule/attachments/330_postgres-for-the-wire.pdf)
+````
