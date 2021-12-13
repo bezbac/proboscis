@@ -44,29 +44,29 @@ fn main() {
     result_durations.push(baseline_durations);
     result_docker_stats.push(None);
 
-    // // postgres 13.4 (pgcloak - session pooling - 10 max connections)
-    // println!("pgcloak");
-    // let (pgcloak_connection_url, _pgcloak_node, _pgcloak_tempdir) = start_pgcloak(
-    //     &docker,
-    //     &database_connection_url,
-    //     &PgcloakConfig {
-    //         k: 3,
-    //         columns: vec![],
-    //         max_pool_size: 10,
-    //     },
-    // );
-    // let (pgcloak_docker_stats, pgcloak_durations) =
-    //     utils::docker::stats::while_collecting_docker_stats(_pgcloak_node.id(), &|| {
-    //         utils::benchmark::benchmark_function(iterations, &|| {
-    //             simple_query(&pgcloak_connection_url)
-    //         })
-    //     });
-    // print_benchmark_stats(&pgcloak_durations);
-    // result_labels.push("pgcloak");
-    // result_durations.push(pgcloak_durations);
-    // result_docker_stats.push(Some(pgcloak_docker_stats));
-    // drop(_pgcloak_node);
-    // drop(_pgcloak_tempdir);
+    // postgres 13.4 (pgcloak - session pooling - 10 max connections)
+    println!("pgcloak");
+    let (pgcloak_connection_url, _pgcloak_node, _pgcloak_tempdir) = start_pgcloak(
+        &docker,
+        &database_connection_url,
+        &PgcloakConfig {
+            k: 3,
+            columns: vec![],
+            max_pool_size: 10,
+        },
+    );
+    let (pgcloak_docker_stats, pgcloak_durations) =
+        utils::docker::stats::while_collecting_docker_stats(_pgcloak_node.id(), &|| {
+            utils::benchmark::benchmark_function(iterations, &|| {
+                simple_query(&pgcloak_connection_url)
+            })
+        });
+    print_benchmark_stats(&pgcloak_durations);
+    result_labels.push("pgcloak");
+    result_durations.push(pgcloak_durations);
+    result_docker_stats.push(Some(pgcloak_docker_stats));
+    drop(_pgcloak_node);
+    drop(_pgcloak_tempdir);
 
     // postgres 13.4 (pg_pool)
     println!("pgpool");
@@ -123,6 +123,21 @@ fn main() {
                     .map(|(end, start)| end.duration_since(*start).as_millis())
                     .collect()
             })
+            .collect();
+
+        let min_durations_in_milis: Vec<u128> = durations_in_milis
+            .iter()
+            .map(|times| *itertools::min(times).unwrap())
+            .collect();
+
+        let max_durations_in_milis: Vec<u128> = durations_in_milis
+            .iter()
+            .map(|times| *itertools::max(times).unwrap())
+            .collect();
+
+        let mean_durations_in_milis: Vec<u128> = durations_in_milis
+            .iter()
+            .map(|times| times.iter().sum1::<u128>().unwrap() / times.len() as u128)
             .collect();
 
         let memory_stats: Vec<(&str, Vec<u128>, Vec<u64>)> = result_labels
@@ -233,16 +248,48 @@ fn main() {
 
                 return ""
 
-            fig, axs = plt.subplots(1, 2)
-            axs[0].set_title("Total benchmark duration (%s iterations)" % 'iterations)
-            axs[0].bar('result_labels, 'total_times)
-            axs[0].bar_label(axs[0].containers[0])
-            axs[0].get_yaxis().set_major_formatter(FormatStrFormatter("%d ms"))
+            def format_ms(x, pos):
+                if x > 1800:
+                    return "{0:.2f} s".format(x / 1000)
+                return "{0} ms".format(x)
 
-            axs[1].set_title("Individual run duration distribution (%s iterations)" % 'iterations)
-            axs[1] = sns.violinplot(data='durations_in_milis)
-            axs[1].set_xticklabels('result_labels)
-            axs[1].get_yaxis().set_major_formatter(FormatStrFormatter("%d ms"))
+            fig, axs = plt.subplots(1, 3)
+            ax = axs[0]
+            ax.set_title("Total benchmark duration (%s iterations)" % 'iterations)
+            ax.bar('result_labels, 'total_times)
+            ax.bar_label(ax.containers[0])
+            ax.get_yaxis().set_major_formatter(FuncFormatter(format_ms))
+            ax.set_axisbelow(True)
+            ax.get_yaxis().grid(True, color="#EEEEEE")
+
+            width = 0.2
+            x = np.arange(len('min_durations_in_milis))
+            ax = axs[1]
+            ax.set_title("Statistics")
+            ax.bar(x - width, 'min_durations_in_milis, width, label="Min")
+            ax.bar(x, 'mean_durations_in_milis, width, label="Mean")
+            ax.bar(x + width, 'max_durations_in_milis, width, label="Max")
+            ax.set_xticks(x, 'result_labels)
+            ax.get_yaxis().set_major_formatter(FuncFormatter(format_ms))
+            ax.set_axisbelow(True)
+            ax.get_yaxis().grid(True, color="#EEEEEE")
+            ax.legend(["min", "mean", "max"])
+
+            for bar in ax.patches:
+                bar_value = bar.get_height()
+                text = f"{bar_value:,}"
+                text_x = bar.get_x() + bar.get_width() / 2
+                text_y = bar.get_y() + bar_value
+                bar_color = bar.get_facecolor()
+                ax.text(text_x, text_y, text, ha="center", va="bottom", color=bar_color, size=12)
+
+            ax = axs[2]
+            ax.set_title("Individual run duration distribution (%s iterations)" % 'iterations)
+            ax = sns.violinplot(data='durations_in_milis)
+            ax.set_xticklabels('result_labels)
+            ax.get_yaxis().set_major_formatter(FuncFormatter(format_ms))
+            ax.set_axisbelow(True)
+            ax.get_yaxis().grid(True, color="#EEEEEE")
 
             fig, axs = plt.subplots(3, len('run_stats))
             for ax in axs.flat:
@@ -253,8 +300,8 @@ fn main() {
                 ax.set_axis_on()
                 ax.set_title("Individual run duration (%s)" % chart[0])
                 ax.scatter(chart[1], chart[2])
-                ax.get_yaxis().set_major_formatter(FormatStrFormatter("%d ms"))
-                ax.get_xaxis().set_major_formatter(FormatStrFormatter("%d ms"))
+                ax.get_yaxis().set_major_formatter(FuncFormatter(format_ms))
+                ax.get_xaxis().set_major_formatter(FuncFormatter(format_ms))
                 ax.get_xaxis().set_major_locator(plt.MaxNLocator(2))
 
             for index, chart in enumerate('memory_stats):
@@ -263,7 +310,7 @@ fn main() {
                 ax.set_title("Memory usage during benchmark (%s)" % chart[0])
                 ax.plot(chart[1], chart[2], label = "Used memory")
                 ax.get_yaxis().set_major_formatter(FuncFormatter(format_bytes))
-                ax.get_xaxis().set_major_formatter(FormatStrFormatter("%d ms"))
+                ax.get_xaxis().set_major_formatter(FuncFormatter(format_ms))
                 ax.get_xaxis().set_major_locator(plt.MaxNLocator(2))
 
             for index, chart in enumerate('cpu_stats):
@@ -272,11 +319,9 @@ fn main() {
                 ax.set_title("CPU usage during benchmark (%s)" % chart[0])
                 ax.plot(chart[1], chart[2], label = "CPU")
                 ax.get_yaxis().set_major_formatter(FormatStrFormatter("%d %%"))
-                ax.get_xaxis().set_major_formatter(FormatStrFormatter("%d ms"))
+                ax.get_xaxis().set_major_formatter(FuncFormatter(format_ms))
                 ax.get_xaxis().set_major_locator(plt.MaxNLocator(2))
 
-
-            plt.tight_layout()
             plt.show()
         }
     }
