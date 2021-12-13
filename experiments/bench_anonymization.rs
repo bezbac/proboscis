@@ -132,7 +132,7 @@ fn main() {
         let end = column_configs.len() - (2 - i);
         let columns = column_configs[0..end].to_vec();
 
-        for k in vec![3, 10, 30, 50] {
+        for k in vec![3, 10, 30, 50, 100, 250] {
             let column_names: Vec<String> = columns
                 .iter()
                 .filter_map(|c| match c {
