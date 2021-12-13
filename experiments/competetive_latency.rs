@@ -44,29 +44,29 @@ fn main() {
     result_durations.push(baseline_durations);
     result_docker_stats.push(None);
 
-    // postgres 13.4 (pgcloak - session pooling - 10 max connections)
-    println!("pgcloak");
-    let (pgcloak_connection_url, _pgcloak_node, _pgcloak_tempdir) = start_pgcloak(
-        &docker,
-        &database_connection_url,
-        &PgcloakConfig {
-            k: 3,
-            columns: vec![],
-            max_pool_size: 10,
-        },
-    );
-    let (pgcloak_docker_stats, pgcloak_durations) =
-        utils::docker::stats::while_collecting_docker_stats(_pgcloak_node.id(), &|| {
-            utils::benchmark::benchmark_function(iterations, &|| {
-                simple_query(&pgcloak_connection_url)
-            })
-        });
-    print_benchmark_stats(&pgcloak_durations);
-    result_labels.push("pgcloak");
-    result_durations.push(pgcloak_durations);
-    result_docker_stats.push(Some(pgcloak_docker_stats));
-    drop(_pgcloak_node);
-    drop(_pgcloak_tempdir);
+    // // postgres 13.4 (pgcloak - session pooling - 10 max connections)
+    // println!("pgcloak");
+    // let (pgcloak_connection_url, _pgcloak_node, _pgcloak_tempdir) = start_pgcloak(
+    //     &docker,
+    //     &database_connection_url,
+    //     &PgcloakConfig {
+    //         k: 3,
+    //         columns: vec![],
+    //         max_pool_size: 10,
+    //     },
+    // );
+    // let (pgcloak_docker_stats, pgcloak_durations) =
+    //     utils::docker::stats::while_collecting_docker_stats(_pgcloak_node.id(), &|| {
+    //         utils::benchmark::benchmark_function(iterations, &|| {
+    //             simple_query(&pgcloak_connection_url)
+    //         })
+    //     });
+    // print_benchmark_stats(&pgcloak_durations);
+    // result_labels.push("pgcloak");
+    // result_durations.push(pgcloak_durations);
+    // result_docker_stats.push(Some(pgcloak_docker_stats));
+    // drop(_pgcloak_node);
+    // drop(_pgcloak_tempdir);
 
     // postgres 13.4 (pg_pool)
     println!("pgpool");
@@ -136,14 +136,16 @@ fn main() {
                             .map(|(time, _)| time.duration_since(experiment_start_time).as_millis())
                             .collect(),
                         data.iter()
-                            .map(|(_, stats)| stats.memory_stats.usage)
+                            .map(|(_, stats)| {
+                                stats.memory_stats.usage - stats.memory_stats.stats.cache
+                            })
                             .collect(),
                     )
                 })
             })
             .collect();
 
-        let cpu_stats: Vec<(&str, Vec<u128>, Vec<u64>)> = result_labels
+        let cpu_stats: Vec<(&str, Vec<u128>, Vec<f64>)> = result_labels
             .iter()
             .zip(&result_docker_stats)
             .filter_map(|(label, data)| {
@@ -154,7 +156,27 @@ fn main() {
                             .map(|(time, _)| time.duration_since(experiment_start_time).as_millis())
                             .collect(),
                         data.iter()
-                            .map(|(_, stats)| stats.cpu_stats.cpu_usage.total_usage)
+                            .enumerate()
+                            .map(|(i, (_, stats))| {
+                                let previous_stats = if (i > 1) {
+                                    &data.get(i - 1).unwrap().1
+                                } else {
+                                    stats
+                                };
+
+                                let precpu_stats = &previous_stats.cpu_stats;
+                                let cpu_stats = &stats.cpu_stats;
+
+                                let cpu_delta = cpu_stats.cpu_usage.total_usage
+                                    - precpu_stats.cpu_usage.total_usage;
+                                let system_cpu_delta =
+                                    cpu_stats.system_cpu_usage - precpu_stats.system_cpu_usage;
+                                let number_cpus = cpu_stats.cpu_usage.percpu_usage.len();
+                                let usage_percent = (cpu_delta as f64 / system_cpu_delta as f64)
+                                    * number_cpus as f64
+                                    * 100.0;
+                                usage_percent
+                            })
                             .collect(),
                     )
                 })
@@ -188,39 +210,73 @@ fn main() {
             import numpy as np
             import seaborn as sns
             from matplotlib.ticker import FormatStrFormatter
+            from matplotlib.ticker import FuncFormatter
 
-            # Total Duration
-            fig, ax = plt.subplots()
-            plt.title("Total benchmark duration (%s iterations)" % 'iterations)
+            def format_bytes(b, pos):
+                """Return the given bytes as a human friendly KB, MB, GB, or TB string."""
+                b = float(b)
+                KB = float(1024)
+                MB = float(KB ** 2) # 1,048,576
+                GB = float(KB ** 3) # 1,073,741,824
+                TB = float(KB ** 4) # 1,099,511,627,776
 
-            ax.bar('result_labels, 'total_times)
-            ax.bar_label(ax.containers[0])
-            ax.get_yaxis().set_major_formatter(FormatStrFormatter("%d ms"))
+                if b < KB:
+                    return "{0} {1}".format(b,"Bytes" if 0 == b > 1 else "Byte")
+                elif KB <= b < MB:
+                    return "{0:.2f} KB".format(b / KB)
+                elif MB <= b < GB:
+                    return "{0:.2f} MB".format(b / MB)
+                elif GB <= b < TB:
+                    return "{0:.2f} GB".format(b / GB)
+                elif TB <= b:
+                    return "{0:.2f} TB".format(b / TB)
 
-            # Violin Plot
-            fig, ax = plt.subplots()
-            plt.title("Individual run duration distribution (%s iterations)" % 'iterations)
+                return ""
 
-            ax = sns.violinplot(data='durations_in_milis)
-            ax.set_xticklabels('result_labels)
-            ax.get_yaxis().set_major_formatter(FormatStrFormatter("%d ms"))
+            fig, axs = plt.subplots(1, 2)
+            axs[0].set_title("Total benchmark duration (%s iterations)" % 'iterations)
+            axs[0].bar('result_labels, 'total_times)
+            axs[0].bar_label(axs[0].containers[0])
+            axs[0].get_yaxis().set_major_formatter(FormatStrFormatter("%d ms"))
 
-            # Stats
-            for chart in 'run_stats:
-                fig, ax = plt.subplots()
-                plt.title("Individual run duration (%s)" % chart[0])
-                plt.scatter(chart[1], chart[2])
+            axs[1].set_title("Individual run duration distribution (%s iterations)" % 'iterations)
+            axs[1] = sns.violinplot(data='durations_in_milis)
+            axs[1].set_xticklabels('result_labels)
+            axs[1].get_yaxis().set_major_formatter(FormatStrFormatter("%d ms"))
 
-            for chart in 'memory_stats:
-                fig, ax = plt.subplots()
-                plt.title("Memory usage during benchmark (%s)" % chart[0])
-                plt.plot(chart[1], chart[2], label = "Used memory")
+            fig, axs = plt.subplots(3, len('run_stats))
+            for ax in axs.flat:
+                ax.set_axis_off()
 
-            for chart in 'cpu_stats:
-                fig, ax = plt.subplots()
-                plt.title("CPU usage during benchmark (%s)" % chart[0])
-                plt.plot(chart[1], chart[2], label = "CPU")
+            for index, chart in enumerate('run_stats):
+                ax = axs[0, index]
+                ax.set_axis_on()
+                ax.set_title("Individual run duration (%s)" % chart[0])
+                ax.scatter(chart[1], chart[2])
+                ax.get_yaxis().set_major_formatter(FormatStrFormatter("%d ms"))
+                ax.get_xaxis().set_major_formatter(FormatStrFormatter("%d ms"))
+                ax.get_xaxis().set_major_locator(plt.MaxNLocator(2))
 
+            for index, chart in enumerate('memory_stats):
+                ax = axs[1, index + 1]
+                ax.set_axis_on()
+                ax.set_title("Memory usage during benchmark (%s)" % chart[0])
+                ax.plot(chart[1], chart[2], label = "Used memory")
+                ax.get_yaxis().set_major_formatter(FuncFormatter(format_bytes))
+                ax.get_xaxis().set_major_formatter(FormatStrFormatter("%d ms"))
+                ax.get_xaxis().set_major_locator(plt.MaxNLocator(2))
+
+            for index, chart in enumerate('cpu_stats):
+                ax = axs[2, index + 1]
+                ax.set_axis_on()
+                ax.set_title("CPU usage during benchmark (%s)" % chart[0])
+                ax.plot(chart[1], chart[2], label = "CPU")
+                ax.get_yaxis().set_major_formatter(FormatStrFormatter("%d %%"))
+                ax.get_xaxis().set_major_formatter(FormatStrFormatter("%d ms"))
+                ax.get_xaxis().set_major_locator(plt.MaxNLocator(2))
+
+
+            plt.tight_layout()
             plt.show()
         }
     }
