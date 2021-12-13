@@ -22,6 +22,8 @@ url = "2"
 arrow = "5.5.0"
 serde = { version = "1.0", features = ["derive"] }
 toml = "0.5.8"
+ndarray = "0.15"
+ndarray-stats = "0.5"
 
 proboscis-resolver-postgres = { version = "0.1.0", path = "../crates/proboscis-resolver-postgres" }
 
@@ -29,7 +31,7 @@ proboscis-resolver-postgres = { version = "0.1.0", path = "../crates/proboscis-r
 git = "https://github.com/pola-rs/polars"
 branch = "arrow-rs"
 default-features = true
-features = ["dtype-i8", "dtype-i16", "dtype-u8", "dtype-u16"]
+features = ["dtype-i8", "dtype-i16", "dtype-u8", "dtype-u16", "ndarray"]
 
 [[example]]
 name = "competetive_latency"
