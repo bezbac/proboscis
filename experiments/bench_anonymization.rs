@@ -70,7 +70,10 @@ fn benchmark(
         );
         println!("Equivalence class count {:?}", equivalence_class_count);
 
-        let normalized_average_eq_size = result.height() / equivalence_class_count / config.k;
+        let average_eq_size = result.height() / equivalence_class_count;
+        println!("Average eq size {:?}", average_eq_size);
+
+        let normalized_average_eq_size = average_eq_size / config.k;
         println!(
             "Normalized average eq size {:?}",
             normalized_average_eq_size
@@ -108,37 +111,27 @@ fn main() {
     );
 
     let column_configs = vec![
-        vec![
-            ColumnConfiguration::PseudoIdentifier {
-                name: String::from("adults.age"),
-            },
-            ColumnConfiguration::PseudoIdentifier {
-                name: String::from("adults.sex"),
-            },
-            ColumnConfiguration::PseudoIdentifier {
-                name: String::from("adults.race"),
-            },
-        ],
-        vec![
-            ColumnConfiguration::PseudoIdentifier {
-                name: String::from("adults.age"),
-            },
-            ColumnConfiguration::PseudoIdentifier {
-                name: String::from("adults.sex"),
-            },
-            ColumnConfiguration::PseudoIdentifier {
-                name: String::from("adults.race"),
-            },
-            ColumnConfiguration::PseudoIdentifier {
-                name: String::from("adults.workclass"),
-            },
-            ColumnConfiguration::PseudoIdentifier {
-                name: String::from("adults.education"),
-            },
-        ],
+        ColumnConfiguration::PseudoIdentifier {
+            name: String::from("adults.age"),
+        },
+        ColumnConfiguration::PseudoIdentifier {
+            name: String::from("adults.sex"),
+        },
+        ColumnConfiguration::PseudoIdentifier {
+            name: String::from("adults.race"),
+        },
+        ColumnConfiguration::PseudoIdentifier {
+            name: String::from("adults.marital-status"),
+        },
+        ColumnConfiguration::PseudoIdentifier {
+            name: String::from("adults.education"),
+        },
     ];
 
-    for columns in &column_configs {
+    for i in 0..3 {
+        let end = column_configs.len() - (2 - i);
+        let columns = column_configs[0..end].to_vec();
+
         for k in vec![3, 10, 30, 50] {
             let column_names: Vec<String> = columns
                 .iter()
