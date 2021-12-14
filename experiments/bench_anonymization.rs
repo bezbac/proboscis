@@ -255,30 +255,26 @@ fn main() {
             fig, axs = plt.subplots(4, 1)
             ax = axs[0]
             ax.set_title("Query durations")
-            ax.bar('result_labels, 'durations_in_milis)
-            ax.bar_label(ax.containers[0])
+            ax.plot('result_ks, 'durations_in_milis)
             ax.get_yaxis().set_major_formatter(FuncFormatter(format_ms))
             ax.set_axisbelow(True)
             ax.get_yaxis().grid(True, color="#EEEEEE")
 
             ax = axs[1]
             ax.set_title("Equivalence class count")
-            ax.bar('result_labels, 'eq_class_counts)
-            ax.bar_label(ax.containers[0])
+            ax.plot('result_ks, 'eq_class_counts)
             ax.set_axisbelow(True)
             ax.get_yaxis().grid(True, color="#EEEEEE")
 
             ax = axs[2]
             ax.set_title("Average equivalence class sizes")
-            ax.bar('result_labels, 'average_eq_class_sizes)
-            ax.bar_label(ax.containers[0])
+            ax.plot('result_ks, 'average_eq_class_sizes)
             ax.set_axisbelow(True)
             ax.get_yaxis().grid(True, color="#EEEEEE")
 
             ax = axs[3]
             ax.set_title("Discernibility Metric")
-            ax.bar('result_labels, 'discernibility_metrics)
-            ax.bar_label(ax.containers[0])
+            ax.plot('result_ks, 'discernibility_metrics)
             ax.set_axisbelow(True)
             ax.get_yaxis().grid(True, color="#EEEEEE")
 
