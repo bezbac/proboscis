@@ -9,8 +9,12 @@ use crate::utils::docker::postgres::start_dockerized_postgres;
 use arrow::datatypes::Float64Type;
 use ndarray_stats::EntropyExt;
 use polars::prelude::DataFrame;
+use polars::prelude::DataType;
+use polars::prelude::Utf8Type;
 use postgres::{Client, NoTls};
+use std::collections::HashMap;
 use std::fs;
+use std::slice::SliceIndex;
 use std::time::Instant;
 use testcontainers::clients::{self};
 
@@ -29,6 +33,48 @@ fn count_equivalence_classes(df: &DataFrame, columns: &[&str]) -> usize {
     df.height()
 }
 
+fn get_equivalence_class_sizes(df: &DataFrame) -> Vec<i32> {
+    let mut merged = vec![];
+    for series in df.get_columns() {
+        for (idx, v) in series
+            .cast::<Utf8Type>()
+            .unwrap()
+            .utf8()
+            .unwrap()
+            .into_iter()
+            .enumerate()
+        {
+            if idx >= merged.len() {
+                merged.push(String::from(""))
+            }
+
+            merged[idx] = format!("{};{:?}", merged[idx], v)
+        }
+    }
+
+    let mut map = HashMap::new();
+    for value in merged {
+        let counter = map.entry(value).or_insert(0);
+        *counter += 1;
+    }
+
+    return map.values().cloned().collect();
+}
+
+fn calculate_discernibility_metric(df: &DataFrame, columns: &[&str]) -> usize {
+    let df = df.select(columns.to_vec()).unwrap();
+    let eq_class_sizes = get_equivalence_class_sizes(&df);
+
+    assert_eq!(
+        eq_class_sizes.len(),
+        count_equivalence_classes(&df, &df.get_column_names())
+    );
+
+    eq_class_sizes
+        .iter()
+        .fold(0, |agg, value| agg + (value * value) as usize)
+}
+
 fn benchmark(
     docker: &clients::Cli,
     database_connection_url: &str,
@@ -43,13 +89,15 @@ fn benchmark(
     let result = query_data_into_dataframe(&pgcloak_connection_url, QUERY);
     let after = Instant::now();
 
-    // println!("{}", result.head(Some(12)));
-
     // let (docker_stats, baseline_durations) =
     //     utils::docker::stats::while_collecting_docker_stats(_pgcloak_node.id(), &|| {
-    //         utils::benchmark::benchmark_function(20, &|| {
+    //         utils::benchmark::benchmark_function(10, &|| {
     //             let mut client = Client::connect(&pgcloak_connection_url, NoTls).unwrap();
-    //             client.query(QUERY, &[]).unwrap();
+    //             let result = client.query(QUERY, &[]);
+    //             if result.is_err() {
+    //                 println!("Error: {:?}", result.unwrap_err())
+    //             }
+    //             drop(client)
     //         })
     //     });
     // print_benchmark_stats(&baseline_durations);
@@ -61,13 +109,11 @@ fn benchmark(
     println!("Query duration {}ms", query_duration);
 
     if result_qi_columns.len() > 0 {
-        let equivalence_class_count = count_equivalence_classes(
-            &result,
-            &result_qi_columns
-                .iter()
-                .map(|c| c.as_str())
-                .collect::<Vec<&str>>(),
-        );
+        let qi_columns_strs = result_qi_columns
+            .iter()
+            .map(|c| c.as_str())
+            .collect::<Vec<&str>>();
+        let equivalence_class_count = count_equivalence_classes(&result, &qi_columns_strs);
         println!("Equivalence class count {:?}", equivalence_class_count);
 
         let average_eq_size = result.height() / equivalence_class_count;
@@ -78,8 +124,12 @@ fn benchmark(
             "Normalized average eq size {:?}",
             normalized_average_eq_size
         );
+
+        let dm = calculate_discernibility_metric(&result, &qi_columns_strs);
+        println!("Discernibility_metric {:?}", dm);
     }
 
+    // TODO: KL-Divergence
     // let baseline_ndarray = baseline.to_ndarray::<Float64Type>().unwrap();
     // let ndarray = result.to_ndarray::<Float64Type>().unwrap();
     // let kl_divergence = ndarray.kl_divergence(&baseline_ndarray).unwrap();
