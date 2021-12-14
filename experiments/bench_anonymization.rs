@@ -98,47 +98,48 @@ fn main() {
     let mut result_columns = vec![];
     let mut result_durations = vec![];
 
-    for i in 0..3 {
-        let end = column_configs.len() - (2 - i);
-        let columns = column_configs[0..end].to_vec();
+    // TODO: Different column configs
+    // for i in 0..3 {
+    //     let end = column_configs.len() - (2 - i);
+    //     let columns = column_configs[0..end].to_vec();
+    // }
 
-        for k in vec![3, 10, 30, 50, 100, 250] {
-            let column_names: Vec<String> = columns
-                .iter()
-                .filter_map(|c| match c {
-                    ColumnConfiguration::PseudoIdentifier { name } => {
-                        Some(name.replace("adults.", ""))
-                    }
-                    _ => None,
-                })
-                .collect();
+    let columns = column_configs;
 
-            println!("");
-            println!(
-                "pgcloak k-anonymization | k={} | QI columns: {}",
+    for k in vec![3, 10, 30, 50, 100, 250] {
+        let column_names: Vec<String> = columns
+            .iter()
+            .filter_map(|c| match c {
+                ColumnConfiguration::PseudoIdentifier { name } => Some(name.replace("adults.", "")),
+                _ => None,
+            })
+            .collect();
+
+        println!("");
+        println!(
+            "pgcloak k-anonymization | k={} | QI columns: {}",
+            k,
+            column_names.join(", ")
+        );
+        let (data, duration) = benchmark(
+            &docker,
+            &database_connection_url,
+            &PgcloakConfig {
+                columns: columns.clone(),
+                max_pool_size: 10,
                 k,
-                column_names.join(", ")
-            );
-            let (data, duration) = benchmark(
-                &docker,
-                &database_connection_url,
-                &PgcloakConfig {
-                    columns: columns.clone(),
-                    max_pool_size: 10,
-                    k,
-                },
-            );
+            },
+        );
 
-            result_labels.push(format!(
-                "k-anonymization | k={} | QI columns: {}",
-                k,
-                column_names.join(", ")
-            ));
-            result_data.push(data);
-            result_columns.push(column_names);
-            result_ks.push(k);
-            result_durations.push(duration);
-        }
+        result_labels.push(format!(
+            "k-anonymization | k={} | QI columns: {}",
+            k,
+            column_names.join(", ")
+        ));
+        result_data.push(data);
+        result_columns.push(column_names);
+        result_ks.push(k);
+        result_durations.push(duration);
     }
 
     #[cfg(feature = "analysis")]
@@ -251,11 +252,33 @@ fn main() {
                     return "{0:.2f} s".format(x / 1000)
                 return "{0} ms".format(x)
 
-            fig, ax = plt.subplots()
+            fig, axs = plt.subplots(4, 1)
+            ax = axs[0]
             ax.set_title("Query durations")
             ax.bar('result_labels, 'durations_in_milis)
             ax.bar_label(ax.containers[0])
             ax.get_yaxis().set_major_formatter(FuncFormatter(format_ms))
+            ax.set_axisbelow(True)
+            ax.get_yaxis().grid(True, color="#EEEEEE")
+
+            ax = axs[1]
+            ax.set_title("Equivalence class count")
+            ax.bar('result_labels, 'eq_class_counts)
+            ax.bar_label(ax.containers[0])
+            ax.set_axisbelow(True)
+            ax.get_yaxis().grid(True, color="#EEEEEE")
+
+            ax = axs[2]
+            ax.set_title("Average equivalence class sizes")
+            ax.bar('result_labels, 'average_eq_class_sizes)
+            ax.bar_label(ax.containers[0])
+            ax.set_axisbelow(True)
+            ax.get_yaxis().grid(True, color="#EEEEEE")
+
+            ax = axs[3]
+            ax.set_title("Discernibility Metric")
+            ax.bar('result_labels, 'discernibility_metrics)
+            ax.bar_label(ax.containers[0])
             ax.set_axisbelow(True)
             ax.get_yaxis().grid(True, color="#EEEEEE")
 
