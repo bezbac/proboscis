@@ -130,6 +130,7 @@ dependencies = [
  "indoc",
  "inline-python",
  "itertools",
+ "naivebayes",
  "ndarray",
  "ndarray-stats",
  "polars",
@@ -1143,6 +1144,12 @@ dependencies = [
  "quote",
  "syn",
 ]
+
+[[package]]
+name = "naivebayes"
+version = "0.1.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a4b9f2e2b6af92d3ed41abdf53cc66c9101cdb493c0fc3d6625e3aecbc7016e5"
 
 [[package]]
 name = "native-tls"

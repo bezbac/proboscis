@@ -59,12 +59,15 @@ fn main() {
 
     seed_database(&database_connection_url);
 
-    let baseline_result = query_data_into_dataframe(&database_connection_url, QUERY);
-    println!("{}", baseline_result.head(Some(12)));
+    let mut result_labels = vec![];
+    let mut result_data = vec![];
+    let mut result_ks = vec![];
+    let mut result_columns = vec![];
+    let mut result_durations = vec![];
 
     println!("");
     println!("pgcloak baseline");
-    benchmark(
+    let (data, duration) = benchmark(
         &docker,
         &database_connection_url,
         &PgcloakConfig {
@@ -73,6 +76,15 @@ fn main() {
             max_pool_size: 10,
         },
     );
+
+    println!("{}", data.head(Some(12)));
+    println!("");
+
+    result_labels.push(String::from("baseline"));
+    result_durations.push(duration);
+    result_data.push(data);
+    result_columns.push(vec![]);
+    result_ks.push(None);
 
     let column_configs = vec![
         ColumnConfiguration::PseudoIdentifier {
@@ -92,12 +104,6 @@ fn main() {
         },
     ];
 
-    let mut result_labels = vec![];
-    let mut result_data = vec![];
-    let mut result_ks = vec![];
-    let mut result_columns = vec![];
-    let mut result_durations = vec![];
-
     // TODO: Different column configs
     // for i in 0..3 {
     //     let end = column_configs.len() - (2 - i);
@@ -106,7 +112,8 @@ fn main() {
 
     let columns = column_configs;
 
-    for k in vec![3, 10, 30, 50, 100, 250] {
+    let ks = vec![3, 10, 30, 50, 100, 250];
+    for k in ks {
         let column_names: Vec<String> = columns
             .iter()
             .filter_map(|c| match c {
@@ -137,9 +144,9 @@ fn main() {
             column_names.join(", ")
         ));
         result_data.push(data);
-        result_columns.push(column_names);
-        result_ks.push(k);
         result_durations.push(duration);
+        result_columns.push(column_names);
+        result_ks.push(Some(k));
     }
 
     #[cfg(feature = "analysis")]
@@ -202,17 +209,75 @@ fn main() {
             .map(|duration| duration.as_millis())
             .collect();
 
+        let classification_accuracies: Vec<f64> = result_data
+            .iter()
+            .map(|df| {
+                use naivebayes::NaiveBayes;
+                let mut nb = NaiveBayes::new();
+
+                let serieses: Vec<Vec<String>> = df
+                    .get_columns()
+                    .iter()
+                    .map(|series| {
+                        series
+                            .cast::<Utf8Type>()
+                            .unwrap()
+                            .utf8()
+                            .unwrap()
+                            .into_iter()
+                            .map(|v| v.map_or("None".to_string(), |s| s.to_string()))
+                            .collect()
+                    })
+                    .collect();
+
+                let data: (Vec<(Vec<String>, String)>) = (0..df.height())
+                    .map(|idx| {
+                        let tokens = serieses[..serieses.len() - 1]
+                            .iter()
+                            .map(|s| s[idx].clone())
+                            .collect();
+                        let label = serieses[serieses.len() - 1][idx].clone();
+                        (tokens, label)
+                    })
+                    .collect();
+
+                for (tokens, label) in data[500..].iter() {
+                    nb.train(&tokens, &label);
+                }
+
+                let correctly_classified: Vec<bool> = data[..500]
+                    .iter()
+                    .map(|(tokens, label)| {
+                        let classification = nb.classify(&tokens);
+                        let opposite_label = if label == "<=50K" { ">50K" } else { "<=50K" };
+                        let was_correct = classification[label] > classification[opposite_label];
+                        was_correct
+                    })
+                    .collect();
+
+                let accuracy = correctly_classified
+                    .iter()
+                    .filter(|v| **v)
+                    .collect::<Vec<&bool>>()
+                    .len() as f64
+                    / correctly_classified.len() as f64;
+
+                accuracy
+            })
+            .collect();
+
         let mut eq_class_counts = vec![];
         let mut average_eq_class_sizes = vec![];
         let mut normalized_average_eq_class_sizes = vec![];
         let mut discernibility_metrics = vec![];
 
         for index in 0..result_data.len() {
-            let k = result_ks.get(index).unwrap();
-            let data = result_data.get(index).unwrap();
             let columns = result_columns.get(index).unwrap();
+            let data = result_data.get(index).unwrap();
 
             if columns.len() > 0 {
+                let k = result_ks.get(index).unwrap().unwrap();
+
                 let qi_columns_strs = columns.iter().map(|c| c.as_str()).collect::<Vec<&str>>();
 
                 let equivalence_class_count = count_equivalence_classes(&data, &qi_columns_strs);
@@ -228,10 +293,6 @@ fn main() {
                 discernibility_metrics.push(Some(dm));
 
                 // TODO: KL-Divergence
-                // let baseline_ndarray = baseline.to_ndarray::<Float64Type>().unwrap();
-                // let ndarray = result.to_ndarray::<Float64Type>().unwrap();
-                // let kl_divergence = ndarray.kl_divergence(&baseline_ndarray).unwrap();
-                // println!("KL-Divergence {}", kl_divergence);
             } else {
                 eq_class_counts.push(None);
                 average_eq_class_sizes.push(None);
@@ -252,7 +313,7 @@ fn main() {
                     return "{0:.2f} s".format(x / 1000)
                 return "{0} ms".format(x)
 
-            fig, axs = plt.subplots(4, 1)
+            fig, axs = plt.subplots(5, 1)
             ax = axs[0]
             ax.set_title("Query durations")
             ax.plot('result_ks, 'durations_in_milis)
@@ -275,6 +336,12 @@ fn main() {
             ax = axs[3]
             ax.set_title("Discernibility Metric")
             ax.plot('result_ks, 'discernibility_metrics)
+            ax.set_axisbelow(True)
+            ax.get_yaxis().grid(True, color="#EEEEEE")
+
+            ax = axs[4]
+            ax.set_title("Classification accuracy")
+            ax.plot('result_ks, 'classification_accuracies)
             ax.set_axisbelow(True)
             ax.get_yaxis().grid(True, color="#EEEEEE")
 
