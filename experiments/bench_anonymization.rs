@@ -313,38 +313,41 @@ fn main() {
                     return "{0:.2f} s".format(x / 1000)
                 return "{0} ms".format(x)
 
-            fig, axs = plt.subplots(5, 1)
-            ax = axs[0]
+            fig = plt.figure()
+            gs = fig.add_gridspec(ncols=2, nrows=3)
+
+            ax = fig.add_subplot(gs[0, :])
             ax.set_title("Query durations")
-            ax.plot('result_ks, 'durations_in_milis)
+            ax.plot('result_labels, 'durations_in_milis, marker = "o")
             ax.get_yaxis().set_major_formatter(FuncFormatter(format_ms))
             ax.set_axisbelow(True)
             ax.get_yaxis().grid(True, color="#EEEEEE")
 
-            ax = axs[1]
+            ax = fig.add_subplot(gs[1, 0])
             ax.set_title("Equivalence class count")
-            ax.plot('result_ks, 'eq_class_counts)
+            ax.plot('result_labels, 'eq_class_counts, marker = "o")
             ax.set_axisbelow(True)
             ax.get_yaxis().grid(True, color="#EEEEEE")
 
-            ax = axs[2]
+            ax = fig.add_subplot(gs[1, 1])
             ax.set_title("Average equivalence class sizes")
-            ax.plot('result_ks, 'average_eq_class_sizes)
+            ax.plot('result_labels, 'average_eq_class_sizes, marker = "o")
             ax.set_axisbelow(True)
             ax.get_yaxis().grid(True, color="#EEEEEE")
 
-            ax = axs[3]
+            ax = fig.add_subplot(gs[2, 0])
             ax.set_title("Discernibility Metric")
-            ax.plot('result_ks, 'discernibility_metrics)
+            ax.plot('result_labels, 'discernibility_metrics, marker = "o")
             ax.set_axisbelow(True)
             ax.get_yaxis().grid(True, color="#EEEEEE")
 
-            ax = axs[4]
+            ax = fig.add_subplot(gs[2, 1])
             ax.set_title("Classification accuracy")
-            ax.plot('result_ks, 'classification_accuracies)
+            ax.plot('result_labels, 'classification_accuracies, marker = "o")
             ax.set_axisbelow(True)
             ax.get_yaxis().grid(True, color="#EEEEEE")
 
+            plt.tight_layout()
             plt.show()
         }
     }
