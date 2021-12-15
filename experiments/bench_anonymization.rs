@@ -66,7 +66,7 @@ fn main() {
     let mut result_durations = vec![];
 
     println!("");
-    println!("pgcloak baseline");
+    println!("baseline");
     let (data, duration) = benchmark(
         &docker,
         &database_connection_url,
@@ -84,7 +84,7 @@ fn main() {
     result_durations.push(duration);
     result_data.push(data);
     result_columns.push(vec![]);
-    result_ks.push(None);
+    result_ks.push(-1);
 
     let column_configs = vec![
         ColumnConfiguration::PseudoIdentifier {
@@ -123,11 +123,7 @@ fn main() {
             .collect();
 
         println!("");
-        println!(
-            "pgcloak k-anonymization | k={} | QI columns: {}",
-            k,
-            column_names.join(", ")
-        );
+        println!("k={} | QI columns: {}", k, column_names.join(", "));
         let (data, duration) = benchmark(
             &docker,
             &database_connection_url,
@@ -138,15 +134,11 @@ fn main() {
             },
         );
 
-        result_labels.push(format!(
-            "k-anonymization | k={} | QI columns: {}",
-            k,
-            column_names.join(", ")
-        ));
+        result_labels.push(format!("k={} | QI columns: {}", k, column_names.join(", ")));
         result_data.push(data);
         result_durations.push(duration);
         result_columns.push(column_names);
-        result_ks.push(Some(k));
+        result_ks.push(k as isize);
     }
 
     #[cfg(feature = "analysis")]
@@ -274,10 +266,9 @@ fn main() {
         for index in 0..result_data.len() {
             let columns = result_columns.get(index).unwrap();
             let data = result_data.get(index).unwrap();
+            let k = result_ks.get(index).unwrap();
 
             if columns.len() > 0 {
-                let k = result_ks.get(index).unwrap().unwrap();
-
                 let qi_columns_strs = columns.iter().map(|c| c.as_str()).collect::<Vec<&str>>();
 
                 let equivalence_class_count = count_equivalence_classes(&data, &qi_columns_strs);
@@ -286,7 +277,7 @@ fn main() {
                 let average_eq_size = data.height() / equivalence_class_count;
                 average_eq_class_sizes.push(Some(average_eq_size));
 
-                let normalized_average_eq_size = average_eq_size / k;
+                let normalized_average_eq_size = average_eq_size / *k as usize;
                 normalized_average_eq_class_sizes.push(Some(normalized_average_eq_size));
 
                 let dm = calculate_discernibility_metric(&data, &qi_columns_strs);
@@ -314,36 +305,36 @@ fn main() {
                 return "{0} ms".format(x)
 
             fig = plt.figure()
-            gs = fig.add_gridspec(ncols=2, nrows=3)
+            gs = fig.add_gridspec(ncols=6, nrows=2)
 
-            ax = fig.add_subplot(gs[0, :])
+            ax = fig.add_subplot(gs[0, :3])
             ax.set_title("Query durations")
-            ax.plot('result_labels, 'durations_in_milis, marker = "o")
+            ax.plot('result_ks, 'durations_in_milis, marker = "o")
             ax.get_yaxis().set_major_formatter(FuncFormatter(format_ms))
             ax.set_axisbelow(True)
             ax.get_yaxis().grid(True, color="#EEEEEE")
 
-            ax = fig.add_subplot(gs[1, 0])
-            ax.set_title("Equivalence class count")
-            ax.plot('result_labels, 'eq_class_counts, marker = "o")
-            ax.set_axisbelow(True)
-            ax.get_yaxis().grid(True, color="#EEEEEE")
-
-            ax = fig.add_subplot(gs[1, 1])
-            ax.set_title("Average equivalence class sizes")
-            ax.plot('result_labels, 'average_eq_class_sizes, marker = "o")
-            ax.set_axisbelow(True)
-            ax.get_yaxis().grid(True, color="#EEEEEE")
-
-            ax = fig.add_subplot(gs[2, 0])
-            ax.set_title("Discernibility Metric")
-            ax.plot('result_labels, 'discernibility_metrics, marker = "o")
-            ax.set_axisbelow(True)
-            ax.get_yaxis().grid(True, color="#EEEEEE")
-
-            ax = fig.add_subplot(gs[2, 1])
+            ax = fig.add_subplot(gs[0, 3:])
             ax.set_title("Classification accuracy")
-            ax.plot('result_labels, 'classification_accuracies, marker = "o")
+            ax.plot('result_ks, 'classification_accuracies, marker = "o")
+            ax.set_axisbelow(True)
+            ax.get_yaxis().grid(True, color="#EEEEEE")
+
+            ax = fig.add_subplot(gs[1, :2])
+            ax.set_title("Equivalence class count")
+            ax.plot('result_ks, 'eq_class_counts, marker = "o")
+            ax.set_axisbelow(True)
+            ax.get_yaxis().grid(True, color="#EEEEEE")
+
+            ax = fig.add_subplot(gs[1, 2:4])
+            ax.set_title("Average equivalence class sizes")
+            ax.plot('result_ks, 'average_eq_class_sizes, marker = "o")
+            ax.set_axisbelow(True)
+            ax.get_yaxis().grid(True, color="#EEEEEE")
+
+            ax = fig.add_subplot(gs[1, 4:])
+            ax.set_title("Discernibility Metric")
+            ax.plot('result_ks, 'discernibility_metrics, marker = "o")
             ax.set_axisbelow(True)
             ax.get_yaxis().grid(True, color="#EEEEEE")
 
