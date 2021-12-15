@@ -1,5 +1,6 @@
 mod utils;
 
+use crate::utils::benchmark::print_benchmark_stats;
 use crate::utils::data::query_data_into_dataframe;
 use crate::utils::docker::pgcloak::start_pgcloak;
 use crate::utils::docker::pgcloak::ColumnConfiguration;
@@ -8,11 +9,11 @@ use crate::utils::docker::postgres::start_dockerized_postgres;
 use polars::prelude::DataFrame;
 use postgres::{Client, NoTls};
 use std::fs;
-use std::time::Duration;
 use std::time::Instant;
 use testcontainers::clients::{self};
 
 const QUERY: &str = "SELECT * FROM adults";
+const ITERATIONS: i32 = 1;
 
 fn seed_database(database_connection_url: &str) {
     let mut client = Client::connect(database_connection_url, NoTls).unwrap();
@@ -25,31 +26,22 @@ fn benchmark(
     docker: &clients::Cli,
     database_connection_url: &str,
     config: &PgcloakConfig,
-) -> (DataFrame, Duration) {
+) -> (DataFrame, Vec<(Instant, Instant)>) {
     let (pgcloak_connection_url, _pgcloak_node, _pgcloak_tempdir) =
         start_pgcloak(docker, database_connection_url, config);
 
-    let before = Instant::now();
     let result = query_data_into_dataframe(&pgcloak_connection_url, QUERY);
-    let after = Instant::now();
 
-    // let (docker_stats, baseline_durations) =
-    //     utils::docker::stats::while_collecting_docker_stats(_pgcloak_node.id(), &|| {
-    //         utils::benchmark::benchmark_function(10, &|| {
-    //             let mut client = Client::connect(&pgcloak_connection_url, NoTls).unwrap();
-    //             let result = client.query(QUERY, &[]);
-    //             if result.is_err() {
-    //                 println!("Error: {:?}", result.unwrap_err())
-    //             }
-    //             drop(client)
-    //         })
-    //     });
-    // print_benchmark_stats(&baseline_durations);
+    let durations = utils::benchmark::benchmark_function(ITERATIONS, &|| {
+        let mut client = Client::connect(&pgcloak_connection_url, NoTls).unwrap();
+        client.query(QUERY, &[]).unwrap();
+    });
+    print_benchmark_stats(&durations);
 
     drop(_pgcloak_node);
     drop(_pgcloak_tempdir);
 
-    (result, after.duration_since(before))
+    (result, durations)
 }
 
 fn main() {
@@ -67,7 +59,7 @@ fn main() {
 
     println!("");
     println!("baseline");
-    let (data, duration) = benchmark(
+    let (data, durations) = benchmark(
         &docker,
         &database_connection_url,
         &PgcloakConfig {
@@ -81,7 +73,7 @@ fn main() {
     println!("");
 
     result_labels.push(String::from("baseline"));
-    result_durations.push(duration);
+    result_durations.push(durations);
     result_data.push(data);
     result_columns.push(vec![]);
     result_ks.push(-1);
@@ -104,41 +96,42 @@ fn main() {
         },
     ];
 
-    // TODO: Different column configs
-    // for i in 0..3 {
-    //     let end = column_configs.len() - (2 - i);
-    //     let columns = column_configs[0..end].to_vec();
-    // }
+    // let ks = vec![3, 10, 30, 50, 100, 250];
+    let ks = vec![3, 10, 30];
 
-    let columns = column_configs;
+    for i in 0..3 {
+        let end = column_configs.len() - (2 - i);
+        let columns = column_configs[0..end].to_vec();
 
-    let ks = vec![3, 10, 30, 50, 100, 250];
-    for k in ks {
-        let column_names: Vec<String> = columns
-            .iter()
-            .filter_map(|c| match c {
-                ColumnConfiguration::PseudoIdentifier { name } => Some(name.replace("adults.", "")),
-                _ => None,
-            })
-            .collect();
+        for k in &ks {
+            let column_names: Vec<String> = columns
+                .iter()
+                .filter_map(|c| match c {
+                    ColumnConfiguration::PseudoIdentifier { name } => {
+                        Some(name.replace("adults.", ""))
+                    }
+                    _ => None,
+                })
+                .collect();
 
-        println!("");
-        println!("k={} | QI columns: {}", k, column_names.join(", "));
-        let (data, duration) = benchmark(
-            &docker,
-            &database_connection_url,
-            &PgcloakConfig {
-                columns: columns.clone(),
-                max_pool_size: 10,
-                k,
-            },
-        );
+            println!("");
+            println!("k={} | QI columns: {}", k, column_names.join(", "));
+            let (data, durations) = benchmark(
+                &docker,
+                &database_connection_url,
+                &PgcloakConfig {
+                    columns: columns.clone(),
+                    max_pool_size: 10,
+                    k: *k,
+                },
+            );
 
-        result_labels.push(format!("k={} | QI columns: {}", k, column_names.join(", ")));
-        result_data.push(data);
-        result_durations.push(duration);
-        result_columns.push(column_names);
-        result_ks.push(k as isize);
+            result_labels.push(format!("k={} | QI columns: {}", k, column_names.join(", ")));
+            result_data.push(data);
+            result_durations.push(durations);
+            result_columns.push(column_names);
+            result_ks.push(*k as isize);
+        }
     }
 
     #[cfg(feature = "analysis")]
@@ -196,9 +189,14 @@ fn main() {
                 .fold(0, |agg, value| agg + (value * value) as usize)
         }
 
-        let durations_in_milis: Vec<u128> = result_durations
+        let durations_in_milis: Vec<Vec<u128>> = result_durations
             .iter()
-            .map(|duration| duration.as_millis())
+            .map(|durations| {
+                durations
+                    .iter()
+                    .map(|(end, start)| end.duration_since(*start).as_millis())
+                    .collect()
+            })
             .collect();
 
         let classification_accuracies: Vec<f64> = result_data
@@ -260,7 +258,7 @@ fn main() {
 
         let mut eq_class_counts = vec![];
         let mut average_eq_class_sizes = vec![];
-        let mut normalized_average_eq_class_sizes = vec![];
+        // let mut normalized_average_eq_class_sizes = vec![];
         let mut discernibility_metrics = vec![];
 
         for index in 0..result_data.len() {
@@ -277,8 +275,8 @@ fn main() {
                 let average_eq_size = data.height() / equivalence_class_count;
                 average_eq_class_sizes.push(Some(average_eq_size));
 
-                let normalized_average_eq_size = average_eq_size / *k as usize;
-                normalized_average_eq_class_sizes.push(Some(normalized_average_eq_size));
+                // let normalized_average_eq_size = average_eq_size / *k as usize;
+                // normalized_average_eq_class_sizes.push(Some(normalized_average_eq_size));
 
                 let dm = calculate_discernibility_metric(&data, &qi_columns_strs);
                 discernibility_metrics.push(Some(dm));
@@ -287,10 +285,59 @@ fn main() {
             } else {
                 eq_class_counts.push(None);
                 average_eq_class_sizes.push(None);
-                normalized_average_eq_class_sizes.push(None);
+                // normalized_average_eq_class_sizes.push(None);
                 discernibility_metrics.push(None);
             }
         }
+
+        let mut groups: HashMap<
+            String,
+            (
+                Vec<isize>,
+                Vec<f64>,
+                Vec<Option<usize>>,
+                Vec<Option<usize>>,
+                Vec<Option<usize>>,
+            ),
+        > = HashMap::new();
+        for idx in (0..result_labels.len()) {
+            let columns = &result_columns[idx];
+
+            let key = if columns.len() < 1 {
+                String::from("No anonymization")
+            } else {
+                format!("QI {}", columns.join(", "))
+            };
+
+            let k = result_ks[idx];
+            let accuracy = classification_accuracies[idx];
+            let eq_class_count = eq_class_counts[idx];
+            let average_eq_size = average_eq_class_sizes[idx];
+            let discernibility_metric = discernibility_metrics[idx];
+
+            let (
+                grouped_ks,
+                grouped_accuracies,
+                grouped_eq_class_counts,
+                grouped_average_eq_class_sizes,
+                grouped_discernibility_metrics,
+            ) = groups.entry(key).or_default();
+
+            grouped_accuracies.push(accuracy);
+            grouped_ks.push(k);
+            grouped_eq_class_counts.push(eq_class_count);
+            grouped_average_eq_class_sizes.push(average_eq_size);
+            grouped_discernibility_metrics.push(discernibility_metric);
+        }
+
+        let group_values: Vec<(
+            Vec<isize>,
+            Vec<f64>,
+            Vec<Option<usize>>,
+            Vec<Option<usize>>,
+            Vec<Option<usize>>,
+        )> = groups.values().cloned().collect();
+        let group_labels: Vec<String> = groups.keys().cloned().collect();
 
         python! {
             import matplotlib.pyplot as plt
@@ -308,35 +355,46 @@ fn main() {
             gs = fig.add_gridspec(ncols=6, nrows=2)
 
             ax = fig.add_subplot(gs[0, :3])
-            ax.set_title("Query durations")
-            ax.plot('result_ks, 'durations_in_milis, marker = "o")
+            ax.set_title("Query durations (% iterations)" % 'ITERATIONS)
+            ax = sns.violinplot(data='durations_in_milis)
+            ax.set_xticklabels('result_ks)
             ax.get_yaxis().set_major_formatter(FuncFormatter(format_ms))
             ax.set_axisbelow(True)
             ax.get_yaxis().grid(True, color="#EEEEEE")
-
+            ax.set_xlabel("k (-1 represents no anonymization)")
             ax = fig.add_subplot(gs[0, 3:])
             ax.set_title("Classification accuracy")
-            ax.plot('result_ks, 'classification_accuracies, marker = "o")
+            for ks, accuracies, eq_class_counts, average_eq_sizes, discernibility_metrics in 'group_values:
+                ax.plot(ks, accuracies, marker = "o")
+            ax.legend('group_labels)
             ax.set_axisbelow(True)
             ax.get_yaxis().grid(True, color="#EEEEEE")
+            ax.set_xlabel("k (-1 represents no anonymization)")
 
             ax = fig.add_subplot(gs[1, :2])
             ax.set_title("Equivalence class count")
-            ax.plot('result_ks, 'eq_class_counts, marker = "o")
+            for ks, accuracies, eq_class_counts, average_eq_sizes, discernibility_metrics in 'group_values:
+                ax.plot(ks, eq_class_counts, marker = "o")
+            ax.legend('group_labels)
             ax.set_axisbelow(True)
             ax.get_yaxis().grid(True, color="#EEEEEE")
+            ax.set_xlabel("k")
 
             ax = fig.add_subplot(gs[1, 2:4])
             ax.set_title("Average equivalence class sizes")
-            ax.plot('result_ks, 'average_eq_class_sizes, marker = "o")
+            for ks, accuracies, eq_class_counts, average_eq_sizes, discernibility_metrics in 'group_values:
+                ax.plot(ks, average_eq_sizes, marker = "o")
             ax.set_axisbelow(True)
             ax.get_yaxis().grid(True, color="#EEEEEE")
+            ax.set_xlabel("k")
 
             ax = fig.add_subplot(gs[1, 4:])
             ax.set_title("Discernibility Metric")
-            ax.plot('result_ks, 'discernibility_metrics, marker = "o")
+            for ks, accuracies, eq_class_counts, average_eq_sizes, discernibility_metrics in 'group_values:
+                ax.plot(ks, discernibility_metrics, marker = "o")
             ax.set_axisbelow(True)
             ax.get_yaxis().grid(True, color="#EEEEEE")
+            ax.set_xlabel("k")
 
             plt.tight_layout()
             plt.show()
