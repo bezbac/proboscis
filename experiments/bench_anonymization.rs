@@ -25,11 +25,14 @@ fn seed_database(database_connection_url: &str) {
 
 fn benchmark(
     docker: &clients::Cli,
-    database_connection_url: &str,
     config: &PgcloakConfig,
 ) -> (DataFrame, Vec<(Instant, Instant)>) {
+    let (database_connection_url, _postgres_node) = start_dockerized_postgres(&docker);
+
+    seed_database(&database_connection_url);
+
     let (pgcloak_connection_url, _pgcloak_node, _pgcloak_tempdir) =
-        start_pgcloak(docker, database_connection_url, config);
+        start_pgcloak(docker, &database_connection_url, config);
 
     std::thread::sleep(std::time::Duration::from_millis(1000));
 
@@ -43,16 +46,13 @@ fn benchmark(
 
     drop(_pgcloak_node);
     drop(_pgcloak_tempdir);
+    drop(_postgres_node);
 
     (result, durations)
 }
 
 fn main() {
     let docker = clients::Cli::default();
-
-    let (database_connection_url, _postgres_node) = start_dockerized_postgres(&docker);
-
-    seed_database(&database_connection_url);
 
     let mut result_labels = vec![];
     let mut result_data = vec![];
@@ -64,7 +64,6 @@ fn main() {
     println!("baseline");
     let (data, durations) = benchmark(
         &docker,
-        &database_connection_url,
         &PgcloakConfig {
             k: 3,
             columns: vec![],
@@ -81,7 +80,8 @@ fn main() {
     result_columns.push(vec![]);
     result_ks.push(-1);
 
-    let ks = vec![3, 10, 30, 50, 100, 250];
+    // let ks = vec![3, 10, 30, 50, 100, 250];
+    let ks = vec![3, 30, 100];
     let column_configs = vec![
         ColumnConfiguration::PseudoIdentifier {
             name: String::from("adults.age"),
@@ -100,7 +100,7 @@ fn main() {
         },
     ];
 
-    let columns: Vec<Vec<ColumnConfiguration>> = (0..3)
+    let columns: Vec<Vec<ColumnConfiguration>> = (0..2)
         .map(|i| {
             let end = column_configs.len() - (2 - i);
             let columns = column_configs[0..end].to_vec();
@@ -121,7 +121,6 @@ fn main() {
         println!("k={} | QI columns: {}", k, column_names.join(", "));
         let (data, durations) = benchmark(
             &docker,
-            &database_connection_url,
             &PgcloakConfig {
                 columns: columns.clone(),
                 max_pool_size: 10,
@@ -198,13 +197,15 @@ fn main() {
                 use naivebayes::NaiveBayes;
                 let mut nb = NaiveBayes::new();
 
-                let df = if qi_columns.len() > 0 {
-                    let mut selected_columns = qi_columns.to_vec();
-                    selected_columns.push(String::from("class"));
-                    df.select(&selected_columns).unwrap()
-                } else {
-                    df.clone()
-                };
+                let classification_columns = vec![
+                    "age",
+                    "sex",
+                    "education",
+                    "occupation",
+                    "hoursperweek",
+                    "class",
+                ];
+                let df = df.select(&classification_columns).unwrap();
 
                 let serieses: Vec<Vec<String>> = df
                     .get_columns()
@@ -373,18 +374,22 @@ fn main() {
             fig = plt.figure()
             gs = fig.add_gridspec(ncols=6, nrows=2)
 
-            ax = fig.add_subplot(gs[0, :2])
-            ax.set_title("Query durations (% iterations)" % 'ITERATIONS)
-            for ks, accuracies, eq_class_counts, average_eq_sizes, discernibility_metrics, min_durations, mean_durations in 'group_values:
+            ax = fig.add_subplot(gs[0, :3])
+            ax.set_title("Query durations (%s iterations)" % 'ITERATIONS)
+
+            for i, (ks, accuracies, eq_class_counts, average_eq_sizes, discernibility_metrics, min_durations, mean_durations) in enumerate('group_values):
                 color = next(ax._get_lines.prop_cycler)["color"]
-                ax.plot(ks, min_durations, marker = "o", linestyle="-", color=color)
-                ax.plot(ks, mean_durations, marker = "x", linestyle="--", color=color)
+                label = 'group_labels[i]
+                ax.plot(ks, min_durations, marker = "o", linestyle="-", color=color, label="%s (min)" % label)
+                ax.plot(ks, mean_durations, marker = "x", linestyle="--", color=color, label="%s (mean)" % label)
+
+            ax.legend()
             ax.get_yaxis().set_major_formatter(FuncFormatter(format_ms))
             ax.set_axisbelow(True)
             ax.get_yaxis().grid(True, color="#EEEEEE")
             ax.set_xlabel("k (-1 represents no anonymization)")
 
-            ax = fig.add_subplot(gs[0, 2:])
+            ax = fig.add_subplot(gs[0, 3:])
             ax.set_title("Classification accuracy")
             for ks, accuracies, eq_class_counts, average_eq_sizes, discernibility_metrics, min_durations, mean_durations in 'group_values:
                 ax.plot(ks, accuracies, marker = "o")
