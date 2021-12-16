@@ -44,30 +44,6 @@ fn main() {
     result_durations.push(baseline_durations);
     result_docker_stats.push(None);
 
-    // postgres 13.4 (pgcloak - session pooling - 10 max connections)
-    println!("pgcloak");
-    let (pgcloak_connection_url, _pgcloak_node, _pgcloak_tempdir) = start_pgcloak(
-        &docker,
-        &database_connection_url,
-        &PgcloakConfig {
-            k: 3,
-            columns: vec![],
-            max_pool_size: 10,
-        },
-    );
-    let (pgcloak_docker_stats, pgcloak_durations) =
-        utils::docker::stats::while_collecting_docker_stats(_pgcloak_node.id(), &|| {
-            utils::benchmark::benchmark_function(iterations, &|| {
-                simple_query(&pgcloak_connection_url)
-            })
-        });
-    print_benchmark_stats(&pgcloak_durations);
-    result_labels.push("pgcloak");
-    result_durations.push(pgcloak_durations);
-    result_docker_stats.push(Some(pgcloak_docker_stats));
-    drop(_pgcloak_node);
-    drop(_pgcloak_tempdir);
-
     // postgres 13.4 (pg_pool)
     println!("pgpool");
     let (pgpool_connection_url, _pgpool_node) = start_pgpool(&docker, &database_connection_url);
@@ -98,6 +74,30 @@ fn main() {
     result_durations.push(pgbouncer_durations);
     result_docker_stats.push(Some(pgbouncer_docker_stats));
     drop(_pgbouncer_node);
+
+    // postgres 13.4 (pgcloak - session pooling - 10 max connections)
+    println!("pgcloak");
+    let (pgcloak_connection_url, _pgcloak_node, _pgcloak_tempdir) = start_pgcloak(
+        &docker,
+        &database_connection_url,
+        &PgcloakConfig {
+            k: 3,
+            columns: vec![],
+            max_pool_size: 10,
+        },
+    );
+    let (pgcloak_docker_stats, pgcloak_durations) =
+        utils::docker::stats::while_collecting_docker_stats(_pgcloak_node.id(), &|| {
+            utils::benchmark::benchmark_function(iterations, &|| {
+                simple_query(&pgcloak_connection_url)
+            })
+        });
+    print_benchmark_stats(&pgcloak_durations);
+    result_labels.push("pgcloak");
+    result_durations.push(pgcloak_durations);
+    result_docker_stats.push(Some(pgcloak_docker_stats));
+    drop(_pgcloak_node);
+    drop(_pgcloak_tempdir);
 
     #[cfg(feature = "analysis")]
     {
@@ -253,18 +253,11 @@ fn main() {
                     return "{0:.2f} s".format(x / 1000)
                 return "{0} ms".format(x)
 
-            fig, axs = plt.subplots(1, 3)
-            ax = axs[0]
-            ax.set_title("Total benchmark duration (%s iterations)" % 'iterations)
-            ax.bar('result_labels, 'total_times)
-            ax.bar_label(ax.containers[0])
-            ax.get_yaxis().set_major_formatter(FuncFormatter(format_ms))
-            ax.set_axisbelow(True)
-            ax.get_yaxis().grid(True, color="#EEEEEE")
+            fig, axs = plt.subplots(1, 2)
 
             width = 0.2
             x = np.arange(len('min_durations_in_milis))
-            ax = axs[1]
+            ax = axs[0]
             ax.set_title("Statistics")
             ax.bar(x - width, 'min_durations_in_milis, width, label="Min")
             ax.bar(x, 'mean_durations_in_milis, width, label="Mean")
@@ -283,7 +276,7 @@ fn main() {
                 bar_color = bar.get_facecolor()
                 ax.text(text_x, text_y, text, ha="center", va="bottom", color=bar_color, size=12)
 
-            ax = axs[2]
+            ax = axs[1]
             ax.set_title("Individual run duration distribution (%s iterations)" % 'iterations)
             ax = sns.violinplot(data='durations_in_milis)
             ax.set_xticklabels('result_labels)
@@ -291,12 +284,12 @@ fn main() {
             ax.set_axisbelow(True)
             ax.get_yaxis().grid(True, color="#EEEEEE")
 
-            fig, axs = plt.subplots(3, len('run_stats))
+            fig, axs = plt.subplots(len('run_stats), 3)
             for ax in axs.flat:
                 ax.set_axis_off()
 
             for index, chart in enumerate('run_stats):
-                ax = axs[0, index]
+                ax = axs[index, 0]
                 ax.set_axis_on()
                 ax.set_title("Individual run duration (%s)" % chart[0])
                 ax.scatter(chart[1], chart[2])
@@ -305,7 +298,7 @@ fn main() {
                 ax.get_xaxis().set_major_locator(plt.MaxNLocator(2))
 
             for index, chart in enumerate('memory_stats):
-                ax = axs[1, index + 1]
+                ax = axs[index + 1, 1]
                 ax.set_axis_on()
                 ax.set_title("Memory usage during benchmark (%s)" % chart[0])
                 ax.plot(chart[1], chart[2], label = "Used memory")
@@ -314,7 +307,7 @@ fn main() {
                 ax.get_xaxis().set_major_locator(plt.MaxNLocator(2))
 
             for index, chart in enumerate('cpu_stats):
-                ax = axs[2, index + 1]
+                ax = axs[index + 1, 2]
                 ax.set_axis_on()
                 ax.set_title("CPU usage during benchmark (%s)" % chart[0])
                 ax.plot(chart[1], chart[2], label = "CPU")

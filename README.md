@@ -30,6 +30,12 @@ The proxy should now be avaliable under postgresql://admin:password@localhost:64
 
 # Experiments
 
+**🚧 Note:**  
+The experiments have only been tested on MacOS 11.6 using Docker Desktop 4.0.0.  
+They might not work as expected when run on a different operating system or with another version of Docker.
+
+<br/>
+
 #### Building the pgcloak docker image
 
 ```
@@ -50,7 +56,7 @@ cargo run --example competetive_latency
 
 #### Running the experiments with analyis
 
-**NOTE: This requires python3 with matplotlib, numpy & seaborn to be installed**
+**🚧 Note: This requires python3 with matplotlib, numpy & seaborn to be installed**
 
 ```
 cargo +nightly run --features analysis --example competetive_latency
