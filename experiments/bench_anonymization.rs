@@ -6,22 +6,15 @@ use crate::utils::docker::pgcloak::start_pgcloak;
 use crate::utils::docker::pgcloak::ColumnConfiguration;
 use crate::utils::docker::pgcloak::PgcloakConfig;
 use crate::utils::docker::postgres::start_dockerized_postgres;
+use crate::utils::fixtures::import_adult_data;
 use itertools::iproduct;
 use polars::prelude::DataFrame;
 use postgres::{Client, NoTls};
-use std::fs;
 use std::time::Instant;
 use testcontainers::clients::{self};
 
 const QUERY: &str = "SELECT * FROM adults";
 const ITERATIONS: i32 = 1;
-
-fn seed_database(database_connection_url: &str) {
-    let mut client = Client::connect(database_connection_url, NoTls).unwrap();
-    let adults_data = "./experiments/resources/adults.sql";
-    let contents = fs::read_to_string(adults_data).expect("Something went wrong reading the file");
-    client.batch_execute(&contents).unwrap();
-}
 
 fn benchmark(
     docker: &clients::Cli,
@@ -29,7 +22,7 @@ fn benchmark(
 ) -> (DataFrame, Vec<(Instant, Instant)>) {
     let (database_connection_url, _postgres_node) = start_dockerized_postgres(&docker);
 
-    seed_database(&database_connection_url);
+    import_adult_data(&database_connection_url);
 
     let (pgcloak_connection_url, _pgcloak_node, _pgcloak_tempdir) =
         start_pgcloak(docker, &database_connection_url, config);

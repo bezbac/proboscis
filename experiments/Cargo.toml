@@ -42,5 +42,9 @@ path = "competetive_latency.rs"
 name = "bench_anonymization"
 path = "bench_anonymization.rs"
 
+[[example]]
+name = "csv"
+path = "csv.rs"
+
 [features]
 analysis = ["inline-python"]
