@@ -7,9 +7,9 @@ use postgres::{Client, NoTls};
 pub fn query_data_into_dataframe(
     postgres_connection_string: &str,
     query: &str,
-) -> polars::frame::DataFrame {
-    let mut client = Client::connect(&postgres_connection_string, NoTls).unwrap();
-    let rows = client.query(query, &[]).unwrap();
+) -> anyhow::Result<polars::frame::DataFrame> {
+    let mut client = Client::connect(&postgres_connection_string, NoTls)?;
+    let rows = client.query(query, &[])?;
 
     let series = rows
         .first()
@@ -60,5 +60,5 @@ pub fn query_data_into_dataframe(
         })
         .collect();
 
-    DataFrame::new(series).unwrap()
+    DataFrame::new(series).map_err(|err| anyhow::anyhow!(err))
 }

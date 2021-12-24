@@ -36,7 +36,7 @@ fn main() {
 
     // postgres 13.4 (no proxy)
     println!("no proxy");
-    let baseline_durations = utils::benchmark::benchmark_function(iterations, &|| {
+    let baseline_durations = utils::benchmark::benchmark_function(iterations, &|_| {
         simple_query(&database_connection_url)
     });
     print_benchmark_stats(&baseline_durations);
@@ -49,7 +49,7 @@ fn main() {
     let (pgpool_connection_url, _pgpool_node) = start_pgpool(&docker, &database_connection_url);
     let (pgpool_docker_stats, pgpool_durations) =
         utils::docker::stats::while_collecting_docker_stats(_pgpool_node.id(), &|| {
-            utils::benchmark::benchmark_function(iterations, &|| {
+            utils::benchmark::benchmark_function(iterations, &|_| {
                 simple_query(&pgpool_connection_url)
             })
         });
@@ -65,7 +65,7 @@ fn main() {
         start_pgbouncer(&docker, &database_connection_url);
     let (pgbouncer_docker_stats, pgbouncer_durations) =
         utils::docker::stats::while_collecting_docker_stats(_pgbouncer_node.id(), &|| {
-            utils::benchmark::benchmark_function(iterations, &|| {
+            utils::benchmark::benchmark_function(iterations, &|_| {
                 simple_query(&pgbouncer_connection_url)
             })
         });
@@ -88,7 +88,7 @@ fn main() {
     );
     let (pgcloak_docker_stats, pgcloak_durations) =
         utils::docker::stats::while_collecting_docker_stats(_pgcloak_node.id(), &|| {
-            utils::benchmark::benchmark_function(iterations, &|| {
+            utils::benchmark::benchmark_function(iterations, &|_| {
                 simple_query(&pgcloak_connection_url)
             })
         });

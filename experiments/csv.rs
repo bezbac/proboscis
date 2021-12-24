@@ -24,7 +24,7 @@ fn query_to_csv(
     let (pgcloak_connection_url, _pgcloak_node, _pgcloak_tempdir) =
         start_pgcloak(docker, database_connection_url, config);
 
-    let result = query_data_into_dataframe(&pgcloak_connection_url, query);
+    let result = query_data_into_dataframe(&pgcloak_connection_url, query).unwrap();
 
     let path = Path::new("./target/output/experiments/");
     std::fs::create_dir_all(path).unwrap();
@@ -54,6 +54,19 @@ fn main() {
 
     let (database_connection_url, _postgres_node) = start_dockerized_postgres(&docker);
     import_adult_data(&database_connection_url);
+
+    // Original
+    query_to_csv(
+        &docker,
+        &database_connection_url,
+        &PgcloakConfig {
+            columns: vec![],
+            max_pool_size: 10,
+            k: 0,
+        },
+        "SELECT * FROM adults",
+        "ORIGINAL",
+    );
 
     // Select all
     query_to_csv(

@@ -1,12 +1,15 @@
 use itertools::Itertools;
 use std::time::Instant;
 
-pub fn benchmark_function(iterations: i32, function: &dyn Fn() -> ()) -> Vec<(Instant, Instant)> {
+pub fn benchmark_function(
+    iterations: i32,
+    function: &dyn Fn(i32) -> (),
+) -> Vec<(Instant, Instant)> {
     let mut collection = vec![];
 
-    for _ in 0..iterations {
+    for i in 0..iterations {
         let before_each = Instant::now();
-        function();
+        function(i);
         collection.push((Instant::now(), before_each));
     }
 

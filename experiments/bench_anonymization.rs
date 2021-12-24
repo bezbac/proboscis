@@ -14,27 +14,66 @@ use std::time::Instant;
 use testcontainers::clients::{self};
 
 const QUERY: &str = "SELECT * FROM adults";
-const ITERATIONS: i32 = 1;
+const ITERATIONS: i32 = 10;
 
 fn benchmark(
     docker: &clients::Cli,
     config: &PgcloakConfig,
 ) -> (DataFrame, Vec<(Instant, Instant)>) {
+    println!("Running benchmark");
+
     let (database_connection_url, _postgres_node) = start_dockerized_postgres(&docker);
 
     import_adult_data(&database_connection_url);
 
+    println!("- Backend database setup");
+
     let (pgcloak_connection_url, _pgcloak_node, _pgcloak_tempdir) =
         start_pgcloak(docker, &database_connection_url, config);
 
-    std::thread::sleep(std::time::Duration::from_millis(1000));
+    let result = match query_data_into_dataframe(&pgcloak_connection_url, QUERY) {
+        Ok(data) => data,
+        Err(_) => {
+            println!("Benchmark failed, retrying!");
 
-    let result = query_data_into_dataframe(&pgcloak_connection_url, QUERY);
+            drop(_pgcloak_node);
+            drop(_pgcloak_tempdir);
+            drop(_postgres_node);
 
-    let durations = utils::benchmark::benchmark_function(ITERATIONS, &|| {
+            return benchmark(docker, config);
+        }
+    };
+
+    println!("- Queried dataframe");
+
+    println!("- Running for additional {} iterations", ITERATIONS);
+    let mut durations = vec![];
+
+    for i in 0..ITERATIONS {
+        let before_each = Instant::now();
+
+        println!("-- Iteration {}", i + 1);
         let mut client = Client::connect(&pgcloak_connection_url, NoTls).unwrap();
-        client.query(QUERY, &[]).unwrap();
-    });
+        let result = client.query(QUERY, &[]);
+
+        match result {
+            Ok(_) => {
+                durations.push((Instant::now(), before_each));
+            }
+            _ => {
+                println!("! Encountered error, retrying.");
+
+                drop(_pgcloak_node);
+                drop(_pgcloak_tempdir);
+                drop(_postgres_node);
+
+                return benchmark(docker, config);
+            }
+        }
+    }
+
+    println!("- Ran for additional iterations");
+
     print_benchmark_stats(&durations);
 
     drop(_pgcloak_node);
@@ -73,8 +112,7 @@ fn main() {
     result_columns.push(vec![]);
     result_ks.push(-1);
 
-    // let ks = vec![3, 10, 30, 50, 100, 250];
-    let ks = vec![3, 30, 100];
+    let ks = vec![3, 10, 30, 50, 100, 250];
     let column_configs = vec![
         ColumnConfiguration::PseudoIdentifier {
             name: String::from("adults.age"),
@@ -93,7 +131,7 @@ fn main() {
         },
     ];
 
-    let columns: Vec<Vec<ColumnConfiguration>> = (0..2)
+    let columns: Vec<Vec<ColumnConfiguration>> = (0..3)
         .map(|i| {
             let end = column_configs.len() - (2 - i);
             let columns = column_configs[0..end].to_vec();
@@ -183,73 +221,73 @@ fn main() {
                 .fold(0, |agg, value| agg + (value * value) as usize)
         }
 
-        let classification_accuracies: Vec<f64> = result_data
-            .iter()
-            .zip(&result_columns)
-            .map(|(df, qi_columns)| {
-                use naivebayes::NaiveBayes;
-                let mut nb = NaiveBayes::new();
+        // let classification_accuracies: Vec<f64> = result_data
+        //     .iter()
+        //     .zip(&result_columns)
+        //     .map(|(df, qi_columns)| {
+        //         use naivebayes::NaiveBayes;
+        //         let mut nb = NaiveBayes::new();
 
-                let classification_columns = vec![
-                    "age",
-                    "sex",
-                    "education",
-                    "occupation",
-                    "hoursperweek",
-                    "class",
-                ];
-                let df = df.select(&classification_columns).unwrap();
+        //         let classification_columns = vec![
+        //             "age",
+        //             "sex",
+        //             "education",
+        //             "occupation",
+        //             "hoursperweek",
+        //             "class",
+        //         ];
+        //         let df = df.select(&classification_columns).unwrap();
 
-                let serieses: Vec<Vec<String>> = df
-                    .get_columns()
-                    .iter()
-                    .map(|series| {
-                        series
-                            .cast::<Utf8Type>()
-                            .unwrap()
-                            .utf8()
-                            .unwrap()
-                            .into_iter()
-                            .map(|v| v.map_or("None".to_string(), |s| s.to_string()))
-                            .collect()
-                    })
-                    .collect();
+        //         let serieses: Vec<Vec<String>> = df
+        //             .get_columns()
+        //             .iter()
+        //             .map(|series| {
+        //                 series
+        //                     .cast::<Utf8Type>()
+        //                     .unwrap()
+        //                     .utf8()
+        //                     .unwrap()
+        //                     .into_iter()
+        //                     .map(|v| v.map_or("None".to_string(), |s| s.to_string()))
+        //                     .collect()
+        //             })
+        //             .collect();
 
-                let data: (Vec<(Vec<String>, String)>) = (0..df.height())
-                    .map(|idx| {
-                        let tokens = serieses[..serieses.len() - 1]
-                            .iter()
-                            .map(|s| s[idx].clone())
-                            .collect();
-                        let label = serieses[serieses.len() - 1][idx].clone();
-                        (tokens, label)
-                    })
-                    .collect();
+        //         let data: (Vec<(Vec<String>, String)>) = (0..df.height())
+        //             .map(|idx| {
+        //                 let tokens = serieses[..serieses.len() - 1]
+        //                     .iter()
+        //                     .map(|s| s[idx].clone())
+        //                     .collect();
+        //                 let label = serieses[serieses.len() - 1][idx].clone();
+        //                 (tokens, label)
+        //             })
+        //             .collect();
 
-                for (tokens, label) in data[500..].iter() {
-                    nb.train(&tokens, &label);
-                }
+        //         for (tokens, label) in data[500..].iter() {
+        //             nb.train(&tokens, &label);
+        //         }
 
-                let correctly_classified: Vec<bool> = data[..500]
-                    .iter()
-                    .map(|(tokens, label)| {
-                        let classification = nb.classify(&tokens);
-                        let opposite_label = if label == "<=50K" { ">50K" } else { "<=50K" };
-                        let was_correct = classification[label] > classification[opposite_label];
-                        was_correct
-                    })
-                    .collect();
+        //         let correctly_classified: Vec<bool> = data[..500]
+        //             .iter()
+        //             .map(|(tokens, label)| {
+        //                 let classification = nb.classify(&tokens);
+        //                 let opposite_label = if label == "<=50K" { ">50K" } else { "<=50K" };
+        //                 let was_correct = classification[label] > classification[opposite_label];
+        //                 was_correct
+        //             })
+        //             .collect();
 
-                let accuracy = correctly_classified
-                    .iter()
-                    .filter(|v| **v)
-                    .collect::<Vec<&bool>>()
-                    .len() as f64
-                    / correctly_classified.len() as f64;
+        //         let accuracy = correctly_classified
+        //             .iter()
+        //             .filter(|v| **v)
+        //             .collect::<Vec<&bool>>()
+        //             .len() as f64
+        //             / correctly_classified.len() as f64;
 
-                accuracy
-            })
-            .collect();
+        //         accuracy
+        //     })
+        //     .collect();
 
         let mut eq_class_counts = vec![];
         let mut average_eq_class_sizes = vec![];
@@ -289,10 +327,10 @@ fn main() {
             String,
             (
                 Vec<isize>,
-                Vec<f64>,
+                // Vec<f64>,
                 Vec<Option<usize>>,
                 Vec<Option<usize>>,
-                Vec<Option<usize>>,
+                // Vec<Option<usize>>,
                 Vec<u128>,
                 Vec<u128>,
             ),
@@ -308,7 +346,7 @@ fn main() {
 
             let durations = result_durations[idx].clone();
             let k = result_ks[idx];
-            let accuracy = classification_accuracies[idx];
+            // let accuracy = classification_accuracies[idx];
             let eq_class_count = eq_class_counts[idx];
             let average_eq_size = average_eq_class_sizes[idx];
             let discernibility_metric = discernibility_metrics[idx];
@@ -324,29 +362,29 @@ fn main() {
 
             let (
                 grouped_ks,
-                grouped_accuracies,
+                // grouped_accuracies,
                 grouped_eq_class_counts,
                 grouped_average_eq_class_sizes,
-                grouped_discernibility_metrics,
+                // grouped_discernibility_metrics,
                 grouped_min_durations,
                 grouped_mean_durations,
             ) = groups.entry(key).or_default();
 
-            grouped_accuracies.push(accuracy);
+            // grouped_accuracies.push(accuracy);
             grouped_ks.push(k);
             grouped_eq_class_counts.push(eq_class_count);
             grouped_average_eq_class_sizes.push(average_eq_size);
-            grouped_discernibility_metrics.push(discernibility_metric);
+            // grouped_discernibility_metrics.push(discernibility_metric);
             grouped_min_durations.push(min_duration);
             grouped_mean_durations.push(mean_duration);
         }
 
         let group_values: Vec<(
             Vec<isize>,
-            Vec<f64>,
+            // Vec<f64>,
             Vec<Option<usize>>,
             Vec<Option<usize>>,
-            Vec<Option<usize>>,
+            // Vec<Option<usize>>,
             Vec<u128>,
             Vec<u128>,
         )> = groups.values().cloned().collect();
@@ -364,13 +402,12 @@ fn main() {
                     return "{0:.2f} s".format(x / 1000)
                 return "{0} ms".format(x)
 
-            fig = plt.figure()
-            gs = fig.add_gridspec(ncols=6, nrows=2)
+            fig, axs = plt.subplots(1, 3)
 
-            ax = fig.add_subplot(gs[0, :3])
+            ax = axs[0]
             ax.set_title("Query durations (%s iterations)" % 'ITERATIONS)
 
-            for i, (ks, accuracies, eq_class_counts, average_eq_sizes, discernibility_metrics, min_durations, mean_durations) in enumerate('group_values):
+            for i, (ks, eq_class_counts, average_eq_sizes, min_durations, mean_durations) in enumerate('group_values):
                 color = next(ax._get_lines.prop_cycler)["color"]
                 label = 'group_labels[i]
                 ax.plot(ks, min_durations, marker = "o", linestyle="-", color=color, label="%s (min)" % label)
@@ -382,37 +419,19 @@ fn main() {
             ax.get_yaxis().grid(True, color="#EEEEEE")
             ax.set_xlabel("k (-1 represents no anonymization)")
 
-            ax = fig.add_subplot(gs[0, 3:])
-            ax.set_title("Classification accuracy")
-            for ks, accuracies, eq_class_counts, average_eq_sizes, discernibility_metrics, min_durations, mean_durations in 'group_values:
-                ax.plot(ks, accuracies, marker = "o")
-            ax.legend('group_labels)
-            ax.set_axisbelow(True)
-            ax.get_yaxis().grid(True, color="#EEEEEE")
-            ax.set_xlabel("k (-1 represents no anonymization)")
-
-            ax = fig.add_subplot(gs[1, :2])
+            ax = axs[1]
             ax.set_title("Equivalence class count")
-            for ks, accuracies, eq_class_counts, average_eq_sizes, discernibility_metrics, min_durations, mean_durations in 'group_values:
+            for ks, eq_class_counts, average_eq_sizes, min_durations, mean_durations in 'group_values:
                 ax.plot(ks, eq_class_counts, marker = "o")
             ax.legend('group_labels)
             ax.set_axisbelow(True)
             ax.get_yaxis().grid(True, color="#EEEEEE")
             ax.set_xlabel("k")
 
-            ax = fig.add_subplot(gs[1, 2:4])
+            ax = axs[2]
             ax.set_title("Average equivalence class sizes")
-            for ks, accuracies, eq_class_counts, average_eq_sizes, discernibility_metrics, min_durations, mean_durations in 'group_values:
+            for ks, eq_class_counts, average_eq_sizes, min_durations, mean_durations in 'group_values:
                 ax.plot(ks, average_eq_sizes, marker = "o")
-            ax.legend('group_labels)
-            ax.set_axisbelow(True)
-            ax.get_yaxis().grid(True, color="#EEEEEE")
-            ax.set_xlabel("k")
-
-            ax = fig.add_subplot(gs[1, 4:])
-            ax.set_title("Discernibility Metric")
-            for ks, accuracies, eq_class_counts, average_eq_sizes, discernibility_metrics, min_durations, mean_durations in 'group_values:
-                ax.plot(ks, discernibility_metrics, marker = "o")
             ax.legend('group_labels)
             ax.set_axisbelow(True)
             ax.get_yaxis().grid(True, color="#EEEEEE")
