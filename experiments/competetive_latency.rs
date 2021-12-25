@@ -15,10 +15,9 @@ use testcontainers::clients::{self};
 fn simple_query(connection_url: &str) {
     let mut client = postgres::Client::connect(connection_url, NoTls).unwrap();
 
-    let rows = client.query("SELECT 0, 'Alex'", &[]).unwrap();
+    let rows = client.query("SELECT 0", &[]).unwrap();
 
-    let sum: &str = rows[0].get(1);
-    assert_eq!(sum, "Alex");
+    assert_eq!(rows[0].get::<usize, i32>(0), 0);
 }
 
 fn main() {

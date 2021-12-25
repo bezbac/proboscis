@@ -43,7 +43,8 @@ pub fn start_pgpool<'a>(
         .with_env_var(
             "PGPOOL_ADMIN_PASSWORD",
             target_config.password.as_ref().unwrap(),
-        );
+        )
+        .with_env_var("PGPOOL_MAX_POOL", "10");
 
     let local_port = get_free_local_port().unwrap();
 
