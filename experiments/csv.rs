@@ -20,11 +20,15 @@ fn query_to_csv(
     config: &PgcloakConfig,
     query: &str,
     filename: &str,
+    offset: i64,
+    length: usize,
 ) {
     let (pgcloak_connection_url, _pgcloak_node, _pgcloak_tempdir) =
         start_pgcloak(docker, database_connection_url, config);
 
     let result = query_data_into_dataframe(&pgcloak_connection_url, query).unwrap();
+
+    let result = result.slice(offset, length);
 
     let path = Path::new("./target/output/experiments/");
     std::fs::create_dir_all(path).unwrap();
@@ -41,6 +45,7 @@ fn query_to_csv(
     let mut buf = BufWriter::new(file);
 
     CsvWriter::new(&mut buf)
+        .with_delimiter(b';')
         .has_headers(true)
         .finish(&result)
         .expect("csv written");
@@ -55,6 +60,9 @@ fn main() {
     let (database_connection_url, _postgres_node) = start_dockerized_postgres(&docker);
     import_adult_data(&database_connection_url);
 
+    let OFFSET = 180;
+    let LENGTH = 10;
+
     // Original
     query_to_csv(
         &docker,
@@ -65,7 +73,9 @@ fn main() {
             k: 0,
         },
         "SELECT * FROM adults",
-        "ORIGINAL",
+        "ORIGINAL.csv",
+        OFFSET,
+        LENGTH,
     );
 
     // Select all
@@ -75,7 +85,7 @@ fn main() {
         &PgcloakConfig {
             columns: vec![
                 ColumnConfiguration::PseudoIdentifier {
-                    name: String::from("adults.age"),
+                    name: String::from("adults.workclass"),
                 },
                 ColumnConfiguration::PseudoIdentifier {
                     name: String::from("adults.sex"),
@@ -88,10 +98,12 @@ fn main() {
                 },
             ],
             max_pool_size: 10,
-            k: 30,
+            k: 50,
         },
         "SELECT * FROM adults",
-        "SELECT=ALL;k=30;QI=age,sex,race,education.csv",
+        "ALL.csv",
+        OFFSET,
+        LENGTH,
     );
 
     // Subselection
@@ -101,7 +113,7 @@ fn main() {
         &PgcloakConfig {
             columns: vec![
                 ColumnConfiguration::PseudoIdentifier {
-                    name: String::from("adults.age"),
+                    name: String::from("adults.workclass"),
                 },
                 ColumnConfiguration::PseudoIdentifier {
                     name: String::from("adults.sex"),
@@ -114,10 +126,12 @@ fn main() {
                 },
             ],
             max_pool_size: 10,
-            k: 30,
+            k: 50,
         },
-        "SELECT age, sex, relationship, class FROM adults",
-        "SELECT=age,sex,relationship,class;k=30;QI=age,sex,race,education.csv",
+        "SELECT workclass, sex, relationship, class FROM adults",
+        "SUBSELECTION.csv",
+        OFFSET,
+        LENGTH,
     );
 
     // Limit
@@ -127,7 +141,7 @@ fn main() {
         &PgcloakConfig {
             columns: vec![
                 ColumnConfiguration::PseudoIdentifier {
-                    name: String::from("adults.age"),
+                    name: String::from("adults.workclass"),
                 },
                 ColumnConfiguration::PseudoIdentifier {
                     name: String::from("adults.sex"),
@@ -140,9 +154,11 @@ fn main() {
                 },
             ],
             max_pool_size: 10,
-            k: 30,
+            k: 50,
         },
-        "SELECT age, sex, relationship, class FROM adults LIMIT 1000",
-        "SELECT=ALL_w_LIMIT;k=30;QI=age,sex,race,education.csv",
+        "SELECT * FROM adults LIMIT 1000",
+        "LIMIT.csv",
+        OFFSET,
+        LENGTH,
     );
 }
