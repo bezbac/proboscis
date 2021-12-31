@@ -28,6 +28,40 @@ cargo run -p pgcloak -- -c pgcloak.example.toml -v DEBUG
 
 The proxy should now be avaliable under postgresql://admin:password@localhost:6432/postgres
 
+# Experiments
+
+**🚧 Note:**  
+The experiments have only been tested on MacOS 11.6 using Docker Desktop 4.0.0.  
+They might not work as expected when run on a different operating system or with another version of Docker.
+
+<br/>
+
+#### Building the pgcloak docker image
+
+```
+docker build -t pgcloak -f pgcloak.dockerfile .
+```
+
+#### Running the dockerized version
+
+```
+docker run -it --init --rm -v $PWD:/app -p 6432:6432 pgcloak -v debug -c pgcloak.example.toml
+```
+
+#### Running the experiments without analysis
+
+```
+cargo run --example competetive_latency
+```
+
+#### Running the experiments with analyis
+
+**🚧 Note: This requires python3 with matplotlib, numpy & seaborn to be installed**
+
+```
+cargo +nightly run --features analysis --example competetive_latency
+```
+
 # Acknowledgements
 
 Repos:
