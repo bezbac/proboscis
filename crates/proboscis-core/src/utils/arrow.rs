@@ -272,7 +272,7 @@ fn write_be_without_trailing_zeros<V: omnom::WriteBytes, W: std::io::Write>(
 ) -> std::io::Result<usize> {
     // TODO: Fix this function
 
-    return value.write_be_bytes(buffer);
+    value.write_be_bytes(buffer)
 
     // let mut bytes = vec![];
     // value.write_be_bytes(&mut bytes).unwrap();

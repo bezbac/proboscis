@@ -8,6 +8,8 @@ publish = false
 anyhow = "1.0"
 byteorder = "1.4.2"
 bytes = "1"
-omnom = "3.0.0"
 tokio = { version = "1.4.0", features = ["full"] }
 async-trait = "0.1.50"
+
+[dev-dependencies]
+tokio-test = "*"

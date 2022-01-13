@@ -19,8 +19,8 @@ pub type MaybeTlsStream = tokio_util::either::Either<
 
 #[async_trait]
 pub trait ProtocolStream {
-    async fn write_message(&mut self, message: Message) -> tokio::io::Result<usize>;
-    async fn write_startup_message(&mut self, message: StartupMessage) -> tokio::io::Result<usize>;
+    async fn write_message(&mut self, message: Message) -> Result<usize>;
+    async fn write_startup_message(&mut self, message: StartupMessage) -> Result<()>;
     async fn read_frontend_message(&mut self) -> Result<FrontendMessage>;
     async fn read_backend_message(&mut self) -> Result<BackendMessage>;
     async fn read_startup_message(&mut self) -> Result<StartupMessage>;
@@ -31,28 +31,28 @@ impl<T> ProtocolStream for T
 where
     T: AsyncWrite + AsyncRead + Unpin + Send,
 {
-    async fn write_message(&mut self, message: Message) -> tokio::io::Result<usize> {
+    async fn write_message(&mut self, message: Message) -> Result<usize> {
         let (_, mut wr) = tokio::io::split(&mut self);
-        wr.write(&message.as_vec()[..]).await
+        message.write(&mut wr).await
     }
 
-    async fn write_startup_message(&mut self, message: StartupMessage) -> tokio::io::Result<usize> {
+    async fn write_startup_message(&mut self, message: StartupMessage) -> Result<()> {
         let (_, mut wr) = tokio::io::split(&mut self);
-        wr.write(&message.as_vec()[..]).await
+        message.write(&mut wr).await
     }
 
     async fn read_frontend_message(&mut self) -> Result<FrontendMessage> {
-        let result = FrontendMessage::read_async(&mut self).await?;
+        let result = FrontendMessage::read(&mut self).await?;
         Ok(result)
     }
 
     async fn read_backend_message(&mut self) -> Result<BackendMessage> {
-        let result = BackendMessage::read_async(&mut self).await?;
+        let result = BackendMessage::read(&mut self).await?;
         Ok(result)
     }
 
     async fn read_startup_message(&mut self) -> Result<StartupMessage> {
-        let result = StartupMessage::read_async(&mut self).await?;
+        let result = StartupMessage::read(&mut self).await?;
         Ok(result)
     }
 }
@@ -74,7 +74,7 @@ impl Connection {
         wr.write(bytes).await
     }
 
-    pub async fn write_data(&mut self, data: RecordBatch) -> tokio::io::Result<()> {
+    pub async fn write_data(&mut self, data: RecordBatch) -> Result<()> {
         let row_description = serialize_record_batch_schema_to_row_description(&data.schema());
 
         self.write_message(BackendMessage::RowDescription(row_description).into())
@@ -92,12 +92,12 @@ impl Connection {
 
 #[async_trait]
 impl ProtocolStream for Connection {
-    async fn write_message(&mut self, message: Message) -> tokio::io::Result<usize> {
+    async fn write_message(&mut self, message: Message) -> Result<usize> {
         debug!(message = ?message, "writing message");
         self.stream.write_message(message).await
     }
 
-    async fn write_startup_message(&mut self, message: StartupMessage) -> tokio::io::Result<usize> {
+    async fn write_startup_message(&mut self, message: StartupMessage) -> Result<()> {
         debug!(message = ?message, "writing startup message");
         self.stream.write_startup_message(message).await
     }

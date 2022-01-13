@@ -1,11 +1,11 @@
 use anyhow::Result;
 use byteorder::{ByteOrder, NetworkEndian};
 use bytes::BytesMut;
-use omnom::prelude::*;
 use std::collections::HashMap;
-use std::io::prelude::*;
 use tokio::io::AsyncRead;
 use tokio::io::AsyncReadExt;
+use tokio::io::AsyncWrite;
+use tokio::io::AsyncWriteExt;
 
 pub const CODE_STARTUP_CANCEL: i32 = 80877102;
 pub const CODE_STARTUP_SSL_REQUEST: i32 = 80877103;
@@ -21,33 +21,27 @@ pub enum StartupMessage {
 }
 
 impl StartupMessage {
-    pub fn as_vec(&self) -> Vec<u8> {
-        let mut vec = vec![];
-        self.write(&mut vec).unwrap();
-        vec
-    }
-
-    pub fn write<T: Write>(&self, buf: &mut T) -> Result<()> {
+    pub async fn write<T: AsyncWrite + Unpin>(&self, buf: &mut T) -> Result<()> {
         match self {
             Self::Startup { params } => {
                 let mut writer = vec![];
 
-                writer.write_be(CODE_STARTUP_POSTGRESQLV3)?;
+                writer.write_i32(CODE_STARTUP_POSTGRESQLV3).await?;
 
                 for (key, value) in params {
-                    writer.write_all(key.as_bytes())?;
-                    writer.write_be(0_u8)?; // Delimiter
+                    AsyncWriteExt::write_all(&mut writer, key.as_bytes()).await?;
+                    writer.write_u8(0_u8).await?; // Delimiter
 
-                    writer.write_all(value.as_bytes())?;
-                    writer.write_be(0_u8)?; // Delimiter
+                    AsyncWriteExt::write_all(&mut writer, value.as_bytes()).await?;
+                    writer.write_u8(0_u8).await?; // Delimiter
                 }
 
-                writer.write_be(0_u8)?; // Delimiter
+                writer.write_u8(0_u8).await?; // Delimiter
 
                 let len_of_message: u32 = writer.len() as u32 + 4; // Add 4 bytes for the u32 containing the total message length
 
-                buf.write_be(len_of_message)?;
-                buf.write_all(&writer[..])?;
+                buf.write_u32(len_of_message).await?;
+                buf.write_all(&writer[..]).await?;
 
                 Ok(())
             }
@@ -55,7 +49,7 @@ impl StartupMessage {
         }
     }
 
-    pub async fn read_async<T: AsyncRead + Unpin>(stream: &mut T) -> Result<Self> {
+    pub async fn read<T: AsyncRead + Unpin>(stream: &mut T) -> Result<Self> {
         let mut message_len_bytes = vec![0; 4];
         stream.read_exact(&mut message_len_bytes).await?;
         let message_length = NetworkEndian::read_u32(&message_len_bytes);
@@ -65,21 +59,19 @@ impl StartupMessage {
 
         let mut cursor = std::io::Cursor::new(body_bytes);
 
-        Self::read_body(&mut cursor, message_length - 4)
+        Self::read_body(&mut cursor, message_length - 4).await
     }
 
-    pub fn read<T: Read>(stream: &mut T) -> Result<Self> {
-        let message_length: u32 = stream.read_be()?;
-        Self::read_body(stream, message_length - 4)
-    }
-
-    pub fn read_body<T: Read>(stream: &mut T, remaining_bytes_len: u32) -> Result<Self> {
-        let protocol_version: i32 = stream.read_be()?;
+    pub async fn read_body<T: AsyncRead + Unpin>(
+        stream: &mut T,
+        remaining_bytes_len: u32,
+    ) -> Result<Self> {
+        let protocol_version: i32 = stream.read_i32().await?;
 
         let message = match protocol_version {
             CODE_STARTUP_CANCEL => StartupMessage::CancelRequest {
-                connection_id: stream.read_be()?,
-                secret_key: stream.read_be()?,
+                connection_id: stream.read_u32().await?,
+                secret_key: stream.read_u32().await?,
             },
             CODE_STARTUP_SSL_REQUEST => StartupMessage::SslRequest,
             CODE_STARTUP_GSSENC_REQUEST => StartupMessage::GssEncRequest,
@@ -88,7 +80,7 @@ impl StartupMessage {
 
                 let mut buf = BytesMut::new();
                 buf.resize(remaining_bytes_len as usize - 4, b'0'); // - 4 for the protocol version i32
-                stream.read_exact(&mut buf)?;
+                stream.read_exact(&mut buf).await?;
 
                 let bytes = buf.to_vec();
 
@@ -132,12 +124,16 @@ mod tests {
     #[test]
     fn startup_message_without_parameters() {
         let mut buf = vec![];
-        StartupMessage::Startup {
-            params: HashMap::new(),
-        }
-        .write(&mut buf)
+        tokio_test::block_on(
+            StartupMessage::Startup {
+                params: HashMap::new(),
+            }
+            .write(&mut buf),
+        )
         .unwrap();
-        StartupMessage::read(&mut buf.as_slice()).unwrap();
+
+        let mut cursor = std::io::Cursor::new(&mut buf);
+        tokio_test::block_on(StartupMessage::read(&mut cursor)).unwrap();
     }
 
     #[test]
@@ -148,12 +144,16 @@ mod tests {
         params.insert("Test Key 3".to_string(), "Test Value 3".to_string());
 
         let mut buf = vec![];
-        StartupMessage::Startup {
-            params: params.clone(),
-        }
-        .write(&mut buf)
+        tokio_test::block_on(
+            StartupMessage::Startup {
+                params: params.clone(),
+            }
+            .write(&mut buf),
+        )
         .unwrap();
-        let parsed = StartupMessage::read(&mut buf.as_slice()).unwrap();
+
+        let mut cursor = std::io::Cursor::new(&mut buf);
+        let parsed = tokio_test::block_on(StartupMessage::read(&mut cursor)).unwrap();
 
         assert_eq!(parsed, StartupMessage::Startup { params })
     }

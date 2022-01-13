@@ -1,6 +1,5 @@
 use anyhow::Result;
 use std::convert::TryFrom;
-use std::io::Read;
 
 #[derive(Debug, std::cmp::PartialEq)]
 pub enum CharTag {
@@ -23,17 +22,6 @@ pub enum CharTag {
     BindComplete,
     CloseComplete,
     NoData,
-}
-
-impl CharTag {
-    pub fn read<T: Read>(stream: &mut T) -> Result<CharTag> {
-        let mut bytes = vec![0; 1];
-        stream.read_exact(&mut bytes)?;
-
-        CharTag::try_from(bytes[0]).map_err(|err| {
-            anyhow::format_err!("Could not read char tag {:?}. err: {}", bytes[0], err)
-        })
-    }
 }
 
 impl From<CharTag> for u8 {

@@ -1,14 +1,13 @@
 use super::char_tag::CharTag;
 use anyhow::Result;
-use omnom::prelude::*;
-use std::io::prelude::*;
+use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 
-pub fn read_until_zero<T: Read>(stream: &mut T) -> Result<Vec<u8>> {
+pub async fn read_until_zero<T: AsyncRead + Unpin>(stream: &mut T) -> Result<Vec<u8>> {
     let mut result = vec![];
 
     loop {
         let mut bytes = vec![0; 1];
-        bytes = stream.read_exact(&mut bytes).map(|_| bytes)?;
+        bytes = stream.read_exact(&mut bytes).await.map(|_| bytes)?;
 
         match bytes[..] {
             [0] => break,
@@ -21,18 +20,18 @@ pub fn read_until_zero<T: Read>(stream: &mut T) -> Result<Vec<u8>> {
 
 /// Higher order function to write a message with some arbitraty number bytes to a buffer
 /// and automatically prefix it the char_tag and with the message length as a BigEndian 32 bit integer
-pub fn write_message_with_prefixed_message_len<T: Write>(
+pub async fn write_message_with_prefixed_message_len<T: AsyncWrite + std::marker::Unpin>(
     buf: &mut T,
     char_tag: CharTag,
-    writer: Box<dyn Fn(&mut Vec<u8>) -> Result<()>>,
+    body: &[u8],
 ) -> Result<usize> {
-    let mut body: Vec<u8> = vec![];
-    (*writer)(&mut body)?;
-
     let mut written_bytes_count = 0;
-    written_bytes_count += buf.write(&[char_tag.into()])?;
-    written_bytes_count += buf.write_be(body.len() as i32 + 4)?;
-    written_bytes_count += buf.write(&body[..])?;
+    written_bytes_count += buf.write(&[char_tag.into()]).await?;
+
+    buf.write_i32(body.len() as i32 + 4).await?;
+    written_bytes_count += 4;
+
+    written_bytes_count += buf.write(body).await?;
 
     Ok(written_bytes_count)
 }
