@@ -18,7 +18,7 @@ use proboscis_core::{
         protocol_fields_to_schema, serialize_record_batch_schema_to_row_description,
         simple_query_response_to_record_batch,
     },
-    utils::connection::{Connection, MaybeTlsStream, ProtocolStream},
+    utils::connection::{Connection, MaybeTlsStream},
     utils::password::encode_md5_password_hash,
 };
 use std::collections::{HashMap, VecDeque};

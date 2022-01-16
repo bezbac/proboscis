@@ -1,6 +1,6 @@
 use crate::{
     resolver::Resolver,
-    utils::connection::{Connection, MaybeTlsStream, ProtocolStream},
+    utils::connection::{Connection, MaybeTlsStream},
     utils::password::encode_md5_password_hash,
 };
 use anyhow::Result;
@@ -133,7 +133,7 @@ pub async fn accept_frontend_connection(
     mut frontend_stream: tokio::net::TcpStream,
     tls_acceptor: &Option<tokio_native_tls::TlsAcceptor>,
 ) -> Result<Connection> {
-    let mut startup_message = frontend_stream.read_startup_message().await?;
+    let mut startup_message = StartupMessage::read(&mut frontend_stream).await?;
 
     let mut frontend: MaybeTlsStream;
     match startup_message {
@@ -151,7 +151,7 @@ pub async fn accept_frontend_connection(
             let tls_stream = tls_acceptor.accept(frontend_stream).await?;
 
             frontend = MaybeTlsStream::Right(tls_stream);
-            startup_message = frontend.read_startup_message().await?;
+            startup_message = StartupMessage::read(&mut frontend).await?;
         }
         _ => frontend = MaybeTlsStream::Left(frontend_stream),
     };
