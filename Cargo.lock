@@ -1627,18 +1627,6 @@ dependencies = [
 
 [[package]]
 name = "postgres-protocol"
-version = "0.0.0"
-dependencies = [
- "anyhow",
- "async-trait",
- "byteorder",
- "bytes 1.1.0",
- "tokio",
- "tokio-test",
-]
-
-[[package]]
-name = "postgres-protocol"
 version = "0.6.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b145e6a4ed52cb316a27787fc20fe8a25221cb476479f61e4e0327c15b98d91a"
@@ -1663,7 +1651,7 @@ checksum = "04619f94ba0cc80999f4fc7073607cb825bc739a883cb6d20900fc5e009d6b0d"
 dependencies = [
  "bytes 1.1.0",
  "fallible-iterator",
- "postgres-protocol 0.6.2",
+ "postgres-protocol",
 ]
 
 [[package]]
@@ -1697,7 +1685,7 @@ dependencies = [
  "native-tls",
  "omnom",
  "postgres",
- "postgres-protocol 0.0.0",
+ "proboscis-postgres-protocol",
  "rand 0.8.4",
  "tokio",
  "tokio-native-tls",
@@ -1705,6 +1693,18 @@ dependencies = [
  "tracing",
  "url",
  "uuid",
+]
+
+[[package]]
+name = "proboscis-postgres-protocol"
+version = "0.0.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "byteorder",
+ "bytes 1.1.0",
+ "tokio",
+ "tokio-test",
 ]
 
 [[package]]
@@ -1717,8 +1717,8 @@ dependencies = [
  "deadpool",
  "futures",
  "omnom",
- "postgres-protocol 0.0.0",
  "proboscis-core",
+ "proboscis-postgres-protocol",
  "tokio",
  "tracing",
  "url",
@@ -2456,7 +2456,7 @@ dependencies = [
  "percent-encoding",
  "phf",
  "pin-project-lite",
- "postgres-protocol 0.6.2",
+ "postgres-protocol",
  "postgres-types",
  "socket2",
  "tokio",

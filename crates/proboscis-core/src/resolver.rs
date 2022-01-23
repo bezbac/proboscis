@@ -4,10 +4,12 @@ use crate::utils::arrow::{
 use anyhow::Result;
 use arrow::{datatypes::Schema, record_batch::RecordBatch};
 use async_trait::async_trait;
-use postgres_protocol::message::{BackendMessage, CommandCompleteTag, ParameterDescription};
+use proboscis_postgres_protocol::message::{
+    BackendMessage, CommandCompleteTag, ParameterDescription,
+};
 use uuid::Uuid;
 
-pub use postgres_protocol::message::{Bind, Close, Describe, Execute, Parse};
+pub use proboscis_postgres_protocol::message::{Bind, Close, Describe, Execute, Parse};
 
 pub type ClientId = Uuid;
 

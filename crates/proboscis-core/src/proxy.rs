@@ -5,7 +5,7 @@ use crate::{
 };
 use anyhow::Result;
 use native_tls::Identity;
-use postgres_protocol::{
+use proboscis_postgres_protocol::{
     message::{BackendMessage, CommandCompleteTag, FrontendMessage, MD5Hash, MD5Salt},
     StartupMessage,
 };

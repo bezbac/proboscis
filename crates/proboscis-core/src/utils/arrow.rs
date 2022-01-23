@@ -9,7 +9,7 @@ use arrow::buffer::Buffer;
 use arrow::datatypes::{DataType, Field, Schema, ToByteSlice, UInt8Type};
 use arrow::record_batch::RecordBatch;
 use omnom::prelude::*;
-use postgres_protocol::message::{DataRow, RowDescription};
+use proboscis_postgres_protocol::message::{DataRow, RowDescription};
 use std::{collections::BTreeMap, sync::Arc, vec};
 
 macro_rules! create_numerical_column_data_to_array_function {
@@ -146,7 +146,7 @@ fn postgres_type_for_arrow_type(
     }
 }
 
-fn message_field_to_arrow_field(value: &postgres_protocol::message::Field) -> Field {
+fn message_field_to_arrow_field(value: &proboscis_postgres_protocol::message::Field) -> Field {
     let postgres_type = postgres::types::Type::from_oid(value.type_oid as u32).unwrap();
 
     let arrow_type = match postgres_type {
@@ -191,7 +191,7 @@ fn message_field_to_arrow_field(value: &postgres_protocol::message::Field) -> Fi
     field
 }
 
-fn arrow_field_to_message_field(value: &Field) -> postgres_protocol::message::Field {
+fn arrow_field_to_message_field(value: &Field) -> proboscis_postgres_protocol::message::Field {
     let original_type = postgres::types::Type::from_oid(
         value
             .metadata()
@@ -230,7 +230,7 @@ fn arrow_field_to_message_field(value: &Field) -> postgres_protocol::message::Fi
         .parse()
         .unwrap();
 
-    postgres_protocol::message::Field {
+    proboscis_postgres_protocol::message::Field {
         type_oid: postgres_type.oid() as i32,
         name: value.name().clone(),
         column_number,
@@ -241,7 +241,7 @@ fn arrow_field_to_message_field(value: &Field) -> postgres_protocol::message::Fi
     }
 }
 
-pub fn protocol_fields_to_schema(fields: &[postgres_protocol::message::Field]) -> Schema {
+pub fn protocol_fields_to_schema(fields: &[proboscis_postgres_protocol::message::Field]) -> Schema {
     let fields = fields
         .iter()
         .map(|message_field| message_field_to_arrow_field(message_field))
@@ -251,7 +251,7 @@ pub fn protocol_fields_to_schema(fields: &[postgres_protocol::message::Field]) -
 }
 
 pub fn simple_query_response_to_record_batch(
-    fields: &[postgres_protocol::message::Field],
+    fields: &[proboscis_postgres_protocol::message::Field],
     data: &[DataRow],
 ) -> Result<RecordBatch> {
     let schema = protocol_fields_to_schema(fields);
@@ -380,7 +380,7 @@ pub fn serialize_record_batch_to_data_rows(batch: &RecordBatch) -> Vec<DataRow> 
 }
 
 pub fn serialize_record_batch_schema_to_row_description(schema: &Schema) -> RowDescription {
-    let fields: Vec<postgres_protocol::message::Field> = schema
+    let fields: Vec<proboscis_postgres_protocol::message::Field> = schema
         .fields()
         .iter()
         .map(|arrow_field| arrow_field_to_message_field(arrow_field))
@@ -426,7 +426,7 @@ mod tests {
     #[test]
     fn test_symmetric_serialization_deserialization() {
         let fields = vec![
-            postgres_protocol::message::Field {
+            proboscis_postgres_protocol::message::Field {
                 name: "id".to_string(),
                 table_oid: 16394,
                 column_number: 1,
@@ -435,7 +435,7 @@ mod tests {
                 type_modifier: -1,
                 format: 0,
             },
-            postgres_protocol::message::Field {
+            proboscis_postgres_protocol::message::Field {
                 name: "a".to_string(),
                 table_oid: 0,
                 column_number: 0,
@@ -444,7 +444,7 @@ mod tests {
                 type_modifier: -1,
                 format: 0,
             },
-            postgres_protocol::message::Field {
+            proboscis_postgres_protocol::message::Field {
                 name: "b".to_string(),
                 table_oid: 0,
                 column_number: 0,

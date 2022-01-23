@@ -19,4 +19,4 @@ uuid = { version = "0.8", features = ["v4"] }
 url = "2.2.2"
 tracing = "0.1"
 
-postgres-protocol = { version = "0.0.0", path = "../postgres-protocol" }
+proboscis-postgres-protocol = { version = "0.0.0", path = "../proboscis-postgres-protocol" }

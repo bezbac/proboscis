@@ -3,7 +3,7 @@ use crate::utils::arrow::{
 };
 use anyhow::Result;
 use arrow::record_batch::RecordBatch;
-use postgres_protocol::{
+use proboscis_postgres_protocol::{
     message::{BackendMessage, FrontendMessage},
     Message, StartupMessage,
 };

@@ -4,13 +4,6 @@ use arrow::{datatypes::Schema, record_batch::RecordBatch};
 use async_trait::async_trait;
 use deadpool::managed::RecycleResult;
 use futures::TryFutureExt;
-use postgres_protocol::{
-    message::{
-        BackendMessage, Bind, Close, CommandCompleteTag, DataRow, Describe, Execute,
-        FrontendMessage, MD5Hash, MD5Salt, Parse, RowDescription,
-    },
-    StartupMessage,
-};
 use proboscis_core::{
     resolver::Resolver,
     resolver::{ClientId, SyncResponse},
@@ -20,6 +13,13 @@ use proboscis_core::{
     },
     utils::connection::{Connection, MaybeTlsStream},
     utils::password::encode_md5_password_hash,
+};
+use proboscis_postgres_protocol::{
+    message::{
+        BackendMessage, Bind, Close, CommandCompleteTag, DataRow, Describe, Execute,
+        FrontendMessage, MD5Hash, MD5Salt, Parse, RowDescription,
+    },
+    StartupMessage,
 };
 use std::collections::{HashMap, VecDeque};
 pub use target_config::TargetConfig;
