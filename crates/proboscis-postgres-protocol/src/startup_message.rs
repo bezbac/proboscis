@@ -1,5 +1,4 @@
 use anyhow::Result;
-use byteorder::{ByteOrder, NetworkEndian};
 use bytes::BytesMut;
 use std::collections::HashMap;
 use tokio::io::AsyncRead;
@@ -50,9 +49,7 @@ impl StartupMessage {
     }
 
     pub async fn read<T: AsyncRead + Unpin>(stream: &mut T) -> Result<Self> {
-        let mut message_len_bytes = vec![0; 4];
-        stream.read_exact(&mut message_len_bytes).await?;
-        let message_length = NetworkEndian::read_u32(&message_len_bytes);
+        let message_length = AsyncReadExt::read_u32(stream).await?;
 
         let mut body_bytes = vec![0; message_length as usize - 4];
         stream.read_exact(&mut body_bytes).await?;
