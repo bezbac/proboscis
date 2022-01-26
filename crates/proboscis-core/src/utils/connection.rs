@@ -66,18 +66,18 @@ impl Connection {
     pub async fn read_frontend_message(&mut self) -> Result<FrontendMessage> {
         let message = FrontendMessage::read(&mut self.stream).await;
         debug!(message = ?message, "read frontend message");
-        message
+        message.map_err(|err| anyhow::anyhow!(err))
     }
 
     pub async fn read_backend_message(&mut self) -> Result<BackendMessage> {
         let message = BackendMessage::read(&mut self.stream).await;
         debug!(message = ?message, "read backend message");
-        message
+        message.map_err(|err| anyhow::anyhow!(err))
     }
 
     pub async fn read_startup_message(&mut self) -> Result<StartupMessage> {
         let message = StartupMessage::read(&mut self.stream).await;
         debug!(message = ?message, "read startup message");
-        message
+        message.map_err(|err| anyhow::anyhow!(err))
     }
 }

@@ -1,8 +1,7 @@
 use super::char_tag::CharTag;
-use anyhow::Result;
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 
-pub async fn read_until_zero<T: AsyncRead + Unpin>(stream: &mut T) -> Result<Vec<u8>> {
+pub async fn read_until_zero<T: AsyncRead + Unpin>(stream: &mut T) -> tokio::io::Result<Vec<u8>> {
     let mut result = vec![];
 
     loop {
@@ -24,7 +23,7 @@ pub async fn write_message_with_prefixed_message_len<T: AsyncWrite + std::marker
     buf: &mut T,
     char_tag: CharTag,
     body: &[u8],
-) -> Result<usize> {
+) -> tokio::io::Result<usize> {
     let mut written_bytes_count = 0;
     written_bytes_count += buf.write(&[char_tag.into()]).await?;
 

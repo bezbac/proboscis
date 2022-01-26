@@ -1,10 +1,11 @@
-use anyhow::Result;
 use bytes::BytesMut;
 use std::collections::HashMap;
 use tokio::io::AsyncRead;
 use tokio::io::AsyncReadExt;
 use tokio::io::AsyncWrite;
 use tokio::io::AsyncWriteExt;
+
+use crate::ParseError;
 
 pub const CODE_STARTUP_CANCEL: i32 = 80877102;
 pub const CODE_STARTUP_SSL_REQUEST: i32 = 80877103;
@@ -20,7 +21,7 @@ pub enum StartupMessage {
 }
 
 impl StartupMessage {
-    pub async fn write<T: AsyncWrite + Unpin>(&self, buf: &mut T) -> Result<()> {
+    pub async fn write<T: AsyncWrite + Unpin>(&self, buf: &mut T) -> tokio::io::Result<()> {
         match self {
             Self::Startup { params } => {
                 let mut writer = vec![];
@@ -48,7 +49,7 @@ impl StartupMessage {
         }
     }
 
-    pub async fn read<T: AsyncRead + Unpin>(stream: &mut T) -> Result<Self> {
+    pub async fn read<T: AsyncRead + Unpin>(stream: &mut T) -> Result<Self, ParseError> {
         let message_length = AsyncReadExt::read_u32(stream).await?;
 
         let mut body_bytes = vec![0; message_length as usize - 4];
@@ -62,7 +63,7 @@ impl StartupMessage {
     pub async fn read_body<T: AsyncRead + Unpin>(
         stream: &mut T,
         remaining_bytes_len: u32,
-    ) -> Result<Self> {
+    ) -> Result<Self, ParseError> {
         let protocol_version: i32 = stream.read_i32().await?;
 
         let message = match protocol_version {
@@ -88,7 +89,7 @@ impl StartupMessage {
 
                 for b in bytes {
                     if b == 0 {
-                        let string = std::str::from_utf8(current.as_slice())?.to_string();
+                        let string = String::from_utf8(current)?;
 
                         match &last_string {
                             Some(ls) => {

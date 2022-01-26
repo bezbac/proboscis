@@ -1,5 +1,6 @@
-use anyhow::Result;
 use std::convert::TryFrom;
+
+use crate::ParseError;
 
 #[derive(Debug, std::cmp::PartialEq)]
 pub enum CharTag {
@@ -51,7 +52,7 @@ impl From<CharTag> for u8 {
 }
 
 impl TryFrom<u8> for CharTag {
-    type Error = &'static str;
+    type Error = ParseError;
 
     fn try_from(value: u8) -> Result<Self, Self::Error> {
         match value {
@@ -74,7 +75,9 @@ impl TryFrom<u8> for CharTag {
             b'2' => Ok(CharTag::BindComplete),
             b'3' => Ok(CharTag::CloseComplete),
             b'n' => Ok(CharTag::NoData),
-            _ => Err("Unknown char tag"),
+            _ => Err(ParseError::UnknownCharTag {
+                char: value as char,
+            }),
         }
     }
 }

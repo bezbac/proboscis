@@ -1,6 +1,7 @@
+use crate::ParseError;
+
 use super::util::{read_until_zero, write_message_with_prefixed_message_len};
 use super::CharTag;
-use anyhow::{bail, Result};
 use std::convert::TryFrom;
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 
@@ -167,7 +168,10 @@ pub enum Message {
 }
 
 impl Message {
-    pub async fn write<T: AsyncWrite + std::marker::Unpin>(self, buf: &mut T) -> Result<usize> {
+    pub async fn write<T: AsyncWrite + std::marker::Unpin>(
+        self,
+        buf: &mut T,
+    ) -> tokio::io::Result<usize> {
         match self {
             Self::Backend(message) => message.write(buf).await,
             Self::Frontend(message) => message.write(buf).await,
@@ -187,15 +191,20 @@ impl From<BackendMessage> for Message {
     }
 }
 
-async fn read_meta_async<T: AsyncRead + Unpin>(stream: &mut T) -> Result<(CharTag, u32)> {
+async fn read_meta_async<T: AsyncRead + Unpin>(
+    stream: &mut T,
+) -> Result<(CharTag, u32), ParseError> {
     let tag = AsyncReadExt::read_u8(stream).await?;
-    let tag = CharTag::try_from(tag).map_err(|err| anyhow::anyhow!(err))?;
+    let tag = CharTag::try_from(tag)?;
     let message_length = AsyncReadExt::read_u32(stream).await?;
     Ok((tag, message_length))
 }
 
 impl FrontendMessage {
-    pub async fn write<T: AsyncWrite + std::marker::Unpin>(self, buf: &mut T) -> Result<usize> {
+    pub async fn write<T: AsyncWrite + std::marker::Unpin>(
+        self,
+        buf: &mut T,
+    ) -> tokio::io::Result<usize> {
         match self {
             Self::MD5HashedPassword(MD5Hash(hash)) => {
                 let mut body = vec![];
@@ -321,7 +330,7 @@ impl FrontendMessage {
         }
     }
 
-    pub async fn read<T: AsyncRead + Unpin>(stream: &mut T) -> Result<Self> {
+    pub async fn read<T: AsyncRead + Unpin>(stream: &mut T) -> Result<Self, ParseError> {
         let (tag, message_length) = read_meta_async(stream).await?;
         Self::read_body(stream, tag, message_length - 4).await
     }
@@ -330,7 +339,7 @@ impl FrontendMessage {
         stream: &mut T,
         tag: CharTag,
         remaining_bytes_len: u32,
-    ) -> Result<Self> {
+    ) -> Result<Self, ParseError> {
         match tag {
             CharTag::Query => {
                 let query_string_bytes = read_until_zero(stream).await?;
@@ -356,7 +365,11 @@ impl FrontendMessage {
                 let kind = match describe_identifier {
                     b'S' => DescribeKind::Statement,
                     b'P' => DescribeKind::Portal,
-                    _ => return Err(anyhow::anyhow!("Invalid describe kind")),
+                    _ => {
+                        return Err(ParseError::InvalidDescribeKind {
+                            char: describe_identifier as char,
+                        })
+                    }
                 };
 
                 let name_bytes = read_until_zero(&mut cursor).await?;
@@ -368,12 +381,10 @@ impl FrontendMessage {
                 let tag_bytes = read_until_zero(stream).await?;
                 let tag = String::from_utf8(tag_bytes)?;
 
-                let kind = if tag.starts_with('S') {
-                    CloseKind::Statement
-                } else if tag.starts_with('P') {
-                    CloseKind::Portal
-                } else {
-                    return Err(anyhow::anyhow!(""));
+                let kind = match tag.chars().next() {
+                    Some('S') => CloseKind::Statement,
+                    Some('P') => CloseKind::Portal,
+                    _ => return Err(ParseError::InvalidCloseKind { tag }),
                 };
 
                 Ok(Self::Close(Close {
@@ -442,7 +453,7 @@ impl FrontendMessage {
                     let param = match format {
                         0 => BindParameter::Text(String::from_utf8(param_bytes)?),
                         1 => BindParameter::Binary(param_bytes),
-                        _ => bail!("Unsupported parameter format"),
+                        _ => return Err(ParseError::InvalidBindParameterFormat),
                     };
 
                     params.push(param)
@@ -468,13 +479,14 @@ impl FrontendMessage {
 }
 
 impl BackendMessage {
-    pub async fn write<T: AsyncWrite + std::marker::Unpin>(self, buf: &mut T) -> Result<usize> {
+    pub async fn write<T: AsyncWrite + std::marker::Unpin>(
+        self,
+        buf: &mut T,
+    ) -> tokio::io::Result<usize> {
         match self {
             Self::AuthenticationOk => {
                 let vec = vec![CharTag::Authentication.into(), 0, 0, 0, 8, 0, 0, 0, 0];
-                buf.write(&vec[..])
-                    .await
-                    .map_err(|err| anyhow::anyhow!(err))
+                buf.write(&vec[..]).await
             }
             Self::ReadyForQuery => {
                 let mut body = vec![];
@@ -594,7 +606,7 @@ impl BackendMessage {
         }
     }
 
-    pub async fn read<T: AsyncRead + Unpin>(stream: &mut T) -> Result<Self> {
+    pub async fn read<T: AsyncRead + Unpin>(stream: &mut T) -> Result<Self, ParseError> {
         let (tag, message_length) = read_meta_async(stream).await?;
         Self::read_body(stream, tag, message_length - 4).await
     }
@@ -603,7 +615,7 @@ impl BackendMessage {
         stream: &mut T,
         tag: CharTag,
         remaining_bytes_len: u32,
-    ) -> Result<Self> {
+    ) -> Result<Self, ParseError> {
         match tag {
             CharTag::Authentication => {
                 let method: u32 = AsyncReadExt::read_u32(stream).await?;
