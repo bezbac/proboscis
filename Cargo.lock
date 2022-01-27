@@ -479,10 +479,12 @@ checksum = "a357d28ed41a50f9c765dbfe56cbc04a64e53e5fc58ba79fbc34c10ef3df831f"
 name = "examples"
 version = "0.0.0"
 dependencies = [
+ "arrow",
  "maplit",
  "native-tls",
  "postgres",
  "postgres-native-tls",
+ "proboscis-anonymization",
  "proboscis-core",
  "proboscis-resolver-postgres",
  "proboscis-resolver-transformer",
@@ -1435,6 +1437,7 @@ dependencies = [
  "anyhow",
  "clap",
  "config",
+ "proboscis-anonymization",
  "proboscis-core",
  "proboscis-resolver-postgres",
  "proboscis-resolver-transformer",
@@ -1675,6 +1678,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "proboscis-anonymization"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "arrow",
+ "itertools",
+ "polars",
+ "proboscis-resolver-transformer",
+ "rand 0.8.4",
+ "tracing",
+]
+
+[[package]]
 name = "proboscis-core"
 version = "0.1.0"
 dependencies = [
@@ -1730,10 +1746,7 @@ dependencies = [
  "anyhow",
  "arrow",
  "async-trait",
- "itertools",
- "polars",
  "proboscis-core",
- "rand 0.8.4",
  "sqlparser",
  "tracing",
 ]

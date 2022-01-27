@@ -1,4 +1,5 @@
 mod algorithm;
+mod column_transformations;
 mod conversion;
 mod transformer;
 

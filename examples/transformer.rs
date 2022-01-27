@@ -1,9 +1,11 @@
+use std::sync::Arc;
+
+use arrow::{array::LargeStringArray, datatypes::Schema, record_batch::RecordBatch};
 use maplit::hashmap;
 use proboscis_core::{Config, Proxy};
 use proboscis_resolver_postgres::{PostgresResolver, TargetConfig};
 use proboscis_resolver_transformer::{
-    column_transformations::ReplaceString, transformers::table_column::TableColumnTransformer,
-    TransformingResolver,
+    projection::ProjectedOrigin, Transformer, TransformingResolver,
 };
 use testcontainers::clients;
 use tokio::net::TcpListener;
@@ -15,6 +17,43 @@ mod setup;
 mod embedded {
     use refinery::embed_migrations;
     embed_migrations!("setup/sql_migrations");
+}
+
+struct ExampleTransformer;
+
+impl Transformer for ExampleTransformer {
+    fn transform_schema(
+        &self,
+        schema: &Schema,
+        _origins: &[ProjectedOrigin],
+    ) -> proboscis_resolver_transformer::TransformationResult<Schema> {
+        Ok(schema.clone())
+    }
+
+    fn transform_records(
+        &self,
+        data: &RecordBatch,
+        _origins: &[ProjectedOrigin],
+    ) -> proboscis_resolver_transformer::TransformationResult<RecordBatch> {
+        let new_data = data
+            .schema()
+            .fields()
+            .iter()
+            .enumerate()
+            .map(|(index, field)| {
+                let column_data = data.column(index).clone();
+
+                let transformed_data = match field.name().as_str() {
+                    "name" => Arc::new(LargeStringArray::from(vec!["Anon"; column_data.len()])),
+                    _ => column_data,
+                };
+
+                transformed_data
+            })
+            .collect();
+
+        Ok(RecordBatch::try_new(data.schema(), new_data)?)
+    }
 }
 
 async fn run_proxy(database_connection_url: String) -> String {
@@ -37,14 +76,7 @@ async fn run_proxy(database_connection_url: String) -> String {
                 .await
                 .unwrap(),
             ))
-            .add_transformer(Box::new(
-                TableColumnTransformer::default().add_transformation(
-                    "users.name",
-                    Box::new(ReplaceString {
-                        new_string: String::from("Anon"),
-                    }),
-                ),
-            )),
+            .add_transformer(Box::new(ExampleTransformer)),
         ),
     );
 

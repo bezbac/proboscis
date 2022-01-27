@@ -14,10 +14,12 @@ tracing-subscriber = "0.2"
 tokio = { version = "1.4.0", features = ["full"] }
 postgres = "0.19.1"
 native-tls = "0.2.7"
+arrow = "5.5.0"
 
 proboscis-core = { version = "0.1.0", path = "../crates/proboscis-core" }
 proboscis-resolver-postgres = { version = "0.1.0", path = "../crates/proboscis-resolver-postgres" }
 proboscis-resolver-transformer = { version = "0.1.0", path = "../crates/proboscis-resolver-transformer" }
+proboscis-anonymization = { version = "0.1.0", path = "../crates/proboscis-anonymization" }
 
 [[example]]
 name = "general"

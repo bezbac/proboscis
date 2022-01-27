@@ -16,3 +16,4 @@ serde = { version = "1.0", features = ["derive"] }
 proboscis-core = { version = "0.1.0", path = "../proboscis-core" }
 proboscis-resolver-postgres = { version = "0.1.0", path = "../proboscis-resolver-postgres" }
 proboscis-resolver-transformer = { version = "0.1.0", path = "../proboscis-resolver-transformer" }
+proboscis-anonymization = { version = "0.1.0", path = "../proboscis-anonymization" }

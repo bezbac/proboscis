@@ -1,14 +1,12 @@
 use anyhow::Result;
 use clap::{App, Arg};
 use config::ConfigError;
+use proboscis_anonymization::{
+    AnonymizationCriteria, AnonymizationTransformer, NumericAggregation,
+};
 use proboscis_core::Proxy;
 use proboscis_resolver_postgres::{PostgresResolver, TargetConfig};
-use proboscis_resolver_transformer::{
-    transformers::anonymization::{
-        AnonymizationCriteria, AnonymizationTransformer, NumericAggregation,
-    },
-    TransformingResolver,
-};
+use proboscis_resolver_transformer::TransformingResolver;
 use serde::Deserialize;
 use std::{collections::HashMap, path::Path, str::FromStr};
 use tokio::net::TcpListener;

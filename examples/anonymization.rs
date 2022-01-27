@@ -1,13 +1,11 @@
 use maplit::hashmap;
 use postgres::SimpleQueryMessage;
+use proboscis_anonymization::{
+    AnonymizationCriteria, AnonymizationTransformer, NumericAggregation,
+};
 use proboscis_core::{Config, Proxy};
 use proboscis_resolver_postgres::{PostgresResolver, TargetConfig};
-use proboscis_resolver_transformer::{
-    transformers::anonymization::{
-        AnonymizationCriteria, AnonymizationTransformer, NumericAggregation,
-    },
-    TransformingResolver,
-};
+use proboscis_resolver_transformer::TransformingResolver;
 use std::collections::HashMap;
 use testcontainers::clients;
 use tokio::net::TcpListener;

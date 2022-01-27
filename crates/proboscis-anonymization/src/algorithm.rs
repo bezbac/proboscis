@@ -328,7 +328,7 @@ pub fn anonymize(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::transformers::anonymization::conversion::record_batch_to_data_frame;
+    use crate::conversion::record_batch_to_data_frame;
     use arrow::{
         array::{Int32Array, StringArray},
         datatypes::{DataType, Field, Schema},

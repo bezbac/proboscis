@@ -1,4 +1,4 @@
-use crate::util::ProjectedOrigin;
+use crate::projection::ProjectedOrigin;
 use anyhow::Result;
 use arrow::{datatypes::Schema, record_batch::RecordBatch};
 

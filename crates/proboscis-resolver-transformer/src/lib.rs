@@ -1,7 +1,7 @@
-pub mod column_transformations;
+pub mod projection;
 mod resolver;
-pub mod traits;
-pub mod transformers;
-mod util;
+mod traits;
 
+pub use anyhow::Result as TransformationResult;
 pub use resolver::TransformingResolver;
+pub use traits::Transformer;

@@ -1,4 +1,4 @@
-use crate::{traits::Transformer, util::trace_projection_origin};
+use crate::{projection::trace_projection_origin, traits::Transformer};
 use anyhow::Result;
 use arrow::{datatypes::Schema, record_batch::RecordBatch};
 use async_trait::async_trait;

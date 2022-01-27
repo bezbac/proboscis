@@ -1,14 +1,14 @@
 use super::AnonymizationCriteria;
 use crate::{
-    traits::Transformer,
-    transformers::anonymization::{
-        algorithm::{anonymize, NumericAggregation},
-        conversion::{data_frame_to_record_batch, record_batch_to_data_frame},
-    },
-    util::{ProjectedOrigin, TableColumn},
+    algorithm::{anonymize, NumericAggregation},
+    conversion::{data_frame_to_record_batch, record_batch_to_data_frame},
 };
 use anyhow::Result;
 use arrow::record_batch::RecordBatch;
+use proboscis_resolver_transformer::{
+    projection::{ProjectedOrigin, TableColumn},
+    Transformer,
+};
 use std::collections::HashMap;
 
 pub struct AnonymizationTransformer {
@@ -30,9 +30,9 @@ impl AnonymizationTransformer {
             .iter()
             .enumerate()
             .filter_map(|(idx, origin)| match origin {
-                crate::util::ProjectedOrigin::Function => None,
-                crate::util::ProjectedOrigin::Value => None,
-                crate::util::ProjectedOrigin::TableColumn(TableColumn { table, column }) => {
+                ProjectedOrigin::Function => None,
+                ProjectedOrigin::Value => None,
+                ProjectedOrigin::TableColumn(TableColumn { table, column }) => {
                     let normalized_column_name = &format!("{}.{}", table, column);
 
                     self.quasi_identifier_columns
@@ -46,9 +46,9 @@ impl AnonymizationTransformer {
             .iter()
             .enumerate()
             .filter_map(|(idx, origin)| match origin {
-                crate::util::ProjectedOrigin::Function => None,
-                crate::util::ProjectedOrigin::Value => None,
-                crate::util::ProjectedOrigin::TableColumn(TableColumn { table, column }) => {
+                ProjectedOrigin::Function => None,
+                ProjectedOrigin::Value => None,
+                ProjectedOrigin::TableColumn(TableColumn { table, column }) => {
                     let normalized_column_name = &format!("{}.{}", table, column);
 
                     let is_identifier = self.identifier_columns.contains(normalized_column_name);
@@ -156,15 +156,12 @@ impl Transformer for AnonymizationTransformer {
 
 #[cfg(test)]
 mod tests {
-    use crate::util::trace_projection_origin;
-
     use super::*;
     use arrow::{
         array::{Int32Array, StringArray},
         datatypes::{DataType, Field, Schema},
     };
     use itertools::Itertools;
-    use sqlparser::{dialect::PostgreSqlDialect, parser::Parser};
     use std::sync::Arc;
 
     #[test]
@@ -218,13 +215,24 @@ mod tests {
             criteria: AnonymizationCriteria::KAnonymous { k: 2 },
         };
 
-        let dialect = PostgreSqlDialect {};
-        let query = Parser::parse_sql(&dialect, "SELECT id, age, profession, empty FROM contacts;")
-            .unwrap()
-            .pop()
-            .unwrap();
-
-        let origins = trace_projection_origin(&query, batch.schema().fields()).unwrap();
+        let origins = vec![
+            ProjectedOrigin::TableColumn(TableColumn {
+                table: String::from("contacts"),
+                column: String::from("id"),
+            }),
+            ProjectedOrigin::TableColumn(TableColumn {
+                table: String::from("contacts"),
+                column: String::from("age"),
+            }),
+            ProjectedOrigin::TableColumn(TableColumn {
+                table: String::from("contacts"),
+                column: String::from("profession"),
+            }),
+            ProjectedOrigin::TableColumn(TableColumn {
+                table: String::from("contacts"),
+                column: String::from("empty"),
+            }),
+        ];
 
         let transformed_schema = transformer
             .transform_schema(&batch.schema(), &origins)
@@ -296,13 +304,24 @@ mod tests {
             criteria: AnonymizationCriteria::KAnonymous { k: 2 },
         };
 
-        let dialect = PostgreSqlDialect {};
-        let query = Parser::parse_sql(&dialect, "SELECT id, age, profession, empty FROM contacts;")
-            .unwrap()
-            .pop()
-            .unwrap();
-
-        let origins = trace_projection_origin(&query, batch.schema().fields()).unwrap();
+        let origins = vec![
+            ProjectedOrigin::TableColumn(TableColumn {
+                table: String::from("contacts"),
+                column: String::from("id"),
+            }),
+            ProjectedOrigin::TableColumn(TableColumn {
+                table: String::from("contacts"),
+                column: String::from("age"),
+            }),
+            ProjectedOrigin::TableColumn(TableColumn {
+                table: String::from("contacts"),
+                column: String::from("profession"),
+            }),
+            ProjectedOrigin::TableColumn(TableColumn {
+                table: String::from("contacts"),
+                column: String::from("empty"),
+            }),
+        ];
 
         let transformed_schema = transformer
             .transform_schema(&batch.schema(), &origins)
