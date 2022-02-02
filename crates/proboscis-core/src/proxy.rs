@@ -6,7 +6,10 @@ use crate::{
 use anyhow::Result;
 use native_tls::Identity;
 use proboscis_postgres_protocol::{
-    message::{BackendMessage, CommandCompleteTag, FrontendMessage, MD5Hash, MD5Salt},
+    message::{
+        BackendMessage, CommandCompleteTag, FrontendMessage, MD5Hash, MD5Salt,
+        ReadyForQueryTransactionStatus,
+    },
     StartupMessage,
 };
 use rand::Rng;
@@ -123,7 +126,9 @@ pub async fn handle_authentication(
         .write_message(BackendMessage::AuthenticationOk.into())
         .await?;
     frontend
-        .write_message(BackendMessage::ReadyForQuery.into())
+        .write_message(
+            BackendMessage::ReadyForQuery(ReadyForQueryTransactionStatus::NotInTransaction).into(),
+        )
         .await?;
 
     Ok(())
@@ -209,7 +214,12 @@ pub async fn handle_connection(
                         .await?;
 
                     frontend
-                        .write_message(BackendMessage::ReadyForQuery.into())
+                        .write_message(
+                            BackendMessage::ReadyForQuery(
+                                ReadyForQueryTransactionStatus::NotInTransaction,
+                            )
+                            .into(),
+                        )
                         .await?;
 
                     Ok::<(), anyhow::Error>(())

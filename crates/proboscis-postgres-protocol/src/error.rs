@@ -14,6 +14,9 @@ pub enum ParseError {
     #[error("invalid describe kind: {char}")]
     InvalidDescribeKind { char: char },
 
+    #[error("unknown transaction status: {char}")]
+    UnknownTransactionStatus { char: char },
+
     #[error("invalid close kind: {tag}")]
     InvalidCloseKind { tag: String },
 

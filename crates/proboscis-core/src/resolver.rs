@@ -5,7 +5,7 @@ use anyhow::Result;
 use arrow::{datatypes::Schema, record_batch::RecordBatch};
 use async_trait::async_trait;
 use proboscis_postgres_protocol::message::{
-    BackendMessage, CommandCompleteTag, ParameterDescription,
+    BackendMessage, CommandCompleteTag, ParameterDescription, ReadyForQueryTransactionStatus,
 };
 use uuid::Uuid;
 
@@ -34,7 +34,9 @@ impl SyncResponse {
             }
             SyncResponse::BindComplete => vec![BackendMessage::BindComplete],
             SyncResponse::ParseComplete => vec![BackendMessage::ParseComplete],
-            SyncResponse::ReadyForQuery => vec![BackendMessage::ReadyForQuery],
+            SyncResponse::ReadyForQuery => vec![BackendMessage::ReadyForQuery(
+                ReadyForQueryTransactionStatus::NotInTransaction,
+            )],
             SyncResponse::NoData => vec![BackendMessage::NoData],
             SyncResponse::EmptyQueryResponse => vec![BackendMessage::EmptyQueryResponse],
         }

@@ -130,10 +130,42 @@ pub struct Error {
 }
 
 #[derive(Debug, PartialEq, Clone)]
+pub enum ReadyForQueryTransactionStatus {
+    NotInTransaction,
+    InTransaction,
+    InFailedTransaction,
+}
+
+impl TryFrom<u8> for ReadyForQueryTransactionStatus {
+    type Error = ParseError;
+
+    fn try_from(value: u8) -> Result<Self, Self::Error> {
+        match value {
+            b'I' => Ok(Self::NotInTransaction),
+            b'T' => Ok(Self::InTransaction),
+            b'E' => Ok(Self::InFailedTransaction),
+            _ => Err(ParseError::UnknownTransactionStatus {
+                char: value as char,
+            }),
+        }
+    }
+}
+
+impl From<ReadyForQueryTransactionStatus> for u8 {
+    fn from(value: ReadyForQueryTransactionStatus) -> Self {
+        match value {
+            ReadyForQueryTransactionStatus::NotInTransaction => b'I',
+            ReadyForQueryTransactionStatus::InTransaction => b'T',
+            ReadyForQueryTransactionStatus::InFailedTransaction => b'E',
+        }
+    }
+}
+
+#[derive(Debug, PartialEq, Clone)]
 pub enum BackendMessage {
     AuthenticationRequestMD5Password(MD5Salt),
     AuthenticationOk,
-    ReadyForQuery,
+    ReadyForQuery(ReadyForQueryTransactionStatus),
     ParameterStatus(ParameterStatus),
     BackendKeyData(BackendKeyData),
     RowDescription(RowDescription),
@@ -488,12 +520,13 @@ impl BackendMessage {
                 let vec = vec![CharTag::Authentication.into(), 0, 0, 0, 8, 0, 0, 0, 0];
                 buf.write(&vec[..]).await
             }
-            Self::ReadyForQuery => {
-                let mut body = vec![];
-                body.write_all(&[CharTag::EmptyQueryResponse.into()])
-                    .await?;
-
-                write_message_with_prefixed_message_len(buf, CharTag::ReadyForQuery, &body).await
+            Self::ReadyForQuery(status) => {
+                write_message_with_prefixed_message_len(
+                    buf,
+                    CharTag::ReadyForQuery,
+                    &[status.into()],
+                )
+                .await
             }
             Self::AuthenticationRequestMD5Password(MD5Salt(salt)) => {
                 let mut body = vec![];
@@ -657,12 +690,9 @@ impl BackendMessage {
                 }))
             }
             CharTag::ReadyForQuery => {
-                let mut bytes = vec![0; remaining_bytes_len as usize];
-                stream.read_exact(&mut bytes).await.map(|_| bytes)?;
-
-                // TODO: Use the parsed data
-
-                Ok(Self::ReadyForQuery)
+                let status_byte = AsyncReadExt::read_u8(stream).await?;
+                let status = ReadyForQueryTransactionStatus::try_from(status_byte)?;
+                Ok(Self::ReadyForQuery(status))
             }
             CharTag::RowDescription => {
                 let num_fields: u16 = AsyncReadExt::read_u16(stream).await?;
@@ -817,7 +847,8 @@ mod tests {
 
     #[test]
     fn ready_for_query() {
-        let message = BackendMessage::ReadyForQuery;
+        let message =
+            BackendMessage::ReadyForQuery(ReadyForQueryTransactionStatus::NotInTransaction);
 
         test_backend_symmetric_serialization_deserialization(message.into());
     }

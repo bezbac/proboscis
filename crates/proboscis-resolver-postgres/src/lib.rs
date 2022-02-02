@@ -97,7 +97,7 @@ pub async fn establish_connection(target_config: &TargetConfig) -> Result<Connec
         let response = connection.read_backend_message().await?;
 
         match response {
-            BackendMessage::ReadyForQuery => break,
+            BackendMessage::ReadyForQuery(_) => break,
             BackendMessage::ParameterStatus(_) => {
                 // TODO: Handle this
             }
@@ -189,7 +189,7 @@ impl Resolver for PostgresResolver {
         loop {
             let response = connection.connection.read_backend_message().await?;
             match response {
-                BackendMessage::ReadyForQuery => break,
+                BackendMessage::ReadyForQuery(_) => break,
                 BackendMessage::RowDescription(RowDescription {
                     fields: mut message_fields,
                 }) => fields.append(&mut message_fields),
@@ -391,7 +391,7 @@ impl Resolver for PostgresResolver {
 
         let read_message = connection.connection.read_backend_message().await?;
         match read_message {
-            BackendMessage::ReadyForQuery => SyncResponse::ReadyForQuery,
+            BackendMessage::ReadyForQuery(_) => SyncResponse::ReadyForQuery,
             _ => todo!(),
         };
         responses.push(SyncResponse::ReadyForQuery);
