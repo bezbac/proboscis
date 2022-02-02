@@ -266,24 +266,6 @@ pub fn simple_query_response_to_record_batch(
     RecordBatch::try_new(Arc::new(schema), columns).map_err(|err| anyhow::anyhow!(err))
 }
 
-fn write_be_without_trailing_zeros<V: omnom::WriteBytes, W: std::io::Write>(
-    value: V,
-    buffer: &mut W,
-) -> std::io::Result<usize> {
-    // TODO: Fix this function
-
-    value.write_be_bytes(buffer)
-
-    // let mut bytes = vec![];
-    // value.write_be_bytes(&mut bytes).unwrap();
-
-    // while bytes.last() == Some(&0) {
-    //     bytes.pop();
-    // }
-
-    // buffer.write(&bytes)
-}
-
 pub fn serialize_record_batch_to_data_rows(batch: &RecordBatch) -> Vec<DataRow> {
     (0..batch.num_rows())
         .map(|row_index| {
@@ -298,38 +280,31 @@ pub fn serialize_record_batch_to_data_rows(batch: &RecordBatch) -> Vec<DataRow> 
                     }
                     DataType::Int16 => {
                         let values: &Int16Array = as_primitive_array(column);
-                        write_be_without_trailing_zeros(values.value(row_index), &mut cell)
-                            .unwrap();
+                        values.value(row_index).write_be_bytes(&mut cell).unwrap();
                     }
                     DataType::Int32 => {
                         let values: &Int32Array = as_primitive_array(column);
-                        write_be_without_trailing_zeros(values.value(row_index), &mut cell)
-                            .unwrap();
+                        values.value(row_index).write_be_bytes(&mut cell).unwrap();
                     }
                     DataType::Int64 => {
                         let values: &Int64Array = as_primitive_array(column);
-                        write_be_without_trailing_zeros(values.value(row_index), &mut cell)
-                            .unwrap();
+                        values.value(row_index).write_be_bytes(&mut cell).unwrap();
                     }
                     DataType::UInt8 => {
                         let values: &UInt8Array = as_primitive_array(column);
-                        write_be_without_trailing_zeros(values.value(row_index), &mut cell)
-                            .unwrap();
+                        values.value(row_index).write_be_bytes(&mut cell).unwrap();
                     }
                     DataType::UInt16 => {
                         let values: &UInt16Array = as_primitive_array(column);
-                        write_be_without_trailing_zeros(values.value(row_index), &mut cell)
-                            .unwrap();
+                        values.value(row_index).write_be_bytes(&mut cell).unwrap();
                     }
                     DataType::UInt32 => {
                         let values: &UInt32Array = as_primitive_array(column);
-                        write_be_without_trailing_zeros(values.value(row_index), &mut cell)
-                            .unwrap();
+                        values.value(row_index).write_be_bytes(&mut cell).unwrap();
                     }
                     DataType::UInt64 => {
                         let values: &UInt64Array = as_primitive_array(column);
-                        write_be_without_trailing_zeros(values.value(row_index), &mut cell)
-                            .unwrap();
+                        values.value(row_index).write_be_bytes(&mut cell).unwrap();
                     }
                     DataType::LargeUtf8 => {
                         let values = &column
