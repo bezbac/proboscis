@@ -1,4 +1,3 @@
-use bytes::BytesMut;
 use std::collections::HashMap;
 use tokio::io::AsyncRead;
 use tokio::io::AsyncReadExt;
@@ -74,36 +73,30 @@ impl StartupMessage {
             CODE_STARTUP_SSL_REQUEST => StartupMessage::SslRequest,
             CODE_STARTUP_GSSENC_REQUEST => StartupMessage::GssEncRequest,
             _ => {
-                // TODO: Find a better way to read these strings
-
-                let mut buf = BytesMut::new();
-                buf.resize(remaining_bytes_len as usize - 4, b'0'); // - 4 for the protocol version i32
-                stream.read_exact(&mut buf).await?;
-
-                let bytes = buf.to_vec();
-
                 let mut params: HashMap<String, String> = HashMap::new();
 
+                let mut buf = vec![0; remaining_bytes_len as usize - 4];
+                stream.read_exact(&mut buf).await?;
+                let mut iter = buf.iter();
+
                 let mut last_string: Option<String> = None;
-                let mut current: Vec<u8> = vec![];
+                loop {
+                    let string_bytes = iter.by_ref().take_while(|&&v| v != 0).cloned().collect();
 
-                for b in bytes {
-                    if b == 0 {
-                        let string = String::from_utf8(current)?;
+                    let string = String::from_utf8(string_bytes)?;
 
-                        match &last_string {
-                            Some(ls) => {
-                                params.insert(ls.clone(), string.clone());
-                                last_string = None;
-                            }
-                            None => {
-                                last_string = Some(string.clone());
-                            }
+                    if string.len() == 0 {
+                        break;
+                    }
+
+                    match last_string {
+                        Some(key) => {
+                            params.insert(key, string);
+                            last_string = None;
                         }
-
-                        current = vec![];
-                    } else {
-                        current.push(b)
+                        None => {
+                            last_string = Some(string);
+                        }
                     }
                 }
 
