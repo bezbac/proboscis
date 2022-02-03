@@ -8,11 +8,6 @@ use tracing_subscriber::EnvFilter;
 
 mod setup;
 
-mod embedded {
-    use refinery::embed_migrations;
-    embed_migrations!("setup/sql_migrations");
-}
-
 async fn run_proxy(database_connection_url: String) -> String {
     let proxy_user = "admin";
     let proxy_password = "password";
@@ -23,7 +18,7 @@ async fn run_proxy(database_connection_url: String) -> String {
                 "admin".to_string() => "password".to_string(),
             },
             tls_config: Some(proboscis_core::TlsConfig {
-                pcks_path: "examples/openssl/identity.p12".to_string(),
+                pcks_path: "examples/resources/openssl/identity.p12".to_string(),
                 password: "password".to_string(),
             }),
         },
@@ -64,7 +59,7 @@ async fn main() {
     let docker = clients::Cli::default();
 
     let (database_connection_url, _node) = setup::start_dockerized_postgres(&docker).await;
-    setup::apply_migrations(embedded::migrations::runner(), &database_connection_url).await;
+    setup::import_sql_file(&database_connection_url, "examples/resources/sql/users.sql").await;
 
     let proxy_connection_url = run_proxy(database_connection_url).await;
 

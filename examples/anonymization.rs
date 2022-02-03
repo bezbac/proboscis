@@ -1,5 +1,4 @@
 use maplit::hashmap;
-use postgres::SimpleQueryMessage;
 use proboscis_anonymization::{
     AnonymizationCriteria, AnonymizationTransformer, NumericAggregation,
 };
@@ -9,15 +8,10 @@ use proboscis_resolver_transformer::TransformingResolver;
 use std::collections::HashMap;
 use testcontainers::clients;
 use tokio::net::TcpListener;
-use tokio_postgres::NoTls;
+use tokio_postgres::{NoTls, SimpleQueryMessage};
 use tracing_subscriber::EnvFilter;
 
 mod setup;
-
-mod embedded {
-    use refinery::embed_migrations;
-    embed_migrations!("setup/sql_migrations_anonymization");
-}
 
 async fn run_proxy(database_connection_url: String) -> String {
     let proxy_user = "admin";
@@ -91,7 +85,11 @@ async fn main() {
     let docker = clients::Cli::default();
 
     let (database_connection_url, _node) = setup::start_dockerized_postgres(&docker).await;
-    setup::apply_migrations(embedded::migrations::runner(), &database_connection_url).await;
+    setup::import_sql_file(
+        &database_connection_url,
+        "examples/resources/sql/contacts.sql",
+    )
+    .await;
 
     let proxy_connection_url = run_proxy(database_connection_url).await;
 

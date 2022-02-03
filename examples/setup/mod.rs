@@ -1,13 +1,15 @@
-use postgres::NoTls;
-use refinery::Runner;
+use std::fs;
 use testcontainers::{
     clients::{self, Cli},
     images::{self, generic::WaitFor},
     Container, Docker,
 };
+use tokio_postgres::NoTls;
 
-pub async fn apply_migrations(migration_runner: Runner, address: &str) {
-    let (mut client, connection) = tokio_postgres::connect(address, NoTls).await.unwrap();
+pub async fn import_sql_file(database_connection_url: &str, path: &str) {
+    let (client, connection) = tokio_postgres::connect(&database_connection_url, NoTls)
+        .await
+        .unwrap();
 
     tokio::spawn(async move {
         if let Err(e) = connection.await {
@@ -15,10 +17,9 @@ pub async fn apply_migrations(migration_runner: Runner, address: &str) {
         }
     });
 
-    migration_runner
-        .run_async(&mut client)
-        .await
-        .expect("Migrations failed");
+    let contents = fs::read_to_string(path).expect("Something went wrong reading the file");
+
+    client.batch_execute(&contents).await.unwrap();
 }
 
 pub async fn start_dockerized_postgres<'a>(

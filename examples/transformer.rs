@@ -1,5 +1,3 @@
-use std::sync::Arc;
-
 use arrow::{array::LargeStringArray, datatypes::Schema, record_batch::RecordBatch};
 use maplit::hashmap;
 use proboscis_core::{Config, Proxy};
@@ -7,17 +5,13 @@ use proboscis_resolver_postgres::{PostgresResolver, TargetConfig};
 use proboscis_resolver_transformer::{
     projection::ProjectedOrigin, Transformer, TransformingResolver,
 };
+use std::sync::Arc;
 use testcontainers::clients;
 use tokio::net::TcpListener;
 use tokio_postgres::{NoTls, SimpleQueryMessage};
 use tracing_subscriber::EnvFilter;
 
 mod setup;
-
-mod embedded {
-    use refinery::embed_migrations;
-    embed_migrations!("setup/sql_migrations");
-}
 
 struct ExampleTransformer;
 
@@ -107,7 +101,7 @@ async fn main() {
     let docker = clients::Cli::default();
 
     let (database_connection_url, _node) = setup::start_dockerized_postgres(&docker).await;
-    setup::apply_migrations(embedded::migrations::runner(), &database_connection_url).await;
+    setup::import_sql_file(&database_connection_url, "examples/resources/sql/users.sql").await;
 
     let proxy_connection_url = run_proxy(database_connection_url).await;
 
