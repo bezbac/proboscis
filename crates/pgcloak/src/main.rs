@@ -1,6 +1,6 @@
 use crate::config::ColumnConfiguration;
 use anyhow::Result;
-use clap::{App, Arg};
+use clap::{App, Arg, ArgMatches};
 use proboscis_anonymization::{
     AnonymizationCriteria, AnonymizationTransformer, NumericAggregation, StringAggregation,
 };
@@ -13,26 +13,11 @@ use tracing::{subscriber::set_global_default, Level};
 
 mod config;
 
-#[tokio::main]
-async fn main() -> Result<()> {
-    let matches = App::new("pgcloak")
-        .version("0.1.0")
-        .about("An anonymizing postgres proxy")
-        .arg(
-            Arg::with_name("config")
-                .short("c")
-                .default_value("./pgcloak.toml")
-                .help("Path to the config file to use"),
-        )
-        .arg(
-            Arg::with_name("verbosity")
-                .short("v")
-                .default_value("INFO")
-                .help("Sets the level of verbosity"),
-        )
-        .arg(Arg::with_name("database").help("Connection uri for the database"))
-        .get_matches();
+async fn inspect_command(matches: &ArgMatches) -> Result<()> {
+    Ok(())
+}
 
+async fn default_command(matches: &ArgMatches) -> Result<()> {
     let tracing_level = Level::from_str(
         matches
             .value_of("verbosity")
@@ -110,4 +95,31 @@ async fn main() -> Result<()> {
         .unwrap();
 
     proxy.listen(listener).await
+}
+
+#[tokio::main]
+async fn main() -> Result<()> {
+    let matches = App::new("pgcloak")
+        .version("0.1.0")
+        .about("An anonymizing postgres proxy")
+        .arg(
+            Arg::new("config")
+                .short('c')
+                .default_value("./pgcloak.toml")
+                .help("Path to the config file to use"),
+        )
+        .arg(
+            Arg::new("verbosity")
+                .short('v')
+                .default_value("INFO")
+                .help("Sets the level of verbosity"),
+        )
+        .arg(Arg::new("database").help("Connection uri for the database"))
+        .subcommand(App::new("inspect").about("Autogenerate a config based on an existing schema"))
+        .get_matches();
+
+    match matches.subcommand() {
+        Some(("inspect", sub_matches)) => inspect_command(sub_matches).await,
+        _ => default_command(&matches).await,
+    }
 }
