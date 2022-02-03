@@ -85,7 +85,7 @@ impl StartupMessage {
 
                     let string = String::from_utf8(string_bytes)?;
 
-                    if string.len() == 0 {
+                    if string.is_empty() {
                         break;
                     }
 

@@ -34,11 +34,7 @@ pub fn series_to_arrow_array(series: &Series) -> ArrayRef {
 }
 
 pub fn data_frame_to_record_batch(df: &DataFrame, schema: arrow::datatypes::Schema) -> RecordBatch {
-    let columns: Vec<ArrayRef> = df
-        .get_columns()
-        .iter()
-        .map(|series| series_to_arrow_array(series))
-        .collect();
+    let columns: Vec<ArrayRef> = df.get_columns().iter().map(series_to_arrow_array).collect();
 
     RecordBatch::try_new(Arc::new(schema), columns).unwrap()
 }

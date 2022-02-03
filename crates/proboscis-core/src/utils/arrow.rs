@@ -244,7 +244,7 @@ fn arrow_field_to_message_field(value: &Field) -> proboscis_postgres_protocol::m
 pub fn protocol_fields_to_schema(fields: &[proboscis_postgres_protocol::message::Field]) -> Schema {
     let fields = fields
         .iter()
-        .map(|message_field| message_field_to_arrow_field(message_field))
+        .map(message_field_to_arrow_field)
         .collect::<Vec<Field>>();
 
     Schema::new(fields)
@@ -358,7 +358,7 @@ pub fn serialize_record_batch_schema_to_row_description(schema: &Schema) -> RowD
     let fields: Vec<proboscis_postgres_protocol::message::Field> = schema
         .fields()
         .iter()
-        .map(|arrow_field| arrow_field_to_message_field(arrow_field))
+        .map(arrow_field_to_message_field)
         .collect();
     RowDescription { fields }
 }
