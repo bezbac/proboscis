@@ -1,11 +1,10 @@
 use maplit::hashmap;
 use proboscis_anonymization::{
-    AnonymizationCriteria, AnonymizationTransformer, NumericAggregation,
+    AnonymizationCriteria, AnonymizationTransformer, NumericAggregation, StringAggregation,
 };
 use proboscis_core::{Config, Proxy};
 use proboscis_resolver_postgres::{PostgresResolver, TargetConfig};
 use proboscis_resolver_transformer::TransformingResolver;
-use std::collections::HashMap;
 use testcontainers::clients;
 use tokio::net::TcpListener;
 use tokio_postgres::{NoTls, SimpleQueryMessage};
@@ -23,12 +22,27 @@ async fn run_proxy(database_connection_url: String) -> String {
         String::from("contacts.email"),
     ];
 
-    let quasi_identifier_columns: HashMap<String, Option<NumericAggregation>> = vec![
-        (String::from("contacts.gender"), None),
-        (String::from("contacts.birth_year"), None),
-        (String::from("contacts.street"), None),
-        (String::from("contacts.city"), None),
-        (String::from("contacts.profession"), None),
+    let quasi_identifier_columns = vec![
+        (
+            String::from("contacts.gender"),
+            (NumericAggregation::Median, StringAggregation::Join),
+        ),
+        (
+            String::from("contacts.birth_year"),
+            (NumericAggregation::Median, StringAggregation::Join),
+        ),
+        (
+            String::from("contacts.street"),
+            (NumericAggregation::Median, StringAggregation::Join),
+        ),
+        (
+            String::from("contacts.city"),
+            (NumericAggregation::Median, StringAggregation::Join),
+        ),
+        (
+            String::from("contacts.profession"),
+            (NumericAggregation::Median, StringAggregation::Join),
+        ),
     ]
     .iter()
     .cloned()

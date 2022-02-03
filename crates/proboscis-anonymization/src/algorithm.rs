@@ -7,7 +7,7 @@ use std::collections::{HashMap, HashSet, VecDeque};
 use std::convert::TryFrom;
 use std::ops::Deref;
 
-use crate::column_transformations::{AggStringJoinUnique, ColumnTransformation};
+use crate::column_transformations::ColumnTransformation;
 
 fn get_span(series: &Series) -> Result<Option<i64>> {
     match series.dtype() {
@@ -199,6 +199,21 @@ impl NumericAggregation {
     }
 }
 
+#[derive(Clone, Copy, Debug)]
+pub enum StringAggregation {
+    Join,
+    Substring,
+}
+
+impl StringAggregation {
+    pub fn transformation(&self) -> Box<dyn ColumnTransformation> {
+        match self {
+            Self::Join => Box::new(crate::column_transformations::AggStringJoinUnique {}),
+            Self::Substring => Box::new(crate::column_transformations::AggStringCommonPrefix {}),
+        }
+    }
+}
+
 fn apply_column_transformation_to_series(
     series: &Series,
     transformation: &dyn ColumnTransformation,
@@ -214,7 +229,11 @@ fn deidentify_column(series: &Series) -> Result<Series> {
     apply_column_transformation_to_series(series, &crate::column_transformations::Randomize {})
 }
 
-fn agg_column(series: &Series, numeric_aggregation: &NumericAggregation) -> Result<Series> {
+fn agg_column(
+    series: &Series,
+    numeric_aggregation: &NumericAggregation,
+    string_aggregation: &StringAggregation,
+) -> Result<Series> {
     match series.dtype() {
         polars::prelude::DataType::UInt8
         | polars::prelude::DataType::Int16
@@ -223,9 +242,10 @@ fn agg_column(series: &Series, numeric_aggregation: &NumericAggregation) -> Resu
             series,
             numeric_aggregation.transformation().as_ref(),
         ),
-        polars::prelude::DataType::Utf8 => {
-            apply_column_transformation_to_series(series, &AggStringJoinUnique {})
-        }
+        polars::prelude::DataType::Utf8 => apply_column_transformation_to_series(
+            series,
+            string_aggregation.transformation().as_ref(),
+        ),
         _ => todo!("{}", series.dtype()),
     }
 }
@@ -269,9 +289,8 @@ impl AnonymizationCriteria {
 pub fn anonymize(
     df: &DataFrame,
     identifiers: &[&str],
-    quasi_identifiers: &HashMap<String, Option<NumericAggregation>>,
+    quasi_identifiers: &HashMap<String, (NumericAggregation, StringAggregation)>,
     criteria: &[AnonymizationCriteria],
-    numeric_aggregation: &NumericAggregation,
 ) -> Result<DataFrame> {
     let quasi_identifier_strs: Vec<&str> = quasi_identifiers.keys().map(|k| k.as_str()).collect();
 
@@ -295,7 +314,9 @@ pub fn anonymize(
             let data = column.take(&UInt32Chunked::new_from_slice("idx", partition))?;
 
             let new_data: Series = if is_quasi_identifier {
-                agg_column(&data, numeric_aggregation)?
+                let (numeric_aggregation, string_aggregation) =
+                    quasi_identifiers.get(column.name()).unwrap();
+                agg_column(&data, numeric_aggregation, string_aggregation)?
             } else if is_identifier {
                 deidentify_column(&data)?
             } else {
@@ -399,9 +420,18 @@ mod tests {
 
         let identifiers = vec!["first_name", "last_name"];
         let quasi_identifiers = vec![
-            ("age".to_string(), None),
-            ("profession".to_string(), None),
-            ("empty".to_string(), None),
+            (
+                "age".to_string(),
+                (NumericAggregation::Range, StringAggregation::Join),
+            ),
+            (
+                "profession".to_string(),
+                (NumericAggregation::Range, StringAggregation::Join),
+            ),
+            (
+                "empty".to_string(),
+                (NumericAggregation::Range, StringAggregation::Join),
+            ),
         ]
         .iter()
         .cloned()
@@ -412,7 +442,6 @@ mod tests {
             &identifiers,
             &quasi_identifiers,
             &[AnonymizationCriteria::KAnonymous { k: 2 }],
-            &NumericAggregation::Range,
         )
         .unwrap();
 

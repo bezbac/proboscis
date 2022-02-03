@@ -3,7 +3,7 @@ k = 3
 connection_uri = "postgresql://postgres:postgres@localhost:5432/postgres"
 
 [tls]
-pcks_path = "./examples/openssl/identity.p12"
+pcks_path = "./examples/resources/openssl/identity.p12"
 password = "password"
 
 [listener]
@@ -25,3 +25,4 @@ name = "contacts.last_name"
 [[columns]]
 type = "pseudo_identifier"
 name = "contacts.age"
+string_aggregation = "substring"

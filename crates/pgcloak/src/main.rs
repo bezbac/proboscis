@@ -1,83 +1,17 @@
+use crate::config::ColumnConfiguration;
 use anyhow::Result;
 use clap::{App, Arg};
-use config::ConfigError;
 use proboscis_anonymization::{
-    AnonymizationCriteria, AnonymizationTransformer, NumericAggregation,
+    AnonymizationCriteria, AnonymizationTransformer, NumericAggregation, StringAggregation,
 };
 use proboscis_core::Proxy;
 use proboscis_resolver_postgres::{PostgresResolver, TargetConfig};
 use proboscis_resolver_transformer::TransformingResolver;
-use serde::Deserialize;
 use std::{collections::HashMap, path::Path, str::FromStr};
 use tokio::net::TcpListener;
 use tracing::{subscriber::set_global_default, Level};
 
-#[derive(Debug, Deserialize)]
-struct ListenerConfig {
-    host: String,
-    port: usize,
-}
-
-impl Default for ListenerConfig {
-    fn default() -> Self {
-        Self {
-            host: String::from("localhost"),
-            port: 5432,
-        }
-    }
-}
-
-impl ListenerConfig {
-    fn to_address(&self) -> String {
-        format!("{}:{}", self.host, self.port)
-    }
-}
-
-#[derive(Debug, Clone, Deserialize)]
-pub struct TlsConfig {
-    pub pcks_path: String,
-    pub password: String,
-}
-
-impl From<TlsConfig> for proboscis_core::TlsConfig {
-    fn from(config: TlsConfig) -> Self {
-        Self {
-            pcks_path: config.pcks_path,
-            password: config.password,
-        }
-    }
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(tag = "type")]
-#[serde(rename_all = "snake_case")]
-enum ColumnConfiguration {
-    Identifier { name: String },
-    PseudoIdentifier { name: String },
-}
-
-#[derive(Debug, Deserialize, Clone)]
-struct Credential {
-    username: String,
-    password: String,
-}
-
-#[derive(Debug, Deserialize)]
-struct ApplicationConfig {
-    credentials: Vec<Credential>,
-    columns: Vec<ColumnConfiguration>,
-    tls: Option<TlsConfig>,
-    listener: ListenerConfig,
-    max_pool_size: usize,
-    connection_uri: String,
-    k: usize,
-}
-
-fn load_config(path: &Path) -> Result<ApplicationConfig, ConfigError> {
-    let mut s = config::Config::default();
-    s.merge(config::File::from(path)).unwrap();
-    s.try_into()
-}
+mod config;
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -117,16 +51,25 @@ async fn main() -> Result<()> {
             .expect("Missing value for 'config' argument"),
     );
 
-    let config = load_config(config_file_path)?;
+    let config_file_path = std::env::current_dir()?.join(config_file_path);
+    let config = crate::config::load_config(&config_file_path)?;
 
     let mut identifier_columns = vec![];
-    let mut quasi_identifier_columns: HashMap<String, Option<NumericAggregation>> = HashMap::new();
+    let mut quasi_identifier_columns: HashMap<String, (NumericAggregation, StringAggregation)> =
+        HashMap::new();
 
     for column in config.columns {
         match column {
             ColumnConfiguration::Identifier { name } => identifier_columns.push(name),
-            ColumnConfiguration::PseudoIdentifier { name } => {
-                quasi_identifier_columns.insert(name, None);
+            ColumnConfiguration::PseudoIdentifier {
+                name,
+                string_aggregation,
+                numeric_aggregation,
+            } => {
+                quasi_identifier_columns.insert(
+                    name,
+                    (numeric_aggregation.into(), string_aggregation.into()),
+                );
             }
         }
     }
