@@ -1,4 +1,4 @@
-use arrow::datatypes::Field;
+use proboscis_core::data::field::Field;
 use sqlparser::ast::{
     Expr, Ident, SelectItem, SetExpr, Statement, TableAlias, TableFactor, TableWithJoins,
 };
@@ -97,13 +97,12 @@ pub fn trace_projection_origin(
                     match item {
                         SelectItem::Wildcard => {
                             let mut table_index = 0;
-                            let mut last_table_oid: Option<&str> = None;
+                            let mut last_table_oid: Option<i32> = None;
                             while let Some(field) = remaining_fields.pop_front() {
-                                let current_table_oid =
-                                    field.metadata().as_ref().unwrap().get("table_oid").unwrap();
+                                let current_table_oid = field.table_oid;
 
                                 if let Some(oid) = &last_table_oid {
-                                    if oid != current_table_oid {
+                                    if *oid != current_table_oid {
                                         table_index += 1;
                                     }
                                 }
@@ -123,7 +122,7 @@ pub fn trace_projection_origin(
                                 };
 
                                 result.push(ProjectedOrigin::TableColumn(TableColumn {
-                                    column: field.name().to_string(),
+                                    column: field.name.clone(),
                                     table: table_name,
                                 }));
 
@@ -202,8 +201,6 @@ pub fn trace_projection_origin(
 
 #[cfg(test)]
 mod tests {
-    use std::collections::BTreeMap;
-
     use super::*;
     use sqlparser::{dialect::PostgreSqlDialect, parser::Parser};
 
@@ -217,7 +214,12 @@ mod tests {
 
         let unnested_fields = trace_projection_origin(
             &query_ast,
-            &[Field::new("id", arrow::datatypes::DataType::Int64, false)],
+            &[Field {
+                name: "id".to_string(),
+                table_oid: 0,
+                column_number: 0,
+                data_type: arrow::datatypes::DataType::Int64,
+            }],
         )
         .unwrap();
 
@@ -238,21 +240,24 @@ mod tests {
             .pop()
             .unwrap();
 
-        let mut fields = vec![];
-
-        let mut field = Field::new("id", arrow::datatypes::DataType::Int64, false);
-        let mut metadata = BTreeMap::new();
-        metadata.insert(String::from("table_oid"), String::from("1"));
-        field.set_metadata(Some(metadata));
-        fields.push(field);
-
-        let mut field = Field::new("name", arrow::datatypes::DataType::Int64, false);
-        let mut metadata = BTreeMap::new();
-        metadata.insert(String::from("table_oid"), String::from("1"));
-        field.set_metadata(Some(metadata));
-        fields.push(field);
-
-        let unnested_fields = trace_projection_origin(&query_ast, &fields).unwrap();
+        let unnested_fields = trace_projection_origin(
+            &query_ast,
+            &[
+                Field {
+                    name: "id".to_string(),
+                    table_oid: 0,
+                    column_number: 0,
+                    data_type: arrow::datatypes::DataType::Int64,
+                },
+                Field {
+                    name: "name".to_string(),
+                    table_oid: 0,
+                    column_number: 0,
+                    data_type: arrow::datatypes::DataType::Int64,
+                },
+            ],
+        )
+        .unwrap();
 
         assert_eq!(
             unnested_fields,
@@ -279,11 +284,12 @@ mod tests {
 
         let unnested_fields = trace_projection_origin(
             &query_ast,
-            &[Field::new(
-                "user_id",
-                arrow::datatypes::DataType::Int64,
-                false,
-            )],
+            &[Field {
+                name: "user_id".to_string(),
+                table_oid: 0,
+                column_number: 0,
+                data_type: arrow::datatypes::DataType::Int64,
+            }],
         )
         .unwrap();
 
@@ -306,7 +312,12 @@ mod tests {
 
         let unnested_fields = trace_projection_origin(
             &query_ast,
-            &[Field::new("id", arrow::datatypes::DataType::Int64, false)],
+            &[Field {
+                name: "id".to_string(),
+                table_oid: 0,
+                column_number: 0,
+                data_type: arrow::datatypes::DataType::Int64,
+            }],
         )
         .unwrap();
 
@@ -333,9 +344,24 @@ mod tests {
         let unnested_fields = trace_projection_origin(
             &query_ast,
             &[
-                Field::new("id", arrow::datatypes::DataType::Int64, false),
-                Field::new("id", arrow::datatypes::DataType::Int64, false),
-                Field::new("title", arrow::datatypes::DataType::Utf8, false),
+                Field {
+                    name: "id".to_string(),
+                    table_oid: 0,
+                    column_number: 0,
+                    data_type: arrow::datatypes::DataType::Int64,
+                },
+                Field {
+                    name: "id".to_string(),
+                    table_oid: 0,
+                    column_number: 0,
+                    data_type: arrow::datatypes::DataType::Int64,
+                },
+                Field {
+                    name: "title".to_string(),
+                    table_oid: 0,
+                    column_number: 0,
+                    data_type: arrow::datatypes::DataType::Int64,
+                },
             ],
         )
         .unwrap();
@@ -369,11 +395,12 @@ mod tests {
 
         let unnested_fields = trace_projection_origin(
             &query_ast,
-            &[Field::new(
-                "version",
-                arrow::datatypes::DataType::Int64,
-                false,
-            )],
+            &[Field {
+                name: "version".to_string(),
+                table_oid: -1,
+                column_number: 0,
+                data_type: arrow::datatypes::DataType::Int64,
+            }],
         )
         .unwrap();
 
@@ -390,11 +417,12 @@ mod tests {
 
         let unnested_fields = trace_projection_origin(
             &query_ast,
-            &[Field::new(
-                "greeting",
-                arrow::datatypes::DataType::Utf8,
-                false,
-            )],
+            &[Field {
+                name: "greeting".to_string(),
+                table_oid: 0,
+                column_number: 0,
+                data_type: arrow::datatypes::DataType::Utf8,
+            }],
         )
         .unwrap();
 
@@ -409,39 +437,42 @@ mod tests {
             .pop()
             .unwrap();
 
-        let mut fields = vec![];
-
-        let mut field = Field::new("id", arrow::datatypes::DataType::Int64, false);
-        let mut metadata = BTreeMap::new();
-        metadata.insert(String::from("table_oid"), String::from("1"));
-        field.set_metadata(Some(metadata));
-        fields.push(field);
-
-        let mut field = Field::new("name", arrow::datatypes::DataType::Int64, false);
-        let mut metadata = BTreeMap::new();
-        metadata.insert(String::from("table_oid"), String::from("1"));
-        field.set_metadata(Some(metadata));
-        fields.push(field);
-
-        let mut field = Field::new("id", arrow::datatypes::DataType::Int64, false);
-        let mut metadata = BTreeMap::new();
-        metadata.insert(String::from("table_oid"), String::from("2"));
-        field.set_metadata(Some(metadata));
-        fields.push(field);
-
-        let mut field = Field::new("author", arrow::datatypes::DataType::Int64, false);
-        let mut metadata = BTreeMap::new();
-        metadata.insert(String::from("table_oid"), String::from("2"));
-        field.set_metadata(Some(metadata));
-        fields.push(field);
-
-        let mut field = Field::new("text", arrow::datatypes::DataType::Int64, false);
-        let mut metadata = BTreeMap::new();
-        metadata.insert(String::from("table_oid"), String::from("2"));
-        field.set_metadata(Some(metadata));
-        fields.push(field);
-
-        let unnested_fields = trace_projection_origin(&query_ast, &fields).unwrap();
+        let unnested_fields = trace_projection_origin(
+            &query_ast,
+            &[
+                Field {
+                    name: "id".to_string(),
+                    table_oid: 1,
+                    column_number: 0,
+                    data_type: arrow::datatypes::DataType::Int64,
+                },
+                Field {
+                    name: "name".to_string(),
+                    table_oid: 1,
+                    column_number: 0,
+                    data_type: arrow::datatypes::DataType::Int64,
+                },
+                Field {
+                    name: "id".to_string(),
+                    table_oid: 2,
+                    column_number: 0,
+                    data_type: arrow::datatypes::DataType::Int64,
+                },
+                Field {
+                    name: "author".to_string(),
+                    table_oid: 2,
+                    column_number: 0,
+                    data_type: arrow::datatypes::DataType::Int64,
+                },
+                Field {
+                    name: "text".to_string(),
+                    table_oid: 2,
+                    column_number: 0,
+                    data_type: arrow::datatypes::DataType::Int64,
+                },
+            ],
+        )
+        .unwrap();
 
         assert_eq!(
             unnested_fields,

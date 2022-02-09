@@ -1,3 +1,4 @@
+pub mod data;
 mod proxy;
 pub mod resolver;
 pub mod utils;

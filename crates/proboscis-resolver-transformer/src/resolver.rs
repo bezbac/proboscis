@@ -8,6 +8,7 @@ use proboscis_core::resolver::{
 use sqlparser::{ast::Statement, dialect::PostgreSqlDialect, parser::Parser};
 use std::{
     collections::{BTreeMap, HashMap},
+    convert::TryFrom,
     sync::Arc,
     vec,
 };
@@ -92,20 +93,26 @@ impl TransformingResolver {
             }
         };
 
-        let origins =
-            match trace_projection_origin(query_ast.first().unwrap(), data.schema().fields()) {
-                Ok(ast) => ast,
-                Err(err) => {
-                    return if self.skip_if_cannot_trace {
-                        tracing::warn!(
-                            "Could not trace origin of projected columns, skipping transformation"
-                        );
-                        Ok(data.clone())
-                    } else {
-                        Err(err)
-                    }
+        let fields: Vec<proboscis_core::data::field::Field> = data
+            .schema()
+            .fields()
+            .into_iter()
+            .map(|f| proboscis_core::data::field::Field::try_from(f).unwrap())
+            .collect();
+
+        let origins = match trace_projection_origin(query_ast.first().unwrap(), &fields) {
+            Ok(ast) => ast,
+            Err(err) => {
+                return if self.skip_if_cannot_trace {
+                    tracing::warn!(
+                        "Could not trace origin of projected columns, skipping transformation"
+                    );
+                    Ok(data.clone())
+                } else {
+                    Err(err)
                 }
-            };
+            }
+        };
 
         let original_schema = data.schema();
 
@@ -138,7 +145,13 @@ impl TransformingResolver {
             }
         };
 
-        let origins = match trace_projection_origin(query_ast.first().unwrap(), schema.fields()) {
+        let fields: Vec<proboscis_core::data::field::Field> = schema
+            .fields()
+            .into_iter()
+            .map(|f| proboscis_core::data::field::Field::try_from(f).unwrap())
+            .collect();
+
+        let origins = match trace_projection_origin(query_ast.first().unwrap(), &fields) {
             Ok(ast) => ast,
             Err(err) => {
                 return if self.skip_if_cannot_trace {

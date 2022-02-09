@@ -1,7 +1,7 @@
 use anyhow::Result;
 use arrow::array::{
-    as_primitive_array, make_array, ArrayData, BooleanArray, ListArray, UInt16Array, UInt32Array,
-    UInt64Array,
+    as_primitive_array, make_array, ArrayData, BooleanArray, FixedSizeBinaryArray, ListArray,
+    UInt16Array, UInt32Array, UInt64Array,
 };
 use arrow::array::{Array, GenericListArray, UInt8Array};
 use arrow::array::{ArrayRef, GenericStringArray, Int16Array, Int32Array, Int64Array, Int8Array};
@@ -10,7 +10,8 @@ use arrow::datatypes::{DataType, Field, Schema, ToByteSlice, UInt8Type};
 use arrow::record_batch::RecordBatch;
 use omnom::prelude::*;
 use proboscis_postgres_protocol::message::{DataRow, RowDescription};
-use std::{collections::BTreeMap, sync::Arc, vec};
+use std::convert::TryFrom;
+use std::{sync::Arc, vec};
 
 macro_rules! create_numerical_column_data_to_array_function {
     ($func_name:ident, $Array:ident, $type:ty, $byte_count:literal) => {
@@ -90,6 +91,16 @@ fn column_data_to_array(data: &[Option<Vec<u8>>], data_type: &DataType) -> Array
                 .map(|d| d.as_ref().map(|d| d == &[0]))
                 .collect::<Vec<Option<bool>>>(),
         )),
+        DataType::FixedSizeBinary(_) => Arc::new(
+            FixedSizeBinaryArray::try_from_sparse_iter(data.iter().map(|d| {
+                d.as_ref().map(|data| {
+                    let mut new_data = data.clone();
+                    new_data.extend(vec![0; 64 - data.len()]);
+                    new_data
+                })
+            }))
+            .unwrap(),
+        ),
         _ => todo!("{}", data_type),
     }
 }
@@ -121,130 +132,13 @@ fn protocol_rows_to_arrow_columns(
     Ok(result)
 }
 
-fn postgres_type_for_arrow_type(
-    arrow_type: &DataType,
-    original_type: Option<postgres::types::Type>,
-) -> postgres::types::Type {
-    match arrow_type {
-        DataType::Boolean => postgres::types::Type::BOOL,
-        DataType::Int8 => postgres::types::Type::CHAR,
-        DataType::Int16 => postgres::types::Type::INT2,
-        DataType::Int32 => postgres::types::Type::INT4,
-        DataType::Int64 => postgres::types::Type::INT8,
-        DataType::UInt16 => postgres::types::Type::OID,
-        DataType::LargeUtf8 => postgres::types::Type::TEXT,
-        DataType::Utf8 => match original_type {
-            Some(postgres::types::Type::NAME) => postgres::types::Type::NAME,
-            Some(postgres::types::Type::CHAR) => postgres::types::Type::CHAR,
-            _ => postgres::types::Type::VARCHAR,
-        },
-        DataType::List(field) => match field.name().as_str() {
-            "unnamed_name_array" => postgres::types::Type::NAME_ARRAY,
-            _ => todo!("{}", arrow_type),
-        },
-        _ => todo!("{}", arrow_type),
-    }
-}
-
-fn message_field_to_arrow_field(value: &proboscis_postgres_protocol::message::Field) -> Field {
-    let postgres_type = postgres::types::Type::from_oid(value.type_oid as u32).unwrap();
-
-    let arrow_type = match postgres_type {
-        postgres::types::Type::BOOL => DataType::Boolean,
-        postgres::types::Type::CHAR => DataType::Int8,
-        postgres::types::Type::INT2 => DataType::Int16,
-        postgres::types::Type::INT4 => DataType::Int32,
-        postgres::types::Type::INT8 => DataType::Int64,
-        postgres::types::Type::TEXT => DataType::LargeUtf8,
-        postgres::types::Type::VARCHAR => DataType::Utf8,
-        postgres::types::Type::NAME => DataType::Utf8,
-        postgres::types::Type::NAME_ARRAY => DataType::List(Box::new(Field::new(
-            "unnamed_name_array",
-            DataType::UInt8,
-            true,
-        ))),
-        postgres::types::Type::OID => DataType::UInt16,
-        _ => todo!("{}", postgres_type),
-    };
-
-    let mut metadata = BTreeMap::new();
-    metadata.insert("table_oid".to_string(), format!("{}", value.table_oid));
-    metadata.insert(
-        "column_number".to_string(),
-        format!("{}", value.column_number),
-    );
-    metadata.insert("format".to_string(), format!("{}", value.format));
-    metadata.insert("type_length".to_string(), format!("{}", value.type_length));
-    metadata.insert(
-        "type_modifier".to_string(),
-        format!("{}", value.type_modifier),
-    );
-
-    metadata.insert(
-        "original_type_oid".to_string(),
-        postgres_type.oid().to_string(),
-    );
-
-    let mut field = Field::new(&value.name, arrow_type, false);
-    field.set_metadata(Some(metadata));
-
-    field
-}
-
-fn arrow_field_to_message_field(value: &Field) -> proboscis_postgres_protocol::message::Field {
-    let original_type = postgres::types::Type::from_oid(
-        value
-            .metadata()
-            .clone()
-            .unwrap()
-            .get("original_type_oid")
-            .unwrap()
-            .parse()
-            .unwrap(),
-    );
-
-    let postgres_type = postgres_type_for_arrow_type(value.data_type(), original_type);
-
-    let metadata = value.metadata().clone().unwrap();
-
-    let table_oid = metadata.get("table_oid").unwrap().clone().parse().unwrap();
-    let column_number = metadata
-        .get("column_number")
-        .unwrap()
-        .clone()
-        .parse()
-        .unwrap();
-    let format = metadata.get("format").unwrap().clone().parse().unwrap();
-
-    // TODO: These can probably be inferred based on some criteria
-    let type_length = metadata
-        .get("type_length")
-        .unwrap()
-        .clone()
-        .parse()
-        .unwrap();
-    let type_modifier = metadata
-        .get("type_modifier")
-        .unwrap()
-        .clone()
-        .parse()
-        .unwrap();
-
-    proboscis_postgres_protocol::message::Field {
-        type_oid: postgres_type.oid() as i32,
-        name: value.name().clone(),
-        column_number,
-        table_oid,
-        format,
-        type_length,
-        type_modifier,
-    }
-}
-
 pub fn protocol_fields_to_schema(fields: &[proboscis_postgres_protocol::message::Field]) -> Schema {
     let fields = fields
         .iter()
-        .map(message_field_to_arrow_field)
+        .map(|field| {
+            let proboscis_field = crate::data::field::Field::try_from(field).unwrap();
+            TryFrom::try_from(&proboscis_field).unwrap()
+        })
         .collect::<Vec<Field>>();
 
     Schema::new(fields)
@@ -342,6 +236,16 @@ pub fn serialize_record_batch_to_data_rows(batch: &RecordBatch) -> Vec<DataRow> 
                         let byte_value = if boolean_value { 1 } else { 0 };
                         cell.extend_from_slice(&[byte_value])
                     }
+                    DataType::FixedSizeBinary(_) => {
+                        let values = &column
+                            .as_any()
+                            .downcast_ref::<FixedSizeBinaryArray>()
+                            .unwrap();
+
+                        let row_value = values.value(row_index);
+
+                        cell.extend_from_slice(row_value)
+                    }
                     _ => todo!("{:?}", column.data_type()),
                 }
                 row_data.push(Some(cell))
@@ -358,7 +262,10 @@ pub fn serialize_record_batch_schema_to_row_description(schema: &Schema) -> RowD
     let fields: Vec<proboscis_postgres_protocol::message::Field> = schema
         .fields()
         .iter()
-        .map(arrow_field_to_message_field)
+        .map(|field| {
+            let proboscis_field = crate::data::field::Field::try_from(field).unwrap();
+            proboscis_postgres_protocol::message::Field::try_from(&proboscis_field).unwrap()
+        })
         .collect();
     RowDescription { fields }
 }

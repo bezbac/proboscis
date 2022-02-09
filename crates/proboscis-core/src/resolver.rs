@@ -1,4 +1,4 @@
-use crate::utils::arrow::{
+use crate::data::arrow::{
     serialize_record_batch_schema_to_row_description, serialize_record_batch_to_data_rows,
 };
 use anyhow::Result;

@@ -10,7 +10,7 @@ pub struct Field {
     pub name: String,
     pub table_oid: i32,
     pub column_number: i16,
-    pub type_oid: i32,
+    pub type_oid: u32,
     pub type_length: i16,
     pub type_modifier: i32,
     pub format: i16,
@@ -546,7 +546,7 @@ impl BackendMessage {
 
                     body.write_i32(field.table_oid).await?;
                     body.write_i16(field.column_number).await?;
-                    body.write_i32(field.type_oid).await?;
+                    body.write_u32(field.type_oid).await?;
                     body.write_i16(field.type_length).await?;
                     body.write_i32(field.type_modifier).await?;
                     body.write_i16(field.format).await?;
@@ -705,7 +705,7 @@ impl BackendMessage {
 
                     let table_oid: i32 = AsyncReadExt::read_i32(stream).await?;
                     let column_number: i16 = AsyncReadExt::read_i16(stream).await?;
-                    let type_oid: i32 = AsyncReadExt::read_i32(stream).await?;
+                    let type_oid: u32 = AsyncReadExt::read_u32(stream).await?;
                     let type_length: i16 = AsyncReadExt::read_i16(stream).await?;
                     let type_modifier: i32 = AsyncReadExt::read_i32(stream).await?;
                     let format: i16 = AsyncReadExt::read_i16(stream).await?;
@@ -862,7 +862,7 @@ mod tests {
                 table_oid: -1,
                 type_length: -1,
                 type_modifier: -1,
-                type_oid: -1,
+                type_oid: 1,
                 format: -1,
             }],
         });
