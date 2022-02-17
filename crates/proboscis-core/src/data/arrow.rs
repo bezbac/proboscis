@@ -1,13 +1,15 @@
 use anyhow::Result;
 use arrow::array::{
-    as_primitive_array, make_array, ArrayData, BooleanArray, FixedSizeBinaryArray, ListArray,
-    UInt16Array, UInt32Array, UInt64Array,
+    as_primitive_array, make_array, ArrayData, BooleanArray, FixedSizeBinaryArray, Float32Array,
+    Float64Array, ListArray, UInt16Array, UInt32Array, UInt64Array,
 };
 use arrow::array::{Array, GenericListArray, UInt8Array};
 use arrow::array::{ArrayRef, GenericStringArray, Int16Array, Int32Array, Int64Array, Int8Array};
-use arrow::buffer::Buffer;
+use arrow::buffer::{Buffer, MutableBuffer};
 use arrow::datatypes::{DataType, Field, Schema, ToByteSlice, UInt8Type};
 use arrow::record_batch::RecordBatch;
+use byteorder::WriteBytesExt;
+use byteorder::{BigEndian, ByteOrder};
 use omnom::prelude::*;
 use proboscis_postgres_protocol::message::{DataRow, RowDescription};
 use std::convert::TryFrom;
@@ -46,6 +48,40 @@ create_numerical_column_data_to_array_function!(column_data_to_array_u16, UInt16
 create_numerical_column_data_to_array_function!(column_data_to_array_u32, UInt32Array, u32, 4);
 create_numerical_column_data_to_array_function!(column_data_to_array_u64, UInt64Array, u64, 8);
 
+fn column_data_to_array_f32(data: &[Option<Vec<u8>>]) -> ArrayRef {
+    return Arc::new(
+        data.iter()
+            .map(|d| {
+                d.as_ref().map(|d| {
+                    let mut bytes = d.clone();
+                    while bytes.len() < 4 {
+                        bytes.push(0);
+                    }
+
+                    BigEndian::read_f32(&bytes)
+                })
+            })
+            .collect::<Float32Array>(),
+    );
+}
+
+fn column_data_to_array_f64(data: &[Option<Vec<u8>>]) -> ArrayRef {
+    return Arc::new(
+        data.iter()
+            .map(|d| {
+                d.as_ref().map(|d| {
+                    let mut bytes = d.clone();
+                    while bytes.len() < 8 {
+                        bytes.push(0);
+                    }
+
+                    BigEndian::read_f64(&bytes)
+                })
+            })
+            .collect::<Float64Array>(),
+    );
+}
+
 fn column_data_to_array(data: &[Option<Vec<u8>>], data_type: &DataType) -> ArrayRef {
     match data_type {
         DataType::Int8 => column_data_to_array_i8(data),
@@ -57,6 +93,9 @@ fn column_data_to_array(data: &[Option<Vec<u8>>], data_type: &DataType) -> Array
         DataType::UInt16 => column_data_to_array_u16(data),
         DataType::UInt32 => column_data_to_array_u32(data),
         DataType::UInt64 => column_data_to_array_u64(data),
+
+        DataType::Float32 => column_data_to_array_f32(data),
+        DataType::Float64 => column_data_to_array_f64(data),
 
         DataType::Utf8 => Arc::new(
             data.iter()
@@ -91,16 +130,32 @@ fn column_data_to_array(data: &[Option<Vec<u8>>], data_type: &DataType) -> Array
                 .map(|d| d.as_ref().map(|d| d == &[0]))
                 .collect::<Vec<Option<bool>>>(),
         )),
-        DataType::FixedSizeBinary(_) => Arc::new(
-            FixedSizeBinaryArray::try_from_sparse_iter(data.iter().map(|d| {
-                d.as_ref().map(|data| {
-                    let mut new_data = data.clone();
-                    new_data.extend(vec![0; 64 - data.len()]);
-                    new_data
-                })
-            }))
-            .unwrap(),
-        ),
+        DataType::FixedSizeBinary(size) => {
+            if data.len() == 0 {
+                let array_data = ArrayData::new(
+                    DataType::FixedSizeBinary(*size as i32),
+                    0,
+                    None,
+                    Some(MutableBuffer::from_len_zeroed(0).into()),
+                    0,
+                    vec![MutableBuffer::from_len_zeroed(0).into()],
+                    vec![],
+                );
+
+                return Arc::new(FixedSizeBinaryArray::from(array_data));
+            }
+
+            return Arc::new(
+                FixedSizeBinaryArray::try_from_sparse_iter(data.iter().map(|d| {
+                    d.as_ref().map(|value| {
+                        let mut new_value = value.clone();
+                        new_value.extend(vec![0; 64 - value.len()]);
+                        new_value
+                    })
+                }))
+                .unwrap(),
+            );
+        }
         _ => todo!("{}", data_type),
     }
 }
@@ -170,35 +225,51 @@ pub fn serialize_record_batch_to_data_rows(batch: &RecordBatch) -> Vec<DataRow> 
                 match column.data_type() {
                     DataType::Int8 => {
                         let values: &Int8Array = as_primitive_array(column);
-                        values.value(row_index).write_be_bytes(&mut cell).unwrap();
+                        cell.write_i8(values.value(row_index)).unwrap()
                     }
                     DataType::Int16 => {
                         let values: &Int16Array = as_primitive_array(column);
-                        values.value(row_index).write_be_bytes(&mut cell).unwrap();
+                        cell.write_i16::<BigEndian>(values.value(row_index))
+                            .unwrap()
                     }
                     DataType::Int32 => {
                         let values: &Int32Array = as_primitive_array(column);
-                        values.value(row_index).write_be_bytes(&mut cell).unwrap();
+                        cell.write_i32::<BigEndian>(values.value(row_index))
+                            .unwrap()
                     }
                     DataType::Int64 => {
                         let values: &Int64Array = as_primitive_array(column);
-                        values.value(row_index).write_be_bytes(&mut cell).unwrap();
+                        cell.write_i64::<BigEndian>(values.value(row_index))
+                            .unwrap()
                     }
                     DataType::UInt8 => {
                         let values: &UInt8Array = as_primitive_array(column);
-                        values.value(row_index).write_be_bytes(&mut cell).unwrap();
+                        cell.write_u8(values.value(row_index)).unwrap()
                     }
                     DataType::UInt16 => {
                         let values: &UInt16Array = as_primitive_array(column);
-                        values.value(row_index).write_be_bytes(&mut cell).unwrap();
+                        cell.write_u16::<BigEndian>(values.value(row_index))
+                            .unwrap()
                     }
                     DataType::UInt32 => {
                         let values: &UInt32Array = as_primitive_array(column);
-                        values.value(row_index).write_be_bytes(&mut cell).unwrap();
+                        cell.write_u32::<BigEndian>(values.value(row_index))
+                            .unwrap()
                     }
                     DataType::UInt64 => {
                         let values: &UInt64Array = as_primitive_array(column);
-                        values.value(row_index).write_be_bytes(&mut cell).unwrap();
+                        cell.write_u64::<BigEndian>(values.value(row_index))
+                            .unwrap()
+                    }
+                    DataType::Float32 => {
+                        let values: &Float32Array = as_primitive_array(column);
+                        cell.write_f32::<BigEndian>(values.value(row_index))
+                            .unwrap()
+                    }
+                    DataType::Float64 => {
+                        let values: &Float64Array = as_primitive_array(column);
+                        cell.write_f64::<BigEndian>(values.value(row_index))
+                            .unwrap()
                     }
                     DataType::LargeUtf8 => {
                         let values = &column
@@ -242,9 +313,12 @@ pub fn serialize_record_batch_to_data_rows(batch: &RecordBatch) -> Vec<DataRow> 
                             .downcast_ref::<FixedSizeBinaryArray>()
                             .unwrap();
 
-                        let row_value = values.value(row_index);
+                        let mut row_value = values.value(row_index).to_vec();
+                        row_value.reverse();
+                        let end = row_value.iter_mut().take_while(|p| **p == 0).count();
+                        row_value.reverse();
 
-                        cell.extend_from_slice(row_value)
+                        cell.extend_from_slice(&row_value[0..row_value.len() - end])
                     }
                     _ => todo!("{:?}", column.data_type()),
                 }

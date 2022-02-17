@@ -1695,6 +1695,7 @@ dependencies = [
  "anyhow",
  "arrow",
  "async-trait",
+ "byteorder",
  "md-5",
  "native-tls",
  "omnom",

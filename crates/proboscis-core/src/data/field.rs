@@ -8,6 +8,8 @@ fn postgres_type_for_arrow_type(arrow_type: &DataType) -> postgres::types::Type 
         DataType::Int16 => postgres::types::Type::INT2,
         DataType::Int32 => postgres::types::Type::INT4,
         DataType::Int64 => postgres::types::Type::INT8,
+        DataType::Float32 => postgres::types::Type::FLOAT4,
+        DataType::Float64 => postgres::types::Type::FLOAT8,
         DataType::UInt16 => postgres::types::Type::OID,
         DataType::LargeUtf8 => postgres::types::Type::TEXT,
         DataType::Utf8 => postgres::types::Type::VARCHAR,
@@ -16,7 +18,11 @@ fn postgres_type_for_arrow_type(arrow_type: &DataType) -> postgres::types::Type 
             _ => todo!("{}", arrow_type),
         },
         DataType::List(field) => match field.name().as_str() {
+            "unnamed_oid_vector" => postgres::types::Type::OID_VECTOR,
             "unnamed_name_array" => postgres::types::Type::NAME_ARRAY,
+            "unnamed_text_array" => postgres::types::Type::TEXT_ARRAY,
+            "unnamed_char_array" => postgres::types::Type::CHAR_ARRAY,
+            "unnamed_oid_array" => postgres::types::Type::OID_ARRAY,
             _ => todo!("{}", arrow_type),
         },
         _ => todo!("{}", arrow_type),
@@ -30,13 +36,29 @@ fn arrow_type_for_postgres_type(postgres_type: &postgres::types::Type) -> DataTy
         postgres::types::Type::INT2 => DataType::Int16,
         postgres::types::Type::INT4 => DataType::Int32,
         postgres::types::Type::INT8 => DataType::Int64,
+        postgres::types::Type::FLOAT4 => DataType::Float32,
+        postgres::types::Type::FLOAT8 => DataType::Float64,
         postgres::types::Type::TEXT => DataType::LargeUtf8,
         postgres::types::Type::VARCHAR => DataType::Utf8,
         postgres::types::Type::NAME => DataType::FixedSizeBinary(64),
+        postgres::types::Type::OID => DataType::UInt16,
+        postgres::types::Type::OID_VECTOR => DataType::List(Box::new(
+            arrow::datatypes::Field::new("unnamed_oid_vector", DataType::UInt8, true),
+        )),
+        postgres::types::Type::CHAR_ARRAY => DataType::List(Box::new(
+            arrow::datatypes::Field::new("unnamed_char_array", DataType::UInt8, true),
+        )),
+        postgres::types::Type::TEXT_ARRAY => DataType::List(Box::new(
+            arrow::datatypes::Field::new("unnamed_text_array", DataType::UInt8, true),
+        )),
         postgres::types::Type::NAME_ARRAY => DataType::List(Box::new(
             arrow::datatypes::Field::new("unnamed_name_array", DataType::UInt8, true),
         )),
-        postgres::types::Type::OID => DataType::UInt16,
+        postgres::types::Type::OID_ARRAY => DataType::List(Box::new(arrow::datatypes::Field::new(
+            "unnamed_oid_array",
+            DataType::UInt8,
+            true,
+        ))),
         _ => todo!("{}", postgres_type),
     }
 }
@@ -48,11 +70,17 @@ fn typelen_for_postgres_type(postgres_type: &postgres::types::Type) -> i16 {
         postgres::types::Type::INT2 => 2,
         postgres::types::Type::INT4 => 4,
         postgres::types::Type::INT8 => 8,
+        postgres::types::Type::FLOAT4 => 4,
+        postgres::types::Type::FLOAT8 => 8,
         postgres::types::Type::TEXT => -1,
         postgres::types::Type::VARCHAR => -1,
         postgres::types::Type::NAME => 64,
-        postgres::types::Type::NAME_ARRAY => -1,
         postgres::types::Type::OID => 2,
+        postgres::types::Type::OID_VECTOR => -1,
+        postgres::types::Type::TEXT_ARRAY => -1,
+        postgres::types::Type::NAME_ARRAY => -1,
+        postgres::types::Type::CHAR_ARRAY => -1,
+        postgres::types::Type::OID_ARRAY => -1,
         _ => todo!("{}", postgres_type),
     }
 }
