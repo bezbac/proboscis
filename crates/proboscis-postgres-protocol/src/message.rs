@@ -178,6 +178,7 @@ pub enum BackendMessage {
     ParameterDescription(ParameterDescription),
     NoData,
     EmptyQueryResponse,
+    PortalSuspended,
 }
 
 #[derive(Debug, PartialEq, Clone)]
@@ -633,6 +634,9 @@ impl BackendMessage {
             Self::EmptyQueryResponse => {
                 write_message_with_prefixed_message_len(buf, CharTag::EmptyQueryResponse, &[]).await
             }
+            Self::PortalSuspended => {
+                write_message_with_prefixed_message_len(buf, CharTag::PortalSuspended, &[]).await
+            }
             Self::Error(_) => {
                 unimplemented!()
             }
@@ -782,6 +786,7 @@ impl BackendMessage {
             }
             CharTag::CloseComplete => Ok(Self::CloseComplete),
             CharTag::EmptyQueryResponse => Ok(Self::EmptyQueryResponse),
+            CharTag::PortalSuspended => Ok(Self::PortalSuspended),
             CharTag::NoData => Ok(Self::NoData),
             _ => todo!(),
         }

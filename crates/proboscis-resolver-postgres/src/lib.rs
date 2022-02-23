@@ -360,7 +360,11 @@ impl Resolver for PostgresResolver {
                         match read_message {
                             BackendMessage::DataRow(data_row) => data_rows.push(data_row),
                             BackendMessage::CommandComplete(tag) => {
-                                command_complete_tag = tag;
+                                command_complete_tag = Some(tag);
+                                break;
+                            }
+                            BackendMessage::PortalSuspended => {
+                                command_complete_tag = None;
                                 break;
                             }
                             BackendMessage::EmptyQueryResponse => {
@@ -384,7 +388,10 @@ impl Resolver for PostgresResolver {
                         query: self.statement_query_cache.get(statement).unwrap().clone(),
                     });
 
-                    responses.push(SyncResponse::CommandComplete(command_complete_tag));
+                    match command_complete_tag {
+                        Some(tag) => responses.push(SyncResponse::CommandComplete(tag)),
+                        None => responses.push(SyncResponse::PortalSuspended),
+                    }
                 }
             }
         }

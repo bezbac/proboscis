@@ -23,6 +23,7 @@ pub enum CharTag {
     BindComplete,
     CloseComplete,
     NoData,
+    PortalSuspended,
 }
 
 impl From<CharTag> for u8 {
@@ -47,6 +48,7 @@ impl From<CharTag> for u8 {
             CharTag::BindComplete => b'2',
             CharTag::CloseComplete => b'3',
             CharTag::NoData => b'n',
+            CharTag::PortalSuspended => b's',
         }
     }
 }
@@ -75,6 +77,7 @@ impl TryFrom<u8> for CharTag {
             b'2' => Ok(CharTag::BindComplete),
             b'3' => Ok(CharTag::CloseComplete),
             b'n' => Ok(CharTag::NoData),
+            b's' => Ok(CharTag::PortalSuspended),
             _ => Err(ParseError::UnknownCharTag {
                 char: value as char,
             }),

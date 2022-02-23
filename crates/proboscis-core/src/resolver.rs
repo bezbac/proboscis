@@ -39,6 +39,7 @@ impl SyncResponse {
             )],
             SyncResponse::NoData => vec![BackendMessage::NoData],
             SyncResponse::EmptyQueryResponse => vec![BackendMessage::EmptyQueryResponse],
+            SyncResponse::PortalSuspended => vec![BackendMessage::PortalSuspended],
         }
     }
 }
@@ -53,6 +54,7 @@ pub enum SyncResponse {
     ParameterDescription(ParameterDescription),
     NoData,
     EmptyQueryResponse,
+    PortalSuspended,
 }
 
 #[async_trait]
