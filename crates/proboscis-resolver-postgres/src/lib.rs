@@ -1,9 +1,11 @@
+mod pool;
 mod target_config;
+
+use crate::pool::Manager;
+use crate::pool::Pool;
 use anyhow::Result;
 use arrow::{datatypes::Schema, record_batch::RecordBatch};
 use async_trait::async_trait;
-use deadpool::managed::RecycleResult;
-use futures::TryFutureExt;
 use proboscis_core::{
     data::arrow::{
         protocol_fields_to_schema, serialize_record_batch_schema_to_row_description,
@@ -11,105 +13,16 @@ use proboscis_core::{
     },
     resolver::Resolver,
     resolver::{ClientId, SyncResponse},
-    utils::connection::{Connection, MaybeTlsStream},
-    utils::password::encode_md5_password_hash,
 };
-use proboscis_postgres_protocol::{
-    message::{
-        BackendMessage, Bind, Close, CommandCompleteTag, DataRow, Describe, Execute,
-        FrontendMessage, MD5Hash, MD5Salt, Parse, RowDescription,
-    },
-    StartupMessage,
+use proboscis_postgres_protocol::message::{
+    BackendMessage, Bind, Close, CommandCompleteTag, DataRow, Describe, Execute, FrontendMessage,
+    Parse, RowDescription,
 };
+use std::collections::hash_map::Entry::Occupied;
+use std::collections::hash_map::Entry::Vacant;
 use std::collections::{HashMap, VecDeque};
+
 pub use target_config::TargetConfig;
-
-type Pool = deadpool::managed::Pool<Manager>;
-
-#[derive(Debug)]
-pub struct Manager {
-    target_config: TargetConfig,
-}
-
-#[async_trait]
-impl deadpool::managed::Manager for Manager {
-    type Type = Connection;
-    type Error = anyhow::Error;
-    async fn create(&self) -> Result<Connection, anyhow::Error> {
-        establish_connection(&self.target_config).await
-    }
-
-    async fn recycle(&self, _conn: &mut Connection) -> RecycleResult<anyhow::Error> {
-        Ok(())
-    }
-}
-
-pub async fn establish_connection(target_config: &TargetConfig) -> Result<Connection> {
-    let stream =
-        tokio::net::TcpStream::connect(&format!("{}:{}", target_config.host, target_config.port))
-            .await?;
-
-    let mut params: HashMap<String, String> = HashMap::new();
-
-    if let Some(user) = target_config.user.as_ref() {
-        params.insert("user".to_string(), user.to_string());
-    }
-
-    params.insert("client_encoding".to_string(), "UTF8".to_string());
-
-    let mut connection = Connection::new(MaybeTlsStream::Left(stream), params.clone());
-
-    connection
-        .write_startup_message(StartupMessage::Startup { params })
-        .await?;
-
-    let response = connection.read_backend_message().await?;
-    match response {
-        BackendMessage::AuthenticationRequestMD5Password(MD5Salt(salt)) => {
-            let hash = encode_md5_password_hash(
-                target_config
-                    .user
-                    .as_ref()
-                    .expect("Missing username in target_config"),
-                target_config
-                    .password
-                    .as_ref()
-                    .expect("Missing password in target_config"),
-                &salt[..],
-            );
-
-            connection
-                .write_message(FrontendMessage::MD5HashedPassword(MD5Hash(hash)).into())
-                .await?;
-
-            let response = connection.read_backend_message().await?;
-
-            match response {
-                BackendMessage::AuthenticationOk => {}
-                _ => return Err(anyhow::anyhow!("Expected AuthenticationOk")),
-            }
-        }
-        BackendMessage::AuthenticationOk => {}
-        _ => unimplemented!(),
-    }
-
-    loop {
-        let response = connection.read_backend_message().await?;
-
-        match response {
-            BackendMessage::ReadyForQuery(_) => break,
-            BackendMessage::ParameterStatus(_) => {
-                // TODO: Handle this
-            }
-            BackendMessage::BackendKeyData(_) => {
-                // TODO: Handle this
-            }
-            _ => unimplemented!("Unexpected message"),
-        }
-    }
-
-    Ok(connection)
-}
 
 #[derive(Debug)]
 enum ClientOperation {
@@ -119,6 +32,7 @@ enum ClientOperation {
     Execute { portal: String },
 }
 
+#[derive(Debug)]
 struct ActiveConnection {
     connection: deadpool::managed::Object<Manager>,
     requested_ops: VecDeque<ClientOperation>,
@@ -154,8 +68,11 @@ impl PostgresResolver {
         target_config: TargetConfig,
         max_pool_size: usize,
     ) -> Result<PostgresResolver> {
-        let manager = Manager { target_config };
-        let pool = Pool::new(manager, max_pool_size);
+        let manager = Manager::new(target_config);
+        let pool = Pool::builder(manager)
+            .max_size(max_pool_size)
+            .build()
+            .map_err(|err| anyhow::anyhow!(err))?;
 
         Ok(PostgresResolver {
             active_connections: HashMap::new(),
@@ -171,13 +88,29 @@ impl PostgresResolver {
     }
 }
 
+macro_rules! get_connection {
+    ($resolver:ident, $client_id:ident) => {
+        match $resolver.active_connections.entry($client_id) {
+            Vacant(entry) => {
+                let connection = $resolver
+                    .pool
+                    .get()
+                    .await
+                    .map_err(|err| anyhow::anyhow!(err))?;
+
+                let value = ActiveConnection::new(connection);
+
+                entry.insert(value)
+            }
+            Occupied(entry) => entry.into_mut(),
+        }
+    };
+}
+
 #[async_trait]
 impl Resolver for PostgresResolver {
     async fn query(&mut self, client_id: ClientId, query: String) -> Result<RecordBatch> {
-        let connection = self.active_connections.entry(client_id).or_insert({
-            let connection = self.pool.get().map_err(|err| anyhow::anyhow!(err)).await?;
-            ActiveConnection::new(connection)
-        });
+        let connection = get_connection!(self, client_id);
 
         connection
             .connection
@@ -209,10 +142,7 @@ impl Resolver for PostgresResolver {
     }
 
     async fn parse(&mut self, client_id: ClientId, parse: Parse) -> Result<()> {
-        let connection = self.active_connections.entry(client_id).or_insert({
-            let connection = self.pool.get().map_err(|err| anyhow::anyhow!(err)).await?;
-            ActiveConnection::new(connection)
-        });
+        let connection = get_connection!(self, client_id);
 
         let statement_name = parse.statement_name.clone();
         let query = parse.query.clone();
@@ -230,10 +160,7 @@ impl Resolver for PostgresResolver {
     }
 
     async fn describe(&mut self, client_id: ClientId, describe: Describe) -> Result<()> {
-        let connection = self.active_connections.entry(client_id).or_insert({
-            let connection = self.pool.get().map_err(|err| anyhow::anyhow!(err)).await?;
-            ActiveConnection::new(connection)
-        });
+        let connection = get_connection!(self, client_id);
 
         let statement = describe.name.clone();
 
@@ -250,10 +177,7 @@ impl Resolver for PostgresResolver {
     }
 
     async fn bind(&mut self, client_id: ClientId, bind: Bind) -> Result<()> {
-        let connection = self.active_connections.entry(client_id).or_insert({
-            let connection = self.pool.get().map_err(|err| anyhow::anyhow!(err)).await?;
-            ActiveConnection::new(connection)
-        });
+        let connection = get_connection!(self, client_id);
 
         let statement = bind.statement.clone();
         let portal = bind.portal.clone();
@@ -271,10 +195,7 @@ impl Resolver for PostgresResolver {
     }
 
     async fn execute(&mut self, client_id: ClientId, execute: Execute) -> Result<()> {
-        let connection = self.active_connections.entry(client_id).or_insert({
-            let connection = self.pool.get().map_err(|err| anyhow::anyhow!(err)).await?;
-            ActiveConnection::new(connection)
-        });
+        let connection = get_connection!(self, client_id);
 
         let portal = execute.portal.clone();
 
@@ -291,10 +212,7 @@ impl Resolver for PostgresResolver {
     }
 
     async fn sync(&mut self, client_id: ClientId) -> Result<Vec<SyncResponse>> {
-        let connection = self.active_connections.entry(client_id).or_insert({
-            let connection = self.pool.get().map_err(|err| anyhow::anyhow!(err)).await?;
-            ActiveConnection::new(connection)
-        });
+        let connection = get_connection!(self, client_id);
 
         connection
             .connection
@@ -407,10 +325,7 @@ impl Resolver for PostgresResolver {
     }
 
     async fn close(&mut self, client_id: ClientId, close: Close) -> Result<()> {
-        let connection = self.active_connections.entry(client_id).or_insert({
-            let connection = self.pool.get().map_err(|err| anyhow::anyhow!(err)).await?;
-            ActiveConnection::new(connection)
-        });
+        let connection = get_connection!(self, client_id);
 
         connection
             .connection
