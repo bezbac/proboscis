@@ -131,7 +131,7 @@ fn column_data_to_array(data: &[Option<Vec<u8>>], data_type: &DataType) -> Array
                 .collect::<Vec<Option<bool>>>(),
         )),
         DataType::FixedSizeBinary(size) => {
-            if data.len() == 0 {
+            if data.is_empty() {
                 let array_data = ArrayData::new(
                     DataType::FixedSizeBinary(*size as i32),
                     0,

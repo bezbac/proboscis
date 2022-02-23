@@ -96,7 +96,7 @@ impl TransformingResolver {
         let fields: Vec<proboscis_core::data::field::Field> = data
             .schema()
             .fields()
-            .into_iter()
+            .iter()
             .map(|f| proboscis_core::data::field::Field::try_from(f).unwrap())
             .collect();
 
@@ -147,7 +147,7 @@ impl TransformingResolver {
 
         let fields: Vec<proboscis_core::data::field::Field> = schema
             .fields()
-            .into_iter()
+            .iter()
             .map(|f| proboscis_core::data::field::Field::try_from(f).unwrap())
             .collect();
 

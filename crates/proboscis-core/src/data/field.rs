@@ -13,10 +13,7 @@ fn postgres_type_for_arrow_type(arrow_type: &DataType) -> postgres::types::Type 
         DataType::UInt16 => postgres::types::Type::OID,
         DataType::LargeUtf8 => postgres::types::Type::TEXT,
         DataType::Utf8 => postgres::types::Type::VARCHAR,
-        DataType::FixedSizeBinary(size) => match size {
-            64 => postgres::types::Type::NAME,
-            _ => todo!("{}", arrow_type),
-        },
+        DataType::FixedSizeBinary(64) => postgres::types::Type::NAME,
         DataType::List(field) => match field.name().as_str() {
             "unnamed_oid_vector" => postgres::types::Type::OID_VECTOR,
             "unnamed_name_array" => postgres::types::Type::NAME_ARRAY,
