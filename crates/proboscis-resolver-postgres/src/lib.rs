@@ -307,7 +307,9 @@ impl Resolver for PostgresResolver {
                     });
 
                     match command_complete_tag {
-                        Some(tag) => responses.push(SyncResponse::CommandComplete(tag)),
+                        Some(CommandCompleteTag(tag)) => {
+                            responses.push(SyncResponse::CommandComplete(tag))
+                        }
                         None => responses.push(SyncResponse::PortalSuspended),
                     }
                 }

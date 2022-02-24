@@ -5,7 +5,7 @@ use anyhow::Result;
 use arrow::{datatypes::Schema, record_batch::RecordBatch};
 use async_trait::async_trait;
 use proboscis_postgres_protocol::message::{
-    BackendMessage, CommandCompleteTag, ParameterDescription, ReadyForQueryTransactionStatus,
+    BackendMessage, ParameterDescription, ReadyForQueryTransactionStatus, CommandCompleteTag,
 };
 use uuid::Uuid;
 
@@ -28,7 +28,9 @@ impl SyncResponse {
 
                 messages
             }
-            SyncResponse::CommandComplete(tag) => vec![BackendMessage::CommandComplete(tag)],
+            SyncResponse::CommandComplete(tag) => {
+                vec![BackendMessage::CommandComplete(CommandCompleteTag(tag))]
+            }
             SyncResponse::ParameterDescription(parameter_description) => {
                 vec![BackendMessage::ParameterDescription(parameter_description)]
             }
@@ -47,7 +49,7 @@ impl SyncResponse {
 pub enum SyncResponse {
     Schema { schema: Schema, query: String },
     Records { data: RecordBatch, query: String },
-    CommandComplete(CommandCompleteTag),
+    CommandComplete(String),
     BindComplete,
     ParseComplete,
     ReadyForQuery,
