@@ -7,11 +7,13 @@ use anyhow::Result;
 use async_trait::async_trait;
 use datafusion::{
     arrow::{datatypes::Schema, record_batch::RecordBatch},
-    prelude::{ExecutionContext, DataFrame},
+    prelude::{DataFrame, ExecutionContext},
 };
 use proboscis_core::resolver::{
     Bind, ClientId, Close, Describe, Execute, Parse, Resolver, SyncResponse,
 };
+
+pub use datafusion;
 
 #[derive(Debug)]
 enum ClientOperation {
@@ -37,7 +39,7 @@ pub struct DatafusionResolver {
 }
 
 impl DatafusionResolver {
-    pub async fn new(ctx: ExecutionContext) -> DatafusionResolver {
+    pub fn new(ctx: ExecutionContext) -> DatafusionResolver {
         DatafusionResolver {
             ctx: Arc::new(Mutex::new(ctx)),
             statement_schema_cache: HashMap::new(),
@@ -49,13 +51,13 @@ impl DatafusionResolver {
 }
 
 async fn get_results_for_query(df: &Arc<dyn DataFrame>) -> Result<RecordBatch> {
-        let batches: Vec<RecordBatch> = df.collect().await?;
-        let schema = batches.first().unwrap().schema();
+    let batches: Vec<RecordBatch> = df.collect().await?;
+    let schema = batches.first().unwrap().schema();
 
-        let result = RecordBatch::concat(&schema, &batches)?;
+    let result = RecordBatch::concat(&schema, &batches)?;
 
-        Ok(result)
-    }
+    Ok(result)
+}
 
 #[async_trait]
 impl Resolver for DatafusionResolver {
