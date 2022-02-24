@@ -8,8 +8,8 @@ const DEFAULT_NUMERIC_AGG: NumericAggregationRef = NumericAggregationRef::Median
 
 #[derive(Debug, Deserialize)]
 pub struct ListenerConfig {
-    host: String,
-    port: usize,
+    pub host: String,
+    pub port: usize,
 }
 
 impl Default for ListenerConfig {
@@ -123,4 +123,8 @@ pub fn load_config(path: &Path) -> Result<ApplicationConfig, ConfigError> {
     let mut s = config::Config::default();
     s.merge(config::File::from(path)).unwrap();
     s.try_into()
+}
+
+pub fn save_config(path: &Path) -> Result<()> {
+    
 }

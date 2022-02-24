@@ -1446,6 +1446,7 @@ dependencies = [
  "proboscis-resolver-transformer",
  "serde 1.0.130",
  "tokio",
+ "tokio-postgres",
  "tracing",
  "tracing-subscriber",
 ]

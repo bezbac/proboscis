@@ -22,7 +22,21 @@ async fn main() -> Result<()> {
                 .help("Sets the level of verbosity"),
         )
         .arg(Arg::new("database").help("Connection uri for the database"))
-        .subcommand(App::new("inspect").about("Autogenerate a config based on an existing schema"))
+        .subcommand(
+            App::new("inspect")
+                .about("Autogenerate a config based on an existing database schema")
+                .arg(
+                    Arg::new("connection_uri")
+                        .index(1)
+                        .help("The connection string of the backend database"),
+                )
+                .arg(
+                    Arg::new("output")
+                        .short('o')
+                        .default_value("./pgcloak.toml")
+                        .help("Output path for the generated config file"),
+                ),
+        )
         .get_matches();
 
     match matches.subcommand() {
