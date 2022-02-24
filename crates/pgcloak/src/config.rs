@@ -1,12 +1,12 @@
 use ::config::ConfigError;
 use proboscis_anonymization::{NumericAggregation, StringAggregation};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use std::path::Path;
 
 const DEFAULT_STRING_AGG: StringAggregationRef = StringAggregationRef::Join;
 const DEFAULT_NUMERIC_AGG: NumericAggregationRef = NumericAggregationRef::Median;
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Serialize)]
 pub struct ListenerConfig {
     pub host: String,
     pub port: usize,
@@ -27,7 +27,7 @@ impl ListenerConfig {
     }
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct TlsConfig {
     pub pcks_path: String,
     pub password: String,
@@ -42,7 +42,7 @@ impl From<TlsConfig> for proboscis_core::TlsConfig {
     }
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum NumericAggregationRef {
     Range,
@@ -64,7 +64,7 @@ impl Default for NumericAggregationRef {
     }
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum StringAggregationRef {
     Join,
@@ -86,7 +86,7 @@ impl Default for StringAggregationRef {
     }
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Serialize)]
 #[serde(tag = "type")]
 #[serde(rename_all = "snake_case")]
 pub enum ColumnConfiguration {
@@ -102,29 +102,31 @@ pub enum ColumnConfiguration {
     },
 }
 
-#[derive(Debug, Deserialize, Clone)]
+#[derive(Debug, Deserialize, Clone, Serialize)]
 pub struct Credential {
     pub username: String,
     pub password: String,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Serialize)]
 pub struct ApplicationConfig {
-    pub credentials: Vec<Credential>,
-    pub columns: Vec<ColumnConfiguration>,
-    pub tls: Option<TlsConfig>,
-    pub listener: ListenerConfig,
-    pub max_pool_size: usize,
     pub connection_uri: String,
+
     pub k: usize,
+    pub max_pool_size: usize,
+
+    pub listener: ListenerConfig,
+    pub tls: Option<TlsConfig>,
+
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub credentials: Vec<Credential>,
+
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub columns: Vec<ColumnConfiguration>,
 }
 
 pub fn load_config(path: &Path) -> Result<ApplicationConfig, ConfigError> {
     let mut s = config::Config::default();
     s.merge(config::File::from(path)).unwrap();
     s.try_into()
-}
-
-pub fn save_config(path: &Path) -> Result<()> {
-    
 }

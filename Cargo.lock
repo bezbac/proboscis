@@ -1447,6 +1447,7 @@ dependencies = [
  "serde 1.0.130",
  "tokio",
  "tokio-postgres",
+ "toml",
  "tracing",
  "tracing-subscriber",
 ]
