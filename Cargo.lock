@@ -1703,7 +1703,6 @@ dependencies = [
  "byteorder",
  "md-5",
  "native-tls",
- "omnom",
  "postgres",
  "proboscis-postgres-protocol",
  "rand 0.8.4",

@@ -8,28 +8,25 @@ use arrow::array::{ArrayRef, GenericStringArray, Int16Array, Int32Array, Int64Ar
 use arrow::buffer::{Buffer, MutableBuffer};
 use arrow::datatypes::{DataType, Field, Schema, ToByteSlice, UInt8Type};
 use arrow::record_batch::RecordBatch;
-use byteorder::WriteBytesExt;
-use byteorder::{BigEndian, ByteOrder};
-use omnom::prelude::*;
+use byteorder::{BigEndian, ByteOrder, ReadBytesExt, WriteBytesExt};
 use proboscis_postgres_protocol::message::{DataRow, RowDescription};
 use std::convert::TryFrom;
 use std::{sync::Arc, vec};
 
 macro_rules! create_numerical_column_data_to_array_function {
-    ($func_name:ident, $Array:ident, $type:ty, $byte_count:literal) => {
+    ($func_name:ident, $Array:ident, $type:ty, $byte_count:literal, $read_closure:tt) => {
+        #[allow(clippy::redundant_closure_call)]
         fn $func_name(data: &[Option<Vec<u8>>]) -> ArrayRef {
             Arc::new(
                 data.iter()
                     .map(|d| {
-                        d.as_ref().map(|d| {
+                        d.as_ref().map(|d| -> $type {
                             let mut bytes = d.clone();
                             while bytes.len() < $byte_count {
                                 bytes.push(0);
                             }
 
-                            let mut cursor = std::io::Cursor::new(bytes);
-                            let value: $type = cursor.read_be().unwrap();
-                            value
+                            $read_closure(&bytes)
                         })
                     })
                     .collect::<$Array>(),
@@ -38,49 +35,80 @@ macro_rules! create_numerical_column_data_to_array_function {
     };
 }
 
-create_numerical_column_data_to_array_function!(column_data_to_array_i8, Int8Array, i8, 1);
-create_numerical_column_data_to_array_function!(column_data_to_array_i16, Int16Array, i16, 2);
-create_numerical_column_data_to_array_function!(column_data_to_array_i32, Int32Array, i32, 4);
-create_numerical_column_data_to_array_function!(column_data_to_array_i64, Int64Array, i64, 8);
+create_numerical_column_data_to_array_function!(
+    column_data_to_array_f32,
+    Float32Array,
+    f32,
+    4,
+    (|buffer: &[u8]| { BigEndian::read_f32(buffer) })
+);
 
-create_numerical_column_data_to_array_function!(column_data_to_array_u8, UInt8Array, u8, 1);
-create_numerical_column_data_to_array_function!(column_data_to_array_u16, UInt16Array, u16, 2);
-create_numerical_column_data_to_array_function!(column_data_to_array_u32, UInt32Array, u32, 4);
-create_numerical_column_data_to_array_function!(column_data_to_array_u64, UInt64Array, u64, 8);
+create_numerical_column_data_to_array_function!(
+    column_data_to_array_f64,
+    Float64Array,
+    f64,
+    8,
+    (|buffer: &[u8]| { BigEndian::read_f64(buffer) })
+);
 
-fn column_data_to_array_f32(data: &[Option<Vec<u8>>]) -> ArrayRef {
-    return Arc::new(
-        data.iter()
-            .map(|d| {
-                d.as_ref().map(|d| {
-                    let mut bytes = d.clone();
-                    while bytes.len() < 4 {
-                        bytes.push(0);
-                    }
+create_numerical_column_data_to_array_function!(
+    column_data_to_array_i8,
+    Int8Array,
+    i8,
+    1,
+    (|mut buffer: &[u8]| { buffer.read_i8().unwrap() })
+);
 
-                    BigEndian::read_f32(&bytes)
-                })
-            })
-            .collect::<Float32Array>(),
-    );
-}
+create_numerical_column_data_to_array_function!(
+    column_data_to_array_i16,
+    Int16Array,
+    i16,
+    2,
+    (|mut buffer: &[u8]| { buffer.read_i16::<BigEndian>().unwrap() })
+);
+create_numerical_column_data_to_array_function!(
+    column_data_to_array_i32,
+    Int32Array,
+    i32,
+    4,
+    (|mut buffer: &[u8]| { buffer.read_i32::<BigEndian>().unwrap() })
+);
+create_numerical_column_data_to_array_function!(
+    column_data_to_array_i64,
+    Int64Array,
+    i64,
+    8,
+    (|mut buffer: &[u8]| { buffer.read_i64::<BigEndian>().unwrap() })
+);
 
-fn column_data_to_array_f64(data: &[Option<Vec<u8>>]) -> ArrayRef {
-    return Arc::new(
-        data.iter()
-            .map(|d| {
-                d.as_ref().map(|d| {
-                    let mut bytes = d.clone();
-                    while bytes.len() < 8 {
-                        bytes.push(0);
-                    }
-
-                    BigEndian::read_f64(&bytes)
-                })
-            })
-            .collect::<Float64Array>(),
-    );
-}
+create_numerical_column_data_to_array_function!(
+    column_data_to_array_u8,
+    UInt8Array,
+    u8,
+    1,
+    (|mut buffer: &[u8]| { buffer.read_u8().unwrap() })
+);
+create_numerical_column_data_to_array_function!(
+    column_data_to_array_u16,
+    UInt16Array,
+    u16,
+    2,
+    (|mut buffer: &[u8]| { buffer.read_u16::<BigEndian>().unwrap() })
+);
+create_numerical_column_data_to_array_function!(
+    column_data_to_array_u32,
+    UInt32Array,
+    u32,
+    4,
+    (|mut buffer: &[u8]| { buffer.read_u32::<BigEndian>().unwrap() })
+);
+create_numerical_column_data_to_array_function!(
+    column_data_to_array_u64,
+    UInt64Array,
+    u64,
+    8,
+    (|mut buffer: &[u8]| { buffer.read_u64::<BigEndian>().unwrap() })
+);
 
 fn column_data_to_array(data: &[Option<Vec<u8>>], data_type: &DataType) -> ArrayRef {
     match data_type {
