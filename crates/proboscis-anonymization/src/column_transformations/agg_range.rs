@@ -1,10 +1,10 @@
-use super::{ColumnTransformation, ColumnTransformationOutput};
+use super::{ColumnTransformation, ColumnTransformationOutput, ColumnTransformationResult};
 use arrow::{
-    array::{
-        ArrayRef, Int16Array, Int32Array, Int64Array, Int8Array, PrimitiveArray, StringArray,
-        UInt16Array, UInt32Array, UInt64Array, UInt8Array,
+    array::{ArrayRef, PrimitiveArray, StringArray},
+    datatypes::{
+        ArrowPrimitiveType, DataType, Int16Type, Int32Type, Int64Type, Int8Type, UInt16Type,
+        UInt32Type, UInt64Type, UInt8Type,
     },
-    datatypes::{ArrowPrimitiveType, DataType},
 };
 use std::{fmt::Display, sync::Arc};
 
@@ -28,100 +28,39 @@ where
     agg
 }
 
-pub struct AggRange {}
+fn agg_numeric_array<T>(input: ArrayRef) -> ColumnTransformationResult<ArrayRef>
+where
+    T: ArrowPrimitiveType,
+    <T as ArrowPrimitiveType>::Native: Ord + Display,
+{
+    let array = input
+        .as_any()
+        .downcast_ref::<PrimitiveArray<T>>()
+        .ok_or(super::ColumnTransformationError::DowncastFailed)?;
+
+    Ok(Arc::new(
+        vec![aggregated_value(array); array.len()]
+            .into_iter()
+            .collect::<StringArray>(),
+    ))
+}
+
+pub struct AggRange;
 
 impl ColumnTransformation for AggRange {
     fn transform_data(&self, data: ArrayRef) -> super::ColumnTransformationResult<ArrayRef> {
         match data.data_type() {
-            DataType::UInt8 => {
-                let array = data
-                    .as_any()
-                    .downcast_ref::<UInt8Array>()
-                    .ok_or(super::ColumnTransformationError::DowncastFailed)?;
-                Ok(Arc::new(
-                    vec![aggregated_value(array); array.len()]
-                        .into_iter()
-                        .collect::<StringArray>(),
-                ))
-            }
-            DataType::UInt16 => {
-                let array = data
-                    .as_any()
-                    .downcast_ref::<UInt16Array>()
-                    .ok_or(super::ColumnTransformationError::DowncastFailed)?;
-                Ok(Arc::new(
-                    vec![aggregated_value(array); array.len()]
-                        .into_iter()
-                        .collect::<StringArray>(),
-                ))
-            }
-            DataType::UInt32 => {
-                let array = data
-                    .as_any()
-                    .downcast_ref::<UInt32Array>()
-                    .ok_or(super::ColumnTransformationError::DowncastFailed)?;
-                Ok(Arc::new(
-                    vec![aggregated_value(array); array.len()]
-                        .into_iter()
-                        .collect::<StringArray>(),
-                ))
-            }
-            DataType::UInt64 => {
-                let array = data
-                    .as_any()
-                    .downcast_ref::<UInt64Array>()
-                    .ok_or(super::ColumnTransformationError::DowncastFailed)?;
-                Ok(Arc::new(
-                    vec![aggregated_value(array); array.len()]
-                        .into_iter()
-                        .collect::<StringArray>(),
-                ))
-            }
-            DataType::Int8 => {
-                let array = data
-                    .as_any()
-                    .downcast_ref::<Int8Array>()
-                    .ok_or(super::ColumnTransformationError::DowncastFailed)?;
-                Ok(Arc::new(
-                    vec![aggregated_value(array); array.len()]
-                        .into_iter()
-                        .collect::<StringArray>(),
-                ))
-            }
-            DataType::Int16 => {
-                let array = data
-                    .as_any()
-                    .downcast_ref::<Int16Array>()
-                    .ok_or(super::ColumnTransformationError::DowncastFailed)?;
-                Ok(Arc::new(
-                    vec![aggregated_value(array); array.len()]
-                        .into_iter()
-                        .collect::<StringArray>(),
-                ))
-            }
-            DataType::Int32 => {
-                let array = data
-                    .as_any()
-                    .downcast_ref::<Int32Array>()
-                    .ok_or(super::ColumnTransformationError::DowncastFailed)?;
-                Ok(Arc::new(
-                    vec![aggregated_value(array); array.len()]
-                        .into_iter()
-                        .collect::<StringArray>(),
-                ))
-            }
-            DataType::Int64 => {
-                let array = data
-                    .as_any()
-                    .downcast_ref::<Int64Array>()
-                    .ok_or(super::ColumnTransformationError::DowncastFailed)?;
-                Ok(Arc::new(
-                    vec![aggregated_value(array); array.len()]
-                        .into_iter()
-                        .collect::<StringArray>(),
-                ))
-            }
-            _ => todo!("{:?}", data.data_type()),
+            DataType::UInt8 => agg_numeric_array::<UInt8Type>(data),
+            DataType::UInt16 => agg_numeric_array::<UInt16Type>(data),
+            DataType::UInt32 => agg_numeric_array::<UInt32Type>(data),
+            DataType::UInt64 => agg_numeric_array::<UInt64Type>(data),
+            DataType::Int8 => agg_numeric_array::<Int8Type>(data),
+            DataType::Int16 => agg_numeric_array::<Int16Type>(data),
+            DataType::Int32 => agg_numeric_array::<Int32Type>(data),
+            DataType::Int64 => agg_numeric_array::<Int64Type>(data),
+            _ => Err(super::ColumnTransformationError::UnsupportedType(
+                data.data_type().clone(),
+            )),
         }
     }
 
@@ -139,6 +78,7 @@ impl ColumnTransformation for AggRange {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use arrow::array::Int32Array;
 
     #[test]
     fn test_number_agg_range_equal() {

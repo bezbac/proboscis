@@ -1,10 +1,10 @@
-use super::{ColumnTransformation, ColumnTransformationOutput};
+use super::{ColumnTransformation, ColumnTransformationOutput, ColumnTransformationResult};
 use arrow::{
-    array::{
-        ArrayRef, Int16Array, Int32Array, Int64Array, Int8Array, PrimitiveArray, UInt16Array,
-        UInt32Array, UInt64Array, UInt8Array,
+    array::{ArrayRef, PrimitiveArray},
+    datatypes::{
+        ArrowNativeType, ArrowNumericType, DataType, Int16Type, Int32Type, Int64Type, Int8Type,
+        UInt16Type, UInt32Type, UInt64Type, UInt8Type,
     },
-    datatypes::{ArrowNativeType, ArrowNumericType, DataType},
 };
 use std::{ops::Add, sync::Arc};
 
@@ -17,101 +17,39 @@ where
         .map(|v| v as T::Native / ArrowNativeType::from_usize(array.len()).unwrap())
 }
 
-pub struct AggMedian {}
+fn agg_numeric_array<T>(input: ArrayRef) -> ColumnTransformationResult<ArrayRef>
+where
+    T: ArrowNumericType,
+    T::Native: Add<Output = T::Native> + std::ops::Div<Output = T::Native>,
+{
+    let array = input
+        .as_any()
+        .downcast_ref::<PrimitiveArray<T>>()
+        .ok_or(super::ColumnTransformationError::DowncastFailed)?;
+
+    Ok(Arc::new(
+        vec![median(array); array.len()]
+            .into_iter()
+            .collect::<PrimitiveArray<T>>(),
+    ))
+}
+
+pub struct AggMedian;
 
 impl ColumnTransformation for AggMedian {
     fn transform_data(&self, data: ArrayRef) -> super::ColumnTransformationResult<ArrayRef> {
         match data.data_type() {
-            DataType::UInt8 => {
-                let array = data
-                    .as_any()
-                    .downcast_ref::<UInt8Array>()
-                    .ok_or(super::ColumnTransformationError::DowncastFailed)?;
-
-                Ok(Arc::new(
-                    vec![median(array); array.len()]
-                        .into_iter()
-                        .collect::<UInt8Array>(),
-                ))
-            }
-            DataType::UInt16 => {
-                let array = data
-                    .as_any()
-                    .downcast_ref::<UInt16Array>()
-                    .ok_or(super::ColumnTransformationError::DowncastFailed)?;
-                Ok(Arc::new(
-                    vec![median(array); array.len()]
-                        .into_iter()
-                        .collect::<UInt16Array>(),
-                ))
-            }
-            DataType::UInt32 => {
-                let array = data
-                    .as_any()
-                    .downcast_ref::<UInt32Array>()
-                    .ok_or(super::ColumnTransformationError::DowncastFailed)?;
-                Ok(Arc::new(
-                    vec![median(array); array.len()]
-                        .into_iter()
-                        .collect::<UInt32Array>(),
-                ))
-            }
-            DataType::UInt64 => {
-                let array = data
-                    .as_any()
-                    .downcast_ref::<UInt64Array>()
-                    .ok_or(super::ColumnTransformationError::DowncastFailed)?;
-                Ok(Arc::new(
-                    vec![median(array); array.len()]
-                        .into_iter()
-                        .collect::<UInt64Array>(),
-                ))
-            }
-            DataType::Int8 => {
-                let array = data
-                    .as_any()
-                    .downcast_ref::<Int8Array>()
-                    .ok_or(super::ColumnTransformationError::DowncastFailed)?;
-                Ok(Arc::new(
-                    vec![median(array); array.len()]
-                        .into_iter()
-                        .collect::<Int8Array>(),
-                ))
-            }
-            DataType::Int16 => {
-                let array = data
-                    .as_any()
-                    .downcast_ref::<Int16Array>()
-                    .ok_or(super::ColumnTransformationError::DowncastFailed)?;
-                Ok(Arc::new(
-                    vec![median(array); array.len()]
-                        .into_iter()
-                        .collect::<Int16Array>(),
-                ))
-            }
-            DataType::Int32 => {
-                let array = data
-                    .as_any()
-                    .downcast_ref::<Int32Array>()
-                    .ok_or(super::ColumnTransformationError::DowncastFailed)?;
-                Ok(Arc::new(
-                    vec![median(array); array.len()]
-                        .into_iter()
-                        .collect::<Int32Array>(),
-                ))
-            }
-            DataType::Int64 => {
-                let array = data
-                    .as_any()
-                    .downcast_ref::<Int64Array>()
-                    .ok_or(super::ColumnTransformationError::DowncastFailed)?;
-                Ok(Arc::new(
-                    vec![median(array); array.len()]
-                        .into_iter()
-                        .collect::<Int64Array>(),
-                ))
-            }
-            _ => todo!("{:?}", data.data_type()),
+            DataType::UInt8 => agg_numeric_array::<UInt8Type>(data),
+            DataType::UInt16 => agg_numeric_array::<UInt16Type>(data),
+            DataType::UInt32 => agg_numeric_array::<UInt32Type>(data),
+            DataType::UInt64 => agg_numeric_array::<UInt64Type>(data),
+            DataType::Int8 => agg_numeric_array::<Int8Type>(data),
+            DataType::Int16 => agg_numeric_array::<Int16Type>(data),
+            DataType::Int32 => agg_numeric_array::<Int32Type>(data),
+            DataType::Int64 => agg_numeric_array::<Int64Type>(data),
+            _ => Err(super::ColumnTransformationError::UnsupportedType(
+                data.data_type().clone(),
+            )),
         }
     }
 
@@ -141,6 +79,7 @@ impl ColumnTransformation for AggMedian {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use arrow::array::Int32Array;
 
     #[test]
     fn test_number_agg_range_equal() {
