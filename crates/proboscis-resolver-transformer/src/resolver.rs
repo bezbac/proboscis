@@ -1,4 +1,7 @@
-use crate::{interface::Transformer, projection::trace_projection_origin};
+use crate::{
+    interface::Transformer,
+    projection::{trace_projection_origin, ProjectedOrigin},
+};
 use arrow::{datatypes::Schema, record_batch::RecordBatch};
 use async_trait::async_trait;
 use proboscis_core::resolver::{
@@ -83,72 +86,21 @@ fn re_apply_metadata(original_schema: &Schema, new_schema: &Schema) -> Result<Sc
 }
 
 impl TransformingResolver {
-    fn transform_records(
+    fn with_traced_projection<T: Clone, F: Fn(Vec<ProjectedOrigin>) -> Result<T, ResolveError>>(
         &self,
         query: &str,
-        data: &RecordBatch,
-    ) -> Result<RecordBatch, ResolveError> {
+        schema: &Schema,
+        fallback: &T,
+        transformation: F,
+    ) -> Result<T, ResolveError> {
         let query_ast: Vec<Statement> = match self.parse_sql(query) {
             Ok(ast) => ast,
             Err(err) => {
                 return if self.skip_if_cannot_parse {
                     tracing::warn!("Could not parse query, skipping transformation");
-                    Ok(data.clone())
+                    Ok(fallback.clone())
                 } else {
                     return Err(ResolveError::Other(anyhow::anyhow!(err)));
-                }
-            }
-        };
-
-        let fields: Vec<proboscis_core::data::field::Field> = data
-            .schema()
-            .fields()
-            .iter()
-            .map(|f| proboscis_core::data::field::Field::try_from(f).unwrap())
-            .collect();
-
-        let origins = match trace_projection_origin(query_ast.first().unwrap(), &fields) {
-            Ok(ast) => ast,
-            Err(err) => {
-                return if self.skip_if_cannot_trace {
-                    tracing::warn!(
-                        "Could not trace origin of projected columns, skipping transformation"
-                    );
-                    Ok(data.clone())
-                } else {
-                    return Err(ResolveError::Other(anyhow::anyhow!(err)));
-                }
-            }
-        };
-
-        let original_schema = data.schema();
-
-        let mut transformed = data.clone();
-        for transformer in &self.transformers {
-            transformed = transformer.transform_records(&transformed, &origins)?;
-        }
-
-        let transformed_schema_with_metadata =
-            re_apply_metadata(&original_schema, &transformed.schema())
-                .map_err(|err| ResolveError::Other(anyhow::anyhow!(err)))?;
-
-        let transformed_with_metadata = RecordBatch::try_new(
-            Arc::new(transformed_schema_with_metadata),
-            transformed.columns().to_vec(),
-        )?;
-
-        Ok(transformed_with_metadata)
-    }
-
-    fn transform_schema(&self, query: &str, schema: &Schema) -> Result<Schema, ResolveError> {
-        let query_ast: Vec<Statement> = match self.parse_sql(query) {
-            Ok(ast) => ast,
-            Err(err) => {
-                return if self.skip_if_cannot_parse {
-                    tracing::warn!("Could not parse query, skipping transformation");
-                    Ok(schema.clone())
-                } else {
-                    Err(ResolveError::Other(anyhow::anyhow!(err)))
                 }
             }
         };
@@ -166,22 +118,54 @@ impl TransformingResolver {
                     tracing::warn!(
                         "Could not trace origin of projected columns, skipping transformation"
                     );
-                    Ok(schema.clone())
+                    Ok(fallback.clone())
                 } else {
-                    Err(ResolveError::Other(anyhow::anyhow!(err)))
+                    return Err(ResolveError::Other(anyhow::anyhow!(err)));
                 }
             }
         };
 
-        let mut transformed = schema.clone();
-        for transformer in &self.transformers {
-            transformed = transformer.transform_schema(&transformed, &origins)?;
-        }
+        transformation(origins)
+    }
 
-        let transformed_with_metadata = re_apply_metadata(schema, &transformed)
-            .map_err(|err| ResolveError::Other(anyhow::anyhow!(err)))?;
+    fn transform_records(
+        &self,
+        query: &str,
+        data: &RecordBatch,
+    ) -> Result<RecordBatch, ResolveError> {
+        self.with_traced_projection(query, &data.schema(), data, |origins| {
+            let mut transformed = data.clone();
 
-        Ok(transformed_with_metadata)
+            for transformer in &self.transformers {
+                transformed = transformer.transform_records(&transformed, &origins)?;
+            }
+
+            let transformed_schema_with_metadata =
+                re_apply_metadata(&data.schema(), &transformed.schema())
+                    .map_err(|err| ResolveError::Other(anyhow::anyhow!(err)))?;
+
+            let transformed_with_metadata = RecordBatch::try_new(
+                Arc::new(transformed_schema_with_metadata),
+                transformed.columns().to_vec(),
+            )?;
+
+            Ok(transformed_with_metadata)
+        })
+    }
+
+    fn transform_schema(&self, query: &str, schema: &Schema) -> Result<Schema, ResolveError> {
+        self.with_traced_projection(query, schema, schema, |origins| {
+            let mut transformed = schema.clone();
+
+            for transformer in &self.transformers {
+                transformed = transformer.transform_schema(&transformed, &origins)?;
+            }
+
+            let transformed_with_metadata = re_apply_metadata(schema, &transformed)
+                .map_err(|err| ResolveError::Other(anyhow::anyhow!(err)))?;
+
+            Ok(transformed_with_metadata)
+        })
     }
 }
 
