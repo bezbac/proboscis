@@ -35,7 +35,8 @@ impl Connection {
         self.write_message(BackendMessage::RowDescription(row_description).into())
             .await?;
 
-        let data_rows = serialize_record_batch_to_data_rows(&data);
+        let data_rows = serialize_record_batch_to_data_rows(&data)?;
+
         for message in data_rows {
             self.write_message(BackendMessage::DataRow(message).into())
                 .await?;

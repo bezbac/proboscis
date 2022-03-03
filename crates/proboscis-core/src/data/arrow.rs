@@ -5,7 +5,7 @@ use arrow::array::{
 use arrow::array::{Array, GenericListArray, UInt8Array};
 use arrow::array::{ArrayRef, GenericStringArray, Int16Array, Int32Array, Int64Array, Int8Array};
 use arrow::buffer::{Buffer, MutableBuffer};
-use arrow::datatypes::{DataType, Field, Schema, ToByteSlice, UInt8Type};
+use arrow::datatypes::{DataType, Schema, ToByteSlice, UInt8Type};
 use arrow::error::ArrowError;
 use arrow::record_batch::RecordBatch;
 use byteorder::{BigEndian, ByteOrder, ReadBytesExt, WriteBytesExt};
@@ -16,21 +16,26 @@ use std::{sync::Arc, vec};
 macro_rules! create_numerical_column_data_to_array_function {
     ($func_name:ident, $Array:ident, $type:ty, $byte_count:literal, $read_closure:tt) => {
         #[allow(clippy::redundant_closure_call)]
-        fn $func_name(data: &[Option<Vec<u8>>]) -> ArrayRef {
-            Arc::new(
-                data.iter()
-                    .map(|d| {
-                        d.as_ref().map(|d| -> $type {
-                            let mut bytes = d.clone();
-                            while bytes.len() < $byte_count {
-                                bytes.push(0);
-                            }
+        fn $func_name(data: &[Option<Vec<u8>>]) -> std::io::Result<ArrayRef> {
+            let mut new_data = vec![];
 
-                            $read_closure(&bytes)
-                        })
-                    })
-                    .collect::<$Array>(),
-            )
+            for d in data {
+                let new_d = match d.as_ref() {
+                    Some(d) => {
+                        let mut bytes = d.clone();
+                        while bytes.len() < $byte_count {
+                            bytes.push(0);
+                        }
+
+                        Some($read_closure(&bytes)?)
+                    }
+                    _ => None,
+                };
+
+                new_data.push(new_d);
+            }
+
+            Ok(Arc::new(new_data.iter().collect::<$Array>()))
         }
     };
 }
@@ -40,7 +45,7 @@ create_numerical_column_data_to_array_function!(
     Float32Array,
     f32,
     4,
-    (|buffer: &[u8]| { BigEndian::read_f32(buffer) })
+    (|buffer: &[u8]| -> std::io::Result<f32> { Ok(BigEndian::read_f32(buffer)) })
 );
 
 create_numerical_column_data_to_array_function!(
@@ -48,7 +53,7 @@ create_numerical_column_data_to_array_function!(
     Float64Array,
     f64,
     8,
-    (|buffer: &[u8]| { BigEndian::read_f64(buffer) })
+    (|buffer: &[u8]| -> std::io::Result<f64> { Ok(BigEndian::read_f64(buffer)) })
 );
 
 create_numerical_column_data_to_array_function!(
@@ -56,7 +61,7 @@ create_numerical_column_data_to_array_function!(
     Int8Array,
     i8,
     1,
-    (|mut buffer: &[u8]| { buffer.read_i8().unwrap() })
+    (|mut buffer: &[u8]| -> std::io::Result<i8> { buffer.read_i8() })
 );
 
 create_numerical_column_data_to_array_function!(
@@ -64,21 +69,21 @@ create_numerical_column_data_to_array_function!(
     Int16Array,
     i16,
     2,
-    (|mut buffer: &[u8]| { buffer.read_i16::<BigEndian>().unwrap() })
+    (|mut buffer: &[u8]| -> std::io::Result<i16> { buffer.read_i16::<BigEndian>() })
 );
 create_numerical_column_data_to_array_function!(
     column_data_to_array_i32,
     Int32Array,
     i32,
     4,
-    (|mut buffer: &[u8]| { buffer.read_i32::<BigEndian>().unwrap() })
+    (|mut buffer: &[u8]| -> std::io::Result<i32> { buffer.read_i32::<BigEndian>() })
 );
 create_numerical_column_data_to_array_function!(
     column_data_to_array_i64,
     Int64Array,
     i64,
     8,
-    (|mut buffer: &[u8]| { buffer.read_i64::<BigEndian>().unwrap() })
+    (|mut buffer: &[u8]| -> std::io::Result<i64> { buffer.read_i64::<BigEndian>() })
 );
 
 create_numerical_column_data_to_array_function!(
@@ -86,31 +91,34 @@ create_numerical_column_data_to_array_function!(
     UInt8Array,
     u8,
     1,
-    (|mut buffer: &[u8]| { buffer.read_u8().unwrap() })
+    (|mut buffer: &[u8]| -> std::io::Result<u8> { buffer.read_u8() })
 );
 create_numerical_column_data_to_array_function!(
     column_data_to_array_u16,
     UInt16Array,
     u16,
     2,
-    (|mut buffer: &[u8]| { buffer.read_u16::<BigEndian>().unwrap() })
+    (|mut buffer: &[u8]| -> std::io::Result<u16> { buffer.read_u16::<BigEndian>() })
 );
 create_numerical_column_data_to_array_function!(
     column_data_to_array_u32,
     UInt32Array,
     u32,
     4,
-    (|mut buffer: &[u8]| { buffer.read_u32::<BigEndian>().unwrap() })
+    (|mut buffer: &[u8]| -> std::io::Result<u32> { buffer.read_u32::<BigEndian>() })
 );
 create_numerical_column_data_to_array_function!(
     column_data_to_array_u64,
     UInt64Array,
     u64,
     8,
-    (|mut buffer: &[u8]| { buffer.read_u64::<BigEndian>().unwrap() })
+    (|mut buffer: &[u8]| -> std::io::Result<u64> { buffer.read_u64::<BigEndian>() })
 );
 
-fn column_data_to_array(data: &[Option<Vec<u8>>], data_type: &DataType) -> ArrayRef {
+fn column_data_to_array(
+    data: &[Option<Vec<u8>>],
+    data_type: &DataType,
+) -> std::io::Result<ArrayRef> {
     match data_type {
         DataType::Int8 => column_data_to_array_i8(data),
         DataType::Int16 => column_data_to_array_i16(data),
@@ -125,16 +133,16 @@ fn column_data_to_array(data: &[Option<Vec<u8>>], data_type: &DataType) -> Array
         DataType::Float32 => column_data_to_array_f32(data),
         DataType::Float64 => column_data_to_array_f64(data),
 
-        DataType::Utf8 => Arc::new(
+        DataType::Utf8 => Ok(Arc::new(
             data.iter()
                 .map(|d| d.as_ref().map(|d| String::from_utf8(d.to_vec()).unwrap()))
                 .collect::<GenericStringArray<i32>>(),
-        ),
-        DataType::LargeUtf8 => Arc::new(
+        )),
+        DataType::LargeUtf8 => Ok(Arc::new(
             data.iter()
                 .map(|d| d.as_ref().map(|d| String::from_utf8(d.to_vec()).unwrap()))
                 .collect::<GenericStringArray<i64>>(),
-        ),
+        )),
         DataType::List(field) => {
             let data_array: Vec<Option<Vec<Option<u8>>>> = data
                 .iter()
@@ -151,13 +159,13 @@ fn column_data_to_array(data: &[Option<Vec<u8>>], data_type: &DataType) -> Array
                 .add_child_data(array.values().data().clone())
                 .build();
 
-            make_array(list_data)
+            Ok(make_array(list_data))
         }
-        DataType::Boolean => Arc::new(BooleanArray::from(
+        DataType::Boolean => Ok(Arc::new(BooleanArray::from(
             data.iter()
                 .map(|d| d.as_ref().map(|d| d == &[0]))
                 .collect::<Vec<Option<bool>>>(),
-        )),
+        ))),
         DataType::FixedSizeBinary(size) => {
             if data.is_empty() {
                 let array_data = ArrayData::new(
@@ -170,10 +178,10 @@ fn column_data_to_array(data: &[Option<Vec<u8>>], data_type: &DataType) -> Array
                     vec![],
                 );
 
-                return Arc::new(FixedSizeBinaryArray::from(array_data));
+                return Ok(Arc::new(FixedSizeBinaryArray::from(array_data)));
             }
 
-            return Arc::new(
+            return Ok(Arc::new(
                 FixedSizeBinaryArray::try_from_sparse_iter(data.iter().map(|d| {
                     d.as_ref().map(|value| {
                         let mut new_value = value.clone();
@@ -182,7 +190,7 @@ fn column_data_to_array(data: &[Option<Vec<u8>>], data_type: &DataType) -> Array
                     })
                 }))
                 .unwrap(),
-            );
+            ));
         }
         _ => todo!("{}", data_type),
     }
@@ -191,7 +199,7 @@ fn column_data_to_array(data: &[Option<Vec<u8>>], data_type: &DataType) -> Array
 fn protocol_rows_to_arrow_columns(
     schema: &Schema,
     rows: Vec<Vec<Option<Vec<u8>>>>,
-) -> Vec<ArrayRef> {
+) -> std::io::Result<Vec<ArrayRef>> {
     let mut columns_data: Vec<Vec<Option<Vec<u8>>>> =
         schema.fields().iter().map(|_| vec![]).collect();
 
@@ -207,156 +215,153 @@ fn protocol_rows_to_arrow_columns(
         }
     }
 
-    columns_data
-        .iter()
-        .zip(columns_data_types.iter())
-        .map(|(column_data, data_type)| column_data_to_array(column_data, data_type))
-        .collect()
+    let mut result = vec![];
+    for (column_data, data_type) in columns_data.iter().zip(columns_data_types.iter()) {
+        result.push(column_data_to_array(column_data, data_type)?)
+    }
+
+    Ok(result)
 }
 
-pub fn protocol_fields_to_schema(fields: &[proboscis_postgres_protocol::message::Field]) -> Schema {
-    let fields = fields
-        .iter()
-        .map(|field| {
-            let proboscis_field = crate::data::field::Field::try_from(field).unwrap();
-            TryFrom::try_from(&proboscis_field).unwrap()
-        })
-        .collect::<Vec<Field>>();
+pub fn protocol_fields_to_schema(
+    fields: &[proboscis_postgres_protocol::message::Field],
+) -> Result<Schema, &str> {
+    let mut result = vec![];
 
-    Schema::new(fields)
+    for field in fields {
+        let proboscis_field = crate::data::field::Field::try_from(field)?;
+        result.push(arrow::datatypes::Field::try_from(&proboscis_field).unwrap())
+    }
+
+    Ok(Schema::new(result))
 }
 
 pub fn simple_query_response_to_record_batch(
     fields: &[proboscis_postgres_protocol::message::Field],
     data: &[DataRow],
 ) -> Result<RecordBatch, ArrowError> {
-    let schema = protocol_fields_to_schema(fields);
+    let schema =
+        protocol_fields_to_schema(fields).map_err(|err| ArrowError::CastError(err.to_string()))?;
 
     let protocol_row_data = data
         .iter()
         .map(|DataRow { field_data }| field_data.clone())
         .collect();
 
-    let columns = protocol_rows_to_arrow_columns(&schema, protocol_row_data);
+    let columns = protocol_rows_to_arrow_columns(&schema, protocol_row_data)?;
 
     RecordBatch::try_new(Arc::new(schema), columns)
 }
 
-pub fn serialize_record_batch_to_data_rows(batch: &RecordBatch) -> Vec<DataRow> {
-    (0..batch.num_rows())
-        .map(|row_index| {
-            let mut row_data = vec![];
+pub fn serialize_record_batch_to_data_rows(batch: &RecordBatch) -> std::io::Result<Vec<DataRow>> {
+    let mut result = vec![];
 
-            for column in batch.columns() {
-                let mut cell: Vec<u8> = vec![];
-                match column.data_type() {
-                    DataType::Int8 => {
-                        let values: &Int8Array = as_primitive_array(column);
-                        cell.write_i8(values.value(row_index)).unwrap()
-                    }
-                    DataType::Int16 => {
-                        let values: &Int16Array = as_primitive_array(column);
-                        cell.write_i16::<BigEndian>(values.value(row_index))
-                            .unwrap()
-                    }
-                    DataType::Int32 => {
-                        let values: &Int32Array = as_primitive_array(column);
-                        cell.write_i32::<BigEndian>(values.value(row_index))
-                            .unwrap()
-                    }
-                    DataType::Int64 => {
-                        let values: &Int64Array = as_primitive_array(column);
-                        cell.write_i64::<BigEndian>(values.value(row_index))
-                            .unwrap()
-                    }
-                    DataType::UInt8 => {
-                        let values: &UInt8Array = as_primitive_array(column);
-                        cell.write_u8(values.value(row_index)).unwrap()
-                    }
-                    DataType::UInt16 => {
-                        let values: &UInt16Array = as_primitive_array(column);
-                        cell.write_u16::<BigEndian>(values.value(row_index))
-                            .unwrap()
-                    }
-                    DataType::UInt32 => {
-                        let values: &UInt32Array = as_primitive_array(column);
-                        cell.write_u32::<BigEndian>(values.value(row_index))
-                            .unwrap()
-                    }
-                    DataType::UInt64 => {
-                        let values: &UInt64Array = as_primitive_array(column);
-                        cell.write_u64::<BigEndian>(values.value(row_index))
-                            .unwrap()
-                    }
-                    DataType::Float32 => {
-                        let values: &Float32Array = as_primitive_array(column);
-                        cell.write_f32::<BigEndian>(values.value(row_index))
-                            .unwrap()
-                    }
-                    DataType::Float64 => {
-                        let values: &Float64Array = as_primitive_array(column);
-                        cell.write_f64::<BigEndian>(values.value(row_index))
-                            .unwrap()
-                    }
-                    DataType::LargeUtf8 => {
-                        let values = &column
-                            .as_any()
-                            .downcast_ref::<GenericStringArray<i64>>()
-                            .unwrap();
-                        cell.extend_from_slice(values.value(row_index).as_bytes())
-                    }
-                    DataType::Utf8 => {
-                        let values = &column
-                            .as_any()
-                            .downcast_ref::<GenericStringArray<i32>>()
-                            .unwrap();
-                        cell.extend_from_slice(values.value(row_index).as_bytes())
-                    }
-                    DataType::List(_) => {
-                        let values = &column
-                            .as_any()
-                            .downcast_ref::<GenericListArray<i32>>()
-                            .unwrap();
+    for row_index in 0..batch.num_rows() {
+        let mut row_data = vec![];
 
-                        let row_value = values.value(row_index);
-
-                        let value = row_value
-                            .as_any()
-                            .downcast_ref::<UInt8Array>()
-                            .unwrap()
-                            .values();
-
-                        cell.extend_from_slice(value)
-                    }
-                    DataType::Boolean => {
-                        let values = &column.as_any().downcast_ref::<BooleanArray>().unwrap();
-                        let boolean_value = values.value(row_index);
-                        let byte_value = if boolean_value { 1 } else { 0 };
-                        cell.extend_from_slice(&[byte_value])
-                    }
-                    DataType::FixedSizeBinary(_) => {
-                        let values = &column
-                            .as_any()
-                            .downcast_ref::<FixedSizeBinaryArray>()
-                            .unwrap();
-
-                        let mut row_value = values.value(row_index).to_vec();
-                        row_value.reverse();
-                        let end = row_value.iter_mut().take_while(|p| **p == 0).count();
-                        row_value.reverse();
-
-                        cell.extend_from_slice(&row_value[0..row_value.len() - end])
-                    }
-                    _ => todo!("{:?}", column.data_type()),
+        for column in batch.columns() {
+            let mut cell: Vec<u8> = vec![];
+            match column.data_type() {
+                DataType::Int8 => {
+                    let values: &Int8Array = as_primitive_array(column);
+                    cell.write_i8(values.value(row_index))?
                 }
-                row_data.push(Some(cell))
-            }
+                DataType::Int16 => {
+                    let values: &Int16Array = as_primitive_array(column);
+                    cell.write_i16::<BigEndian>(values.value(row_index))?
+                }
+                DataType::Int32 => {
+                    let values: &Int32Array = as_primitive_array(column);
+                    cell.write_i32::<BigEndian>(values.value(row_index))?
+                }
+                DataType::Int64 => {
+                    let values: &Int64Array = as_primitive_array(column);
+                    cell.write_i64::<BigEndian>(values.value(row_index))?
+                }
+                DataType::UInt8 => {
+                    let values: &UInt8Array = as_primitive_array(column);
+                    cell.write_u8(values.value(row_index))?
+                }
+                DataType::UInt16 => {
+                    let values: &UInt16Array = as_primitive_array(column);
+                    cell.write_u16::<BigEndian>(values.value(row_index))?
+                }
+                DataType::UInt32 => {
+                    let values: &UInt32Array = as_primitive_array(column);
+                    cell.write_u32::<BigEndian>(values.value(row_index))?
+                }
+                DataType::UInt64 => {
+                    let values: &UInt64Array = as_primitive_array(column);
+                    cell.write_u64::<BigEndian>(values.value(row_index))?
+                }
+                DataType::Float32 => {
+                    let values: &Float32Array = as_primitive_array(column);
+                    cell.write_f32::<BigEndian>(values.value(row_index))?
+                }
+                DataType::Float64 => {
+                    let values: &Float64Array = as_primitive_array(column);
+                    cell.write_f64::<BigEndian>(values.value(row_index))?
+                }
+                DataType::LargeUtf8 => {
+                    let values = &column
+                        .as_any()
+                        .downcast_ref::<GenericStringArray<i64>>()
+                        .unwrap();
+                    cell.extend_from_slice(values.value(row_index).as_bytes())
+                }
+                DataType::Utf8 => {
+                    let values = &column
+                        .as_any()
+                        .downcast_ref::<GenericStringArray<i32>>()
+                        .unwrap();
+                    cell.extend_from_slice(values.value(row_index).as_bytes())
+                }
+                DataType::List(_) => {
+                    let values = &column
+                        .as_any()
+                        .downcast_ref::<GenericListArray<i32>>()
+                        .unwrap();
 
-            DataRow {
-                field_data: row_data,
+                    let row_value = values.value(row_index);
+
+                    let value = row_value
+                        .as_any()
+                        .downcast_ref::<UInt8Array>()
+                        .unwrap()
+                        .values();
+
+                    cell.extend_from_slice(value)
+                }
+                DataType::Boolean => {
+                    let values = &column.as_any().downcast_ref::<BooleanArray>().unwrap();
+                    let boolean_value = values.value(row_index);
+                    let byte_value = if boolean_value { 1 } else { 0 };
+                    cell.extend_from_slice(&[byte_value])
+                }
+                DataType::FixedSizeBinary(_) => {
+                    let values = &column
+                        .as_any()
+                        .downcast_ref::<FixedSizeBinaryArray>()
+                        .unwrap();
+
+                    let mut row_value = values.value(row_index).to_vec();
+                    row_value.reverse();
+                    let end = row_value.iter_mut().take_while(|p| **p == 0).count();
+                    row_value.reverse();
+
+                    cell.extend_from_slice(&row_value[0..row_value.len() - end])
+                }
+                _ => todo!("{:?}", column.data_type()),
             }
+            row_data.push(Some(cell))
+        }
+
+        result.push(DataRow {
+            field_data: row_data,
         })
-        .collect()
+    }
+
+    Ok(result)
 }
 
 pub fn serialize_record_batch_schema_to_row_description(schema: &Schema) -> RowDescription {
@@ -374,6 +379,7 @@ pub fn serialize_record_batch_schema_to_row_description(schema: &Schema) -> RowD
 #[cfg(test)]
 mod tests {
     use super::*;
+    use arrow::datatypes::Field;
     use rand::Rng;
     use std::iter;
 
@@ -391,10 +397,10 @@ mod tests {
         )));
 
         let schema = Schema::new(vec![Field::new("some_list", list_data_type, true)]);
-        let columns = protocol_rows_to_arrow_columns(&schema, row_data.clone());
+        let columns = protocol_rows_to_arrow_columns(&schema, row_data.clone()).unwrap();
         let batch = RecordBatch::try_new(Arc::new(schema), columns).unwrap();
 
-        let deserialized = serialize_record_batch_to_data_rows(&batch);
+        let deserialized = serialize_record_batch_to_data_rows(&batch).unwrap();
 
         assert_eq!(4, deserialized.len());
 
@@ -450,7 +456,8 @@ mod tests {
 
         let deserialized_row_description =
             serialize_record_batch_schema_to_row_description(&batch.schema());
-        let deserialized_data = serialize_record_batch_to_data_rows(&batch);
+
+        let deserialized_data = serialize_record_batch_to_data_rows(&batch).unwrap();
 
         assert_eq!(fields, deserialized_row_description.fields);
         assert_eq!(data, deserialized_data);

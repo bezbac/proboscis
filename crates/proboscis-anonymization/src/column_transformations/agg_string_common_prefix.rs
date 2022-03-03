@@ -73,8 +73,8 @@ impl ColumnTransformation for AggStringCommonPrefix {
 
 #[cfg(test)]
 mod tests {
-    use arrow::array::StringArray;
     use super::*;
+    use arrow::array::StringArray;
 
     #[test]
     fn test_string_aggregation() {

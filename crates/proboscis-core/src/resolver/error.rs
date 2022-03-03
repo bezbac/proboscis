@@ -14,3 +14,9 @@ pub enum ResolveError {
     #[error(transparent)]
     Other(#[from] anyhow::Error),
 }
+
+impl From<&str> for ResolveError {
+    fn from(error: &str) -> Self {
+        ResolveError::Other(anyhow::anyhow!(String::from(error)))
+    }
+}

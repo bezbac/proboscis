@@ -37,16 +37,15 @@ pub struct Proxy {
 
 impl Proxy {
     pub async fn listen(&mut self, listener: TcpListener) -> Result<(), ProboscisError> {
-        info!("Listening on: {}", &listener.local_addr().unwrap());
+        info!("Listening on: {}", &listener.local_addr()?);
 
         let tls_acceptor: Option<tokio_native_tls::TlsAcceptor> = match &self.config.tls_config {
             Some(tls_config) => {
                 let mut file = File::open(tls_config.pcks_path.clone())?;
                 let mut identity = vec![];
-                file.read_to_end(&mut identity).unwrap();
+                file.read_to_end(&mut identity)?;
 
-                let certificate =
-                    Identity::from_pkcs12(&identity, tls_config.password.as_str()).unwrap();
+                let certificate = Identity::from_pkcs12(&identity, tls_config.password.as_str())?;
                 let acceptor = tokio_native_tls::TlsAcceptor::from(
                     native_tls::TlsAcceptor::builder(certificate).build()?,
                 );
@@ -114,7 +113,7 @@ pub async fn handle_authentication(
 
     let password = credentials
         .get(&user.clone())
-        .unwrap_or_else(|| panic!("Password for {} not found inside config", &user));
+        .ok_or_else(|| ProboscisError::MissingPasswordInConfig(user.clone()))?;
 
     let actual_hash = encode_md5_password_hash(&user, password, &salt[..]);
 
@@ -144,20 +143,23 @@ pub async fn accept_frontend_connection(
     let mut frontend: MaybeTlsStream;
     match startup_message {
         StartupMessage::SslRequest => {
-            // TLS not supported
-            if tls_acceptor.is_none() {
-                frontend_stream.write(&[b'N']).await?;
-                return Err(ProboscisError::FrontendRequestedTLS);
+            match tls_acceptor {
+                None => {
+                    // TLS not supported
+                    frontend_stream.write(&[b'N']).await?;
+                    return Err(ProboscisError::FrontendRequestedTLS);
+                }
+                Some(tls_acceptor) => {
+                    let tls_acceptor = tls_acceptor;
+
+                    // Confirm TLS request
+                    frontend_stream.write(&[b'S']).await?;
+                    let tls_stream = tls_acceptor.accept(frontend_stream).await?;
+
+                    frontend = MaybeTlsStream::Right(tls_stream);
+                    startup_message = StartupMessage::read(&mut frontend).await?;
+                }
             }
-
-            let tls_acceptor = tls_acceptor.as_ref().unwrap();
-
-            // Confirm TLS request
-            frontend_stream.write(&[b'S']).await?;
-            let tls_stream = tls_acceptor.accept(frontend_stream).await?;
-
-            frontend = MaybeTlsStream::Right(tls_stream);
-            startup_message = StartupMessage::read(&mut frontend).await?;
         }
         _ => frontend = MaybeTlsStream::Left(frontend_stream),
     };

@@ -50,11 +50,15 @@ impl TransformingResolver {
 }
 
 fn re_apply_metadata(original_schema: &Schema, new_schema: &Schema) -> Result<Schema, String> {
-    let original_metadata: HashMap<String, BTreeMap<String, String>> = original_schema
-        .fields()
-        .iter()
-        .map(|field| (field.name().clone(), field.metadata().clone().unwrap()))
-        .collect();
+    let mut original_metadata: HashMap<String, BTreeMap<String, String>> = HashMap::new();
+    for field in original_schema.fields().iter() {
+        let key = field.name().clone();
+        let value = field
+            .metadata()
+            .clone()
+            .ok_or_else(|| String::from("missing metadata"))?;
+        original_metadata.insert(key, value);
+    }
 
     let mut fields_with_metadata = vec![];
     for field in new_schema.fields() {
@@ -105,11 +109,11 @@ impl TransformingResolver {
             }
         };
 
-        let fields: Vec<proboscis_core::data::field::Field> = schema
-            .fields()
-            .iter()
-            .map(|f| proboscis_core::data::field::Field::try_from(f).unwrap())
-            .collect();
+        let mut fields = vec![];
+        for f in schema.fields().iter() {
+            let field = proboscis_core::data::field::Field::try_from(f)?;
+            fields.push(field);
+        }
 
         let origins = match trace_projection_origin(query_ast.first().unwrap(), &fields) {
             Ok(ast) => ast,

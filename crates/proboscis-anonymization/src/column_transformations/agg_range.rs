@@ -13,19 +13,25 @@ where
     T: ArrowPrimitiveType,
     <T as ArrowPrimitiveType>::Native: Ord + Display,
 {
+    if array.is_empty() {
+        return None;
+    }
+
     let min = array.iter().min().unwrap();
     let max = array.iter().max().unwrap();
-    let agg = if max == min {
-        max.map(|v| format!("{}", v))
-    } else {
-        Some(format!(
-            "{} - {}",
-            min.map_or("null".to_string(), |f| format!("{}", f)),
-            max.map_or("null".to_string(), |f| format!("{}", f))
-        ))
-    };
 
-    agg
+    match (min, max) {
+        (Some(min), Some(max)) => {
+            let agg = if max == min {
+                format!("{}", max)
+            } else {
+                format!("{} - {}", min, max)
+            };
+
+            Some(agg)
+        }
+        _ => None,
+    }
 }
 
 fn agg_numeric_array<T>(input: ArrayRef) -> ColumnTransformationResult<ArrayRef>
@@ -83,7 +89,8 @@ mod tests {
     #[test]
     fn test_number_agg_range_equal() {
         let aggreagtion = AggRange {};
-        let array = Arc::new(Int32Array::from(vec![10 as i32, 10 as i32, 10 as i32]));
+        let items = vec![10, 10, 10];
+        let array = Arc::new(Int32Array::from(items));
         let result = aggreagtion.transform_data(array).unwrap();
 
         assert_eq!(
@@ -100,11 +107,66 @@ mod tests {
     #[test]
     fn test_number_agg_range() {
         let aggreagtion = AggRange {};
-        let array = Arc::new(Int32Array::from(vec![10 as i32, 20 as i32, 30 as i32]));
+        let items = vec![10, 20, 30];
+        let array = Arc::new(Int32Array::from(items));
         let result = aggreagtion.transform_data(array).unwrap();
 
         assert_eq!(
             vec![Some("10 - 30"), Some("10 - 30"), Some("10 - 30")],
+            result
+                .as_any()
+                .downcast_ref::<StringArray>()
+                .unwrap()
+                .iter()
+                .collect::<Vec<Option<&str>>>()
+        );
+    }
+
+    #[test]
+    fn test_number_agg_range_empty() {
+        let aggreagtion = AggRange {};
+        let items: Vec<i32> = vec![];
+        let array = Arc::new(Int32Array::from(items));
+        let result = aggreagtion.transform_data(array).unwrap();
+
+        assert_eq!(
+            Vec::<Option<&str>>::new(),
+            result
+                .as_any()
+                .downcast_ref::<StringArray>()
+                .unwrap()
+                .iter()
+                .collect::<Vec<Option<&str>>>()
+        );
+    }
+
+    #[test]
+    fn test_number_agg_range_none() {
+        let aggreagtion = AggRange {};
+        let items = vec![None, None, None];
+        let array = Arc::new(Int32Array::from(items));
+        let result = aggreagtion.transform_data(array).unwrap();
+
+        assert_eq!(
+            vec![None, None, None],
+            result
+                .as_any()
+                .downcast_ref::<StringArray>()
+                .unwrap()
+                .iter()
+                .collect::<Vec<Option<&str>>>()
+        );
+    }
+
+    #[test]
+    fn test_number_agg_range_mixed() {
+        let aggreagtion = AggRange {};
+        let items = vec![None, None, None, Some(10)];
+        let array = Arc::new(Int32Array::from(items));
+        let result = aggreagtion.transform_data(array).unwrap();
+
+        assert_eq!(
+            vec![None, None, None, None],
             result
                 .as_any()
                 .downcast_ref::<StringArray>()

@@ -121,6 +121,6 @@ pub struct ApplicationConfig {
 
 pub fn load_config(path: &Path) -> Result<ApplicationConfig, ConfigError> {
     let mut s = config::Config::default();
-    s.merge(config::File::from(path)).unwrap();
+    s.merge(config::File::from(path))?;
     s.try_into()
 }

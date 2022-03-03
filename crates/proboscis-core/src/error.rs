@@ -25,4 +25,7 @@ pub enum ProboscisError {
 
     #[error("frontend requested tls, but tls is not configured")]
     FrontendRequestedTLS,
+
+    #[error("missing password for user {0} in config")]
+    MissingPasswordInConfig(String),
 }

@@ -243,7 +243,7 @@ impl Resolver for PostgresResolver {
 
                     match read_message {
                         BackendMessage::RowDescription(RowDescription { fields }) => {
-                            let schema = protocol_fields_to_schema(&fields);
+                            let schema = protocol_fields_to_schema(&fields)?;
 
                             responses.push(SyncResponse::Schema {
                                 schema: schema.clone(),

@@ -17,6 +17,9 @@ pub enum AnonymizationError {
     #[error(transparent)]
     Polars(#[from] PolarsError),
 
+    #[error(transparent)]
+    Arrow(#[from] arrow::error::ArrowError),
+
     #[error("unsupported data type: {0}")]
     UnsupportedType(polars::prelude::DataType),
 }
@@ -242,7 +245,7 @@ fn apply_column_transformation_to_series(
     transformation: &dyn ColumnTransformation,
 ) -> Result<Series, AnonymizationError> {
     let array_refs: Vec<&dyn Array> = series.chunks().iter().map(|a| a.deref()).collect();
-    let array = arrow::compute::kernels::concat::concat(&array_refs).unwrap();
+    let array = arrow::compute::kernels::concat::concat(&array_refs)?;
     let transformed_data = transformation.transform_data(array)?;
     let updated = Series::try_from((series.name(), vec![transformed_data]))?;
     Ok(updated)
@@ -438,7 +441,7 @@ mod tests {
         )
         .unwrap();
 
-        let df = record_batch_to_data_frame(&batch);
+        let df = record_batch_to_data_frame(&batch).unwrap();
         println!("{:?}", df.head(Some(10)));
 
         let identifiers = vec!["first_name", "last_name"];
@@ -468,14 +471,16 @@ mod tests {
         )
         .unwrap();
 
-        assert_eq!(AnyValue::Int32(1), anonymized.column("id").unwrap().get(0));
-        assert_eq!(AnyValue::Int32(2), anonymized.column("id").unwrap().get(1));
-        assert_eq!(AnyValue::Int32(3), anonymized.column("id").unwrap().get(2));
-        assert_eq!(AnyValue::Int32(4), anonymized.column("id").unwrap().get(3));
-        assert_eq!(AnyValue::Int32(5), anonymized.column("id").unwrap().get(4));
-        assert_eq!(AnyValue::Int32(6), anonymized.column("id").unwrap().get(5));
-        assert_eq!(AnyValue::Int32(7), anonymized.column("id").unwrap().get(6));
-        assert_eq!(AnyValue::Int32(8), anonymized.column("id").unwrap().get(7));
-        assert_eq!(AnyValue::Int32(9), anonymized.column("id").unwrap().get(8));
+        let id_column = anonymized.column("id").unwrap();
+
+        assert_eq!(AnyValue::Int32(1), id_column.get(0));
+        assert_eq!(AnyValue::Int32(2), id_column.get(1));
+        assert_eq!(AnyValue::Int32(3), id_column.get(2));
+        assert_eq!(AnyValue::Int32(4), id_column.get(3));
+        assert_eq!(AnyValue::Int32(5), id_column.get(4));
+        assert_eq!(AnyValue::Int32(6), id_column.get(5));
+        assert_eq!(AnyValue::Int32(7), id_column.get(6));
+        assert_eq!(AnyValue::Int32(8), id_column.get(7));
+        assert_eq!(AnyValue::Int32(9), id_column.get(8));
     }
 }

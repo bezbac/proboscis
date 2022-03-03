@@ -28,6 +28,7 @@ impl SyncResponse {
             }
             SyncResponse::Records { data, query: _ } => {
                 let messages = serialize_record_batch_to_data_rows(&data)
+                    .unwrap()
                     .iter()
                     .map(|data_row| BackendMessage::DataRow(data_row.clone()))
                     .collect();

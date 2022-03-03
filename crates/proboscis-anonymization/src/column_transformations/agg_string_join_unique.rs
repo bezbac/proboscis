@@ -21,7 +21,10 @@ fn agg_string_array<T: arrow::array::StringOffsetSizeTrait>(
 
     let new_string = unique_strings.join(", ");
 
-    Ok(Arc::new(GenericStringArray::<T>::from(vec![new_string; input.len()])))
+    Ok(Arc::new(GenericStringArray::<T>::from(vec![
+        new_string;
+        input.len()
+    ])))
 }
 
 pub struct AggStringJoinUnique;
@@ -50,8 +53,8 @@ impl ColumnTransformation for AggStringJoinUnique {
 
 #[cfg(test)]
 mod tests {
-    use arrow::array::StringArray;
     use super::*;
+    use arrow::array::StringArray;
 
     #[test]
     fn test_string_aggregation() {

@@ -130,7 +130,8 @@ impl Transformer for AnonymizationTransformer {
             return Ok(data.clone());
         }
 
-        let dataframe = record_batch_to_data_frame(data);
+        let dataframe = record_batch_to_data_frame(data)
+            .map_err(|err| TransformerError::Other(anyhow::anyhow!(err)))?;
 
         let identifier_columns_strs: Vec<&str> =
             identifier_columns.iter().map(|f| f.as_str()).collect();
@@ -144,7 +145,8 @@ impl Transformer for AnonymizationTransformer {
 
         let updated_schema = self.transform_schema(&data.schema(), origins)?;
 
-        let result = data_frame_to_record_batch(&anonymized, updated_schema);
+        let result = data_frame_to_record_batch(&anonymized, updated_schema)?;
+
         Ok(result)
     }
 }
