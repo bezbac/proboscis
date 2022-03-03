@@ -39,7 +39,7 @@ async fn main() -> anyhow::Result<()> {
             tls_config: None,
         },
         Box::new(
-            PostgresResolver::new(
+            PostgresResolver::create(
                 TargetConfig::from_uri(database_connection_url).unwrap(),
                 10,
             )
@@ -50,7 +50,9 @@ async fn main() -> anyhow::Result<()> {
 
     let listener = TcpListener::bind("0.0.0.0:0").await.unwrap();
 
-    proxy.listen(listener).await
+    proxy.listen(listener).await?;
+
+    Ok(())
 }
 ```
 

@@ -3,7 +3,7 @@ use maplit::hashmap;
 use proboscis_core::{Config, Proxy};
 use proboscis_resolver_postgres::{PostgresResolver, TargetConfig};
 use proboscis_resolver_transformer::{
-    projection::ProjectedOrigin, Transformer, TransformingResolver,
+    projection::ProjectedOrigin, Transformer, TransformerError, TransformingResolver,
 };
 use std::sync::Arc;
 use testcontainers::clients;
@@ -20,7 +20,7 @@ impl Transformer for ExampleTransformer {
         &self,
         schema: &Schema,
         _origins: &[ProjectedOrigin],
-    ) -> proboscis_resolver_transformer::TransformationResult<Schema> {
+    ) -> Result<Schema, TransformerError> {
         Ok(schema.clone())
     }
 
@@ -28,7 +28,7 @@ impl Transformer for ExampleTransformer {
         &self,
         data: &RecordBatch,
         _origins: &[ProjectedOrigin],
-    ) -> proboscis_resolver_transformer::TransformationResult<RecordBatch> {
+    ) -> Result<RecordBatch, TransformerError> {
         let new_data = data
             .schema()
             .fields()
@@ -63,7 +63,7 @@ async fn run_proxy(database_connection_url: String) -> String {
         },
         Box::new(
             TransformingResolver::new(Box::new(
-                PostgresResolver::new(
+                PostgresResolver::create(
                     TargetConfig::from_uri(&database_connection_url).unwrap(),
                     10,
                 )

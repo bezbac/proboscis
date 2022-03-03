@@ -1690,6 +1690,7 @@ dependencies = [
  "polars",
  "proboscis-resolver-transformer",
  "rand 0.8.4",
+ "thiserror",
  "tracing",
 ]
 
@@ -1706,6 +1707,7 @@ dependencies = [
  "postgres",
  "proboscis-postgres-protocol",
  "rand 0.8.4",
+ "thiserror",
  "tokio",
  "tokio-native-tls",
  "tokio-util",
@@ -1736,6 +1738,7 @@ dependencies = [
  "omnom",
  "proboscis-core",
  "proboscis-postgres-protocol",
+ "thiserror",
  "tokio",
  "tracing",
  "url",
@@ -1748,8 +1751,10 @@ dependencies = [
  "anyhow",
  "arrow",
  "async-trait",
+ "lazy_static",
  "proboscis-core",
  "sqlparser",
+ "thiserror",
  "tracing",
 ]
 

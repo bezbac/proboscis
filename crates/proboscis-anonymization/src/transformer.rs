@@ -3,11 +3,10 @@ use crate::{
     algorithm::{anonymize, NumericAggregation, StringAggregation},
     conversion::{data_frame_to_record_batch, record_batch_to_data_frame},
 };
-use anyhow::Result;
 use arrow::record_batch::RecordBatch;
 use proboscis_resolver_transformer::{
     projection::{ProjectedOrigin, TableColumn},
-    Transformer,
+    Transformer, TransformerError,
 };
 use std::collections::HashMap;
 
@@ -28,7 +27,7 @@ impl AnonymizationTransformer {
         &self,
         origins: &[ProjectedOrigin],
         schema: &arrow::datatypes::Schema,
-    ) -> Result<RelevantColumns> {
+    ) -> Result<RelevantColumns, TransformerError> {
         let quasi_identifier_columns: HashMap<String, (NumericAggregation, StringAggregation)> =
             origins
                 .iter()
@@ -77,7 +76,7 @@ impl Transformer for AnonymizationTransformer {
         &self,
         schema: &arrow::datatypes::Schema,
         origins: &[ProjectedOrigin],
-    ) -> Result<arrow::datatypes::Schema> {
+    ) -> Result<arrow::datatypes::Schema, TransformerError> {
         let (identifier_columns, quasi_identifiers) = self.get_relevant_columns(origins, schema)?;
 
         if quasi_identifiers.is_empty() && identifier_columns.is_empty() {
@@ -123,7 +122,7 @@ impl Transformer for AnonymizationTransformer {
         &self,
         data: &RecordBatch,
         origins: &[ProjectedOrigin],
-    ) -> Result<RecordBatch> {
+    ) -> Result<RecordBatch, TransformerError> {
         let (identifier_columns, quasi_identifiers) =
             self.get_relevant_columns(origins, &data.schema())?;
 

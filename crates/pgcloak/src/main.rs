@@ -90,7 +90,7 @@ async fn main() -> Result<()> {
         },
         Box::new(
             TransformingResolver::new(Box::new(
-                PostgresResolver::new(
+                PostgresResolver::create(
                     TargetConfig::from_uri(&config.connection_uri).unwrap(),
                     config.max_pool_size,
                 )
@@ -105,9 +105,9 @@ async fn main() -> Result<()> {
         ),
     );
 
-    let listener = TcpListener::bind(config.listener.to_address())
-        .await
-        .unwrap();
+    let listener = TcpListener::bind(config.listener.to_address()).await?;
 
-    proxy.listen(listener).await
+    proxy.listen(listener).await?;
+
+    Ok(())
 }

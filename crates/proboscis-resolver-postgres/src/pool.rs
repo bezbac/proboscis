@@ -1,8 +1,8 @@
 use crate::target_config::TargetConfig;
-use anyhow::Result;
 use async_trait::async_trait;
 use deadpool::managed::RecycleResult;
 use proboscis_core::{
+    resolver::ResolveError,
     utils::connection::{Connection, MaybeTlsStream},
     utils::password::encode_md5_password_hash,
 };
@@ -28,18 +28,20 @@ impl Manager {
 #[async_trait]
 impl deadpool::managed::Manager for Manager {
     type Type = Connection;
-    type Error = anyhow::Error;
+    type Error = ResolveError;
 
-    async fn create(&self) -> Result<Connection, anyhow::Error> {
+    async fn create(&self) -> Result<Connection, ResolveError> {
         establish_connection(&self.target_config).await
     }
 
-    async fn recycle(&self, _conn: &mut Connection) -> RecycleResult<anyhow::Error> {
+    async fn recycle(&self, _conn: &mut Connection) -> RecycleResult<ResolveError> {
         Ok(())
     }
 }
 
-pub async fn establish_connection(target_config: &TargetConfig) -> Result<Connection> {
+pub async fn establish_connection(
+    target_config: &TargetConfig,
+) -> Result<Connection, ResolveError> {
     let stream =
         tokio::net::TcpStream::connect(&format!("{}:{}", target_config.host, target_config.port))
             .await?;
@@ -81,7 +83,11 @@ pub async fn establish_connection(target_config: &TargetConfig) -> Result<Connec
 
             match response {
                 BackendMessage::AuthenticationOk => {}
-                _ => return Err(anyhow::anyhow!("Expected AuthenticationOk")),
+                _ => {
+                    return Err(ResolveError::Other(anyhow::anyhow!(
+                        "Expected AuthenticationOk"
+                    )))
+                }
             }
         }
         BackendMessage::AuthenticationOk => {}

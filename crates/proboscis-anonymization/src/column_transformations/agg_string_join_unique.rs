@@ -1,5 +1,4 @@
 use super::{ColumnTransformation, ColumnTransformationOutput};
-use anyhow::Result;
 use arrow::{
     array::{ArrayRef, LargeStringArray, StringArray},
     datatypes::DataType,
@@ -10,13 +9,13 @@ use std::sync::Arc;
 pub struct AggStringJoinUnique {}
 
 impl ColumnTransformation for AggStringJoinUnique {
-    fn transform_data(&self, data: ArrayRef) -> Result<ArrayRef> {
+    fn transform_data(&self, data: ArrayRef) -> super::ColumnTransformationResult<ArrayRef> {
         match data.data_type() {
             DataType::Utf8 => {
                 let unique_strings: Vec<&str> = data
                     .as_any()
                     .downcast_ref::<StringArray>()
-                    .unwrap()
+                    .ok_or(super::ColumnTransformationError::DowncastFailed)?
                     .iter()
                     .unique()
                     .map(|v| v.map_or("None", |v| v))
@@ -31,7 +30,7 @@ impl ColumnTransformation for AggStringJoinUnique {
                 let unique_strings: Vec<&str> = data
                     .as_any()
                     .downcast_ref::<LargeStringArray>()
-                    .unwrap()
+                    .ok_or(super::ColumnTransformationError::DowncastFailed)?
                     .iter()
                     .unique()
                     .map(|v| v.map_or("None", |v| v))
@@ -49,7 +48,10 @@ impl ColumnTransformation for AggStringJoinUnique {
         }
     }
 
-    fn output_format(&self, _input: &DataType) -> Result<ColumnTransformationOutput> {
+    fn output_format(
+        &self,
+        _input: &DataType,
+    ) -> super::ColumnTransformationResult<ColumnTransformationOutput> {
         Ok(ColumnTransformationOutput {
             data_type: DataType::Utf8,
             nullable: false,

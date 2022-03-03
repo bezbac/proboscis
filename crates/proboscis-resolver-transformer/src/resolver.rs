@@ -1,11 +1,14 @@
-use crate::{projection::trace_projection_origin, traits::Transformer};
-use anyhow::Result;
+use crate::{interface::Transformer, projection::trace_projection_origin};
 use arrow::{datatypes::Schema, record_batch::RecordBatch};
 use async_trait::async_trait;
 use proboscis_core::resolver::{
-    Bind, ClientId, Close, Describe, Execute, Parse, Resolver, SyncResponse,
+    Bind, ClientId, Close, Describe, Execute, Parse, ResolveError, Resolver, SyncResponse,
 };
-use sqlparser::{ast::Statement, dialect::PostgreSqlDialect, parser::Parser};
+use sqlparser::{
+    ast::Statement,
+    dialect::PostgreSqlDialect,
+    parser::{Parser, ParserError},
+};
 use std::{
     collections::{BTreeMap, HashMap},
     convert::TryFrom,
@@ -37,13 +40,13 @@ impl TransformingResolver {
 }
 
 impl TransformingResolver {
-    fn parse_sql(&self, query: &str) -> Result<Vec<Statement>> {
+    fn parse_sql(&self, query: &str) -> Result<Vec<Statement>, ParserError> {
         let dialect = PostgreSqlDialect {};
-        Ok(Parser::parse_sql(&dialect, query)?)
+        Parser::parse_sql(&dialect, query)
     }
 }
 
-fn re_apply_metadata(original_schema: &Schema, new_schema: &Schema) -> Result<Schema> {
+fn re_apply_metadata(original_schema: &Schema, new_schema: &Schema) -> Result<Schema, String> {
     let original_metadata: HashMap<String, BTreeMap<String, String>> = original_schema
         .fields()
         .iter()
@@ -61,7 +64,7 @@ fn re_apply_metadata(original_schema: &Schema, new_schema: &Schema) -> Result<Sc
         let field_metadata = original_metadata
             .get(field.name())
             .ok_or_else(|| {
-                anyhow::anyhow!(
+                format!(
                     "No field with name {} contained in original schema",
                     field.name()
                 )
@@ -80,7 +83,11 @@ fn re_apply_metadata(original_schema: &Schema, new_schema: &Schema) -> Result<Sc
 }
 
 impl TransformingResolver {
-    fn transform_records(&self, query: &str, data: &RecordBatch) -> Result<RecordBatch> {
+    fn transform_records(
+        &self,
+        query: &str,
+        data: &RecordBatch,
+    ) -> Result<RecordBatch, ResolveError> {
         let query_ast: Vec<Statement> = match self.parse_sql(query) {
             Ok(ast) => ast,
             Err(err) => {
@@ -88,7 +95,7 @@ impl TransformingResolver {
                     tracing::warn!("Could not parse query, skipping transformation");
                     Ok(data.clone())
                 } else {
-                    Err(err)
+                    return Err(ResolveError::Other(anyhow::anyhow!(err)));
                 }
             }
         };
@@ -109,7 +116,7 @@ impl TransformingResolver {
                     );
                     Ok(data.clone())
                 } else {
-                    Err(err)
+                    return Err(ResolveError::Other(anyhow::anyhow!(err)));
                 }
             }
         };
@@ -122,7 +129,8 @@ impl TransformingResolver {
         }
 
         let transformed_schema_with_metadata =
-            re_apply_metadata(&original_schema, &transformed.schema())?;
+            re_apply_metadata(&original_schema, &transformed.schema())
+                .map_err(|err| ResolveError::Other(anyhow::anyhow!(err)))?;
 
         let transformed_with_metadata = RecordBatch::try_new(
             Arc::new(transformed_schema_with_metadata),
@@ -132,7 +140,7 @@ impl TransformingResolver {
         Ok(transformed_with_metadata)
     }
 
-    fn transform_schema(&self, query: &str, schema: &Schema) -> Result<Schema> {
+    fn transform_schema(&self, query: &str, schema: &Schema) -> Result<Schema, ResolveError> {
         let query_ast: Vec<Statement> = match self.parse_sql(query) {
             Ok(ast) => ast,
             Err(err) => {
@@ -140,7 +148,7 @@ impl TransformingResolver {
                     tracing::warn!("Could not parse query, skipping transformation");
                     Ok(schema.clone())
                 } else {
-                    Err(err)
+                    Err(ResolveError::Other(anyhow::anyhow!(err)))
                 }
             }
         };
@@ -160,7 +168,7 @@ impl TransformingResolver {
                     );
                     Ok(schema.clone())
                 } else {
-                    Err(err)
+                    Err(ResolveError::Other(anyhow::anyhow!(err)))
                 }
             }
         };
@@ -170,7 +178,8 @@ impl TransformingResolver {
             transformed = transformer.transform_schema(&transformed, &origins)?;
         }
 
-        let transformed_with_metadata = re_apply_metadata(schema, &transformed)?;
+        let transformed_with_metadata = re_apply_metadata(schema, &transformed)
+            .map_err(|err| ResolveError::Other(anyhow::anyhow!(err)))?;
 
         Ok(transformed_with_metadata)
     }
@@ -178,7 +187,7 @@ impl TransformingResolver {
 
 #[async_trait]
 impl Resolver for TransformingResolver {
-    async fn initialize(&mut self, client_id: ClientId) -> anyhow::Result<()> {
+    async fn initialize(&mut self, client_id: ClientId) -> Result<(), ResolveError> {
         self.resolver.initialize(client_id).await
     }
 
@@ -186,29 +195,33 @@ impl Resolver for TransformingResolver {
         &mut self,
         client_id: ClientId,
         query: String,
-    ) -> anyhow::Result<arrow::record_batch::RecordBatch> {
+    ) -> Result<arrow::record_batch::RecordBatch, ResolveError> {
         let records = self.resolver.query(client_id, query.clone()).await?;
         let transformed = self.transform_records(&query, &records)?;
         Ok(transformed)
     }
 
-    async fn parse(&mut self, client_id: ClientId, parse: Parse) -> anyhow::Result<()> {
+    async fn parse(&mut self, client_id: ClientId, parse: Parse) -> Result<(), ResolveError> {
         self.resolver.parse(client_id, parse).await
     }
 
-    async fn describe(&mut self, client_id: ClientId, describe: Describe) -> anyhow::Result<()> {
+    async fn describe(
+        &mut self,
+        client_id: ClientId,
+        describe: Describe,
+    ) -> Result<(), ResolveError> {
         self.resolver.describe(client_id, describe).await
     }
 
-    async fn bind(&mut self, client_id: ClientId, bind: Bind) -> anyhow::Result<()> {
+    async fn bind(&mut self, client_id: ClientId, bind: Bind) -> Result<(), ResolveError> {
         self.resolver.bind(client_id, bind).await
     }
 
-    async fn execute(&mut self, client_id: ClientId, execute: Execute) -> anyhow::Result<()> {
+    async fn execute(&mut self, client_id: ClientId, execute: Execute) -> Result<(), ResolveError> {
         self.resolver.execute(client_id, execute).await
     }
 
-    async fn sync(&mut self, client_id: ClientId) -> anyhow::Result<Vec<SyncResponse>> {
+    async fn sync(&mut self, client_id: ClientId) -> Result<Vec<SyncResponse>, ResolveError> {
         let responses = self.resolver.sync(client_id).await?;
 
         let mut transformed_responses = vec![];
@@ -239,11 +252,11 @@ impl Resolver for TransformingResolver {
         Ok(transformed_responses)
     }
 
-    async fn close(&mut self, client_id: ClientId, close: Close) -> anyhow::Result<()> {
+    async fn close(&mut self, client_id: ClientId, close: Close) -> Result<(), ResolveError> {
         self.resolver.close(client_id, close).await
     }
 
-    async fn terminate(&mut self, client_id: ClientId) -> anyhow::Result<()> {
+    async fn terminate(&mut self, client_id: ClientId) -> Result<(), ResolveError> {
         self.resolver.terminate(client_id).await
     }
 }

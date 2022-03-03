@@ -1,4 +1,3 @@
-use anyhow::Result;
 use arrow::array::{
     as_primitive_array, make_array, ArrayData, BooleanArray, FixedSizeBinaryArray, Float32Array,
     Float64Array, ListArray, UInt16Array, UInt32Array, UInt64Array,
@@ -7,6 +6,7 @@ use arrow::array::{Array, GenericListArray, UInt8Array};
 use arrow::array::{ArrayRef, GenericStringArray, Int16Array, Int32Array, Int64Array, Int8Array};
 use arrow::buffer::{Buffer, MutableBuffer};
 use arrow::datatypes::{DataType, Field, Schema, ToByteSlice, UInt8Type};
+use arrow::error::ArrowError;
 use arrow::record_batch::RecordBatch;
 use byteorder::{BigEndian, ByteOrder, ReadBytesExt, WriteBytesExt};
 use proboscis_postgres_protocol::message::{DataRow, RowDescription};
@@ -191,9 +191,10 @@ fn column_data_to_array(data: &[Option<Vec<u8>>], data_type: &DataType) -> Array
 fn protocol_rows_to_arrow_columns(
     schema: &Schema,
     rows: Vec<Vec<Option<Vec<u8>>>>,
-) -> Result<Vec<ArrayRef>> {
+) -> Vec<ArrayRef> {
     let mut columns_data: Vec<Vec<Option<Vec<u8>>>> =
         schema.fields().iter().map(|_| vec![]).collect();
+
     let columns_data_types: Vec<DataType> = schema
         .fields()
         .iter()
@@ -206,13 +207,11 @@ fn protocol_rows_to_arrow_columns(
         }
     }
 
-    let result = columns_data
+    columns_data
         .iter()
         .zip(columns_data_types.iter())
         .map(|(column_data, data_type)| column_data_to_array(column_data, data_type))
-        .collect();
-
-    Ok(result)
+        .collect()
 }
 
 pub fn protocol_fields_to_schema(fields: &[proboscis_postgres_protocol::message::Field]) -> Schema {
@@ -230,7 +229,7 @@ pub fn protocol_fields_to_schema(fields: &[proboscis_postgres_protocol::message:
 pub fn simple_query_response_to_record_batch(
     fields: &[proboscis_postgres_protocol::message::Field],
     data: &[DataRow],
-) -> Result<RecordBatch> {
+) -> Result<RecordBatch, ArrowError> {
     let schema = protocol_fields_to_schema(fields);
 
     let protocol_row_data = data
@@ -238,9 +237,9 @@ pub fn simple_query_response_to_record_batch(
         .map(|DataRow { field_data }| field_data.clone())
         .collect();
 
-    let columns = protocol_rows_to_arrow_columns(&schema, protocol_row_data)?;
+    let columns = protocol_rows_to_arrow_columns(&schema, protocol_row_data);
 
-    RecordBatch::try_new(Arc::new(schema), columns).map_err(|err| anyhow::anyhow!(err))
+    RecordBatch::try_new(Arc::new(schema), columns)
 }
 
 pub fn serialize_record_batch_to_data_rows(batch: &RecordBatch) -> Vec<DataRow> {
@@ -392,7 +391,7 @@ mod tests {
         )));
 
         let schema = Schema::new(vec![Field::new("some_list", list_data_type, true)]);
-        let columns = protocol_rows_to_arrow_columns(&schema, row_data.clone()).unwrap();
+        let columns = protocol_rows_to_arrow_columns(&schema, row_data.clone());
         let batch = RecordBatch::try_new(Arc::new(schema), columns).unwrap();
 
         let deserialized = serialize_record_batch_to_data_rows(&batch);

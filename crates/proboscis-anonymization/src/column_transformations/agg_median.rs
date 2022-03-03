@@ -1,5 +1,4 @@
 use super::{ColumnTransformation, ColumnTransformationOutput};
-use anyhow::Result;
 use arrow::{
     array::{
         ArrayRef, Int16Array, Int32Array, Int64Array, Int8Array, PrimitiveArray, UInt16Array,
@@ -21,10 +20,13 @@ where
 pub struct AggMedian {}
 
 impl ColumnTransformation for AggMedian {
-    fn transform_data(&self, data: ArrayRef) -> Result<ArrayRef> {
+    fn transform_data(&self, data: ArrayRef) -> super::ColumnTransformationResult<ArrayRef> {
         match data.data_type() {
             DataType::UInt8 => {
-                let array = data.as_any().downcast_ref::<UInt8Array>().unwrap();
+                let array = data
+                    .as_any()
+                    .downcast_ref::<UInt8Array>()
+                    .ok_or(super::ColumnTransformationError::DowncastFailed)?;
 
                 Ok(Arc::new(
                     vec![median(array); array.len()]
@@ -33,7 +35,10 @@ impl ColumnTransformation for AggMedian {
                 ))
             }
             DataType::UInt16 => {
-                let array = data.as_any().downcast_ref::<UInt16Array>().unwrap();
+                let array = data
+                    .as_any()
+                    .downcast_ref::<UInt16Array>()
+                    .ok_or(super::ColumnTransformationError::DowncastFailed)?;
                 Ok(Arc::new(
                     vec![median(array); array.len()]
                         .into_iter()
@@ -41,7 +46,10 @@ impl ColumnTransformation for AggMedian {
                 ))
             }
             DataType::UInt32 => {
-                let array = data.as_any().downcast_ref::<UInt32Array>().unwrap();
+                let array = data
+                    .as_any()
+                    .downcast_ref::<UInt32Array>()
+                    .ok_or(super::ColumnTransformationError::DowncastFailed)?;
                 Ok(Arc::new(
                     vec![median(array); array.len()]
                         .into_iter()
@@ -49,7 +57,10 @@ impl ColumnTransformation for AggMedian {
                 ))
             }
             DataType::UInt64 => {
-                let array = data.as_any().downcast_ref::<UInt64Array>().unwrap();
+                let array = data
+                    .as_any()
+                    .downcast_ref::<UInt64Array>()
+                    .ok_or(super::ColumnTransformationError::DowncastFailed)?;
                 Ok(Arc::new(
                     vec![median(array); array.len()]
                         .into_iter()
@@ -57,7 +68,10 @@ impl ColumnTransformation for AggMedian {
                 ))
             }
             DataType::Int8 => {
-                let array = data.as_any().downcast_ref::<Int8Array>().unwrap();
+                let array = data
+                    .as_any()
+                    .downcast_ref::<Int8Array>()
+                    .ok_or(super::ColumnTransformationError::DowncastFailed)?;
                 Ok(Arc::new(
                     vec![median(array); array.len()]
                         .into_iter()
@@ -65,7 +79,10 @@ impl ColumnTransformation for AggMedian {
                 ))
             }
             DataType::Int16 => {
-                let array = data.as_any().downcast_ref::<Int16Array>().unwrap();
+                let array = data
+                    .as_any()
+                    .downcast_ref::<Int16Array>()
+                    .ok_or(super::ColumnTransformationError::DowncastFailed)?;
                 Ok(Arc::new(
                     vec![median(array); array.len()]
                         .into_iter()
@@ -73,7 +90,10 @@ impl ColumnTransformation for AggMedian {
                 ))
             }
             DataType::Int32 => {
-                let array = data.as_any().downcast_ref::<Int32Array>().unwrap();
+                let array = data
+                    .as_any()
+                    .downcast_ref::<Int32Array>()
+                    .ok_or(super::ColumnTransformationError::DowncastFailed)?;
                 Ok(Arc::new(
                     vec![median(array); array.len()]
                         .into_iter()
@@ -81,7 +101,10 @@ impl ColumnTransformation for AggMedian {
                 ))
             }
             DataType::Int64 => {
-                let array = data.as_any().downcast_ref::<Int64Array>().unwrap();
+                let array = data
+                    .as_any()
+                    .downcast_ref::<Int64Array>()
+                    .ok_or(super::ColumnTransformationError::DowncastFailed)?;
                 Ok(Arc::new(
                     vec![median(array); array.len()]
                         .into_iter()
@@ -92,7 +115,10 @@ impl ColumnTransformation for AggMedian {
         }
     }
 
-    fn output_format(&self, input: &DataType) -> Result<ColumnTransformationOutput> {
+    fn output_format(
+        &self,
+        input: &DataType,
+    ) -> super::ColumnTransformationResult<ColumnTransformationOutput> {
         match input {
             DataType::UInt8
             | DataType::UInt16
@@ -105,9 +131,8 @@ impl ColumnTransformation for AggMedian {
                 data_type: input.clone(),
                 nullable: false,
             }),
-            _ => Err(anyhow::anyhow!(
-                "Median aggregation is not implemented for {}",
-                input
+            _ => Err(super::ColumnTransformationError::UnsupportedType(
+                input.clone(),
             )),
         }
     }

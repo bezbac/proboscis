@@ -1,11 +1,10 @@
 use crate::data::arrow::{
     serialize_record_batch_schema_to_row_description, serialize_record_batch_to_data_rows,
 };
-use anyhow::Result;
 use arrow::record_batch::RecordBatch;
 use proboscis_postgres_protocol::{
     message::{BackendMessage, FrontendMessage},
-    Message, StartupMessage,
+    Message, ParseError, StartupMessage,
 };
 use std::collections::HashMap;
 use tokio::io::{AsyncWriteExt, BufWriter};
@@ -30,7 +29,7 @@ impl Connection {
         }
     }
 
-    pub async fn write_data(&mut self, data: RecordBatch) -> Result<()> {
+    pub async fn write_data(&mut self, data: RecordBatch) -> Result<(), std::io::Error> {
         let row_description = serialize_record_batch_schema_to_row_description(&data.schema());
 
         self.write_message(BackendMessage::RowDescription(row_description).into())
@@ -45,39 +44,36 @@ impl Connection {
         Ok(())
     }
 
-    pub async fn write_message(&mut self, message: Message) -> Result<()> {
+    pub async fn write_message(&mut self, message: Message) -> Result<(), std::io::Error> {
         debug!(message = ?message, "writing message");
         message.write(&mut self.stream).await?;
-        self.stream
-            .flush()
-            .await
-            .map_err(|err| anyhow::anyhow!(err))
+        self.stream.flush().await
     }
 
-    pub async fn write_startup_message(&mut self, message: StartupMessage) -> Result<()> {
+    pub async fn write_startup_message(
+        &mut self,
+        message: StartupMessage,
+    ) -> Result<(), std::io::Error> {
         debug!(message = ?message, "writing startup message");
         message.write(&mut self.stream).await?;
-        self.stream
-            .flush()
-            .await
-            .map_err(|err| anyhow::anyhow!(err))
+        self.stream.flush().await
     }
 
-    pub async fn read_frontend_message(&mut self) -> Result<FrontendMessage> {
+    pub async fn read_frontend_message(&mut self) -> Result<FrontendMessage, ParseError> {
         let message = FrontendMessage::read(&mut self.stream).await;
         debug!(message = ?message, "read frontend message");
-        message.map_err(|err| anyhow::anyhow!(err))
+        message
     }
 
-    pub async fn read_backend_message(&mut self) -> Result<BackendMessage> {
+    pub async fn read_backend_message(&mut self) -> Result<BackendMessage, ParseError> {
         let message = BackendMessage::read(&mut self.stream).await;
         debug!(message = ?message, "read backend message");
-        message.map_err(|err| anyhow::anyhow!(err))
+        message
     }
 
-    pub async fn read_startup_message(&mut self) -> Result<StartupMessage> {
+    pub async fn read_startup_message(&mut self) -> Result<StartupMessage, ParseError> {
         let message = StartupMessage::read(&mut self.stream).await;
         debug!(message = ?message, "read startup message");
-        message.map_err(|err| anyhow::anyhow!(err))
+        message
     }
 }

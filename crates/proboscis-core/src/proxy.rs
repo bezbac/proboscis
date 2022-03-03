@@ -2,8 +2,8 @@ use crate::{
     resolver::Resolver,
     utils::connection::{Connection, MaybeTlsStream},
     utils::password::encode_md5_password_hash,
+    ProboscisError,
 };
-use anyhow::Result;
 use native_tls::Identity;
 use proboscis_postgres_protocol::{
     message::{
@@ -36,7 +36,7 @@ pub struct Proxy {
 }
 
 impl Proxy {
-    pub async fn listen(&mut self, listener: TcpListener) -> Result<()> {
+    pub async fn listen(&mut self, listener: TcpListener) -> Result<(), ProboscisError> {
         info!("Listening on: {}", &listener.local_addr().unwrap());
 
         let tls_acceptor: Option<tokio_native_tls::TlsAcceptor> = match &self.config.tls_config {
@@ -90,7 +90,7 @@ impl Proxy {
 pub async fn handle_authentication(
     frontend: &mut Connection,
     credentials: &HashMap<String, String>,
-) -> Result<()> {
+) -> Result<(), ProboscisError> {
     let salt = rand::thread_rng().gen::<[u8; 4]>().to_vec();
 
     frontend
@@ -103,7 +103,7 @@ pub async fn handle_authentication(
 
     let received_hash = match response {
         FrontendMessage::MD5HashedPassword(MD5Hash(hash)) => hash,
-        _ => return Err(anyhow::anyhow!("Expected Password Message")),
+        _ => return Err(ProboscisError::ExpectedMessage("MD5HashedPassword")),
     };
 
     let user = frontend
@@ -119,12 +119,13 @@ pub async fn handle_authentication(
     let actual_hash = encode_md5_password_hash(&user, password, &salt[..]);
 
     if received_hash != actual_hash {
-        return Err(anyhow::anyhow!("Incorrect password"));
+        return Err(ProboscisError::IncorrectPassword);
     }
 
     frontend
         .write_message(BackendMessage::AuthenticationOk.into())
         .await?;
+
     frontend
         .write_message(
             BackendMessage::ReadyForQuery(ReadyForQueryTransactionStatus::NotInTransaction).into(),
@@ -137,7 +138,7 @@ pub async fn handle_authentication(
 pub async fn accept_frontend_connection(
     mut frontend_stream: tokio::net::TcpStream,
     tls_acceptor: &Option<tokio_native_tls::TlsAcceptor>,
-) -> Result<Connection> {
+) -> Result<Connection, ProboscisError> {
     let mut startup_message = StartupMessage::read(&mut frontend_stream).await?;
 
     let mut frontend: MaybeTlsStream;
@@ -146,7 +147,7 @@ pub async fn accept_frontend_connection(
             // TLS not supported
             if tls_acceptor.is_none() {
                 frontend_stream.write(&[b'N']).await?;
-                return Err(anyhow::anyhow!("TLS is not enabled on the server"));
+                return Err(ProboscisError::FrontendRequestedTLS);
             }
 
             let tls_acceptor = tls_acceptor.as_ref().unwrap();
@@ -175,7 +176,7 @@ pub async fn handle_connection(
     client_id: Uuid,
     frontend: &mut Connection,
     resolver: &mut Box<dyn Resolver>,
-) -> Result<()> {
+) -> Result<(), ProboscisError> {
     resolver.initialize(client_id).await?;
 
     loop {
@@ -189,7 +190,7 @@ pub async fn handle_connection(
                         .instrument(tracing::trace_span!("resolver"))
                         .await?;
 
-                    Ok::<(), anyhow::Error>(())
+                    Ok::<(), ProboscisError>(())
                 }
                 .instrument(tracing::trace_span!("terminate"))
                 .await?;
@@ -222,7 +223,7 @@ pub async fn handle_connection(
                         )
                         .await?;
 
-                    Ok::<(), anyhow::Error>(())
+                    Ok::<(), ProboscisError>(())
                 }
                 .instrument(tracing::trace_span!("query"))
                 .await?;
@@ -234,7 +235,7 @@ pub async fn handle_connection(
                         .instrument(tracing::trace_span!("resolver"))
                         .await?;
 
-                    Ok::<(), anyhow::Error>(())
+                    Ok::<(), ProboscisError>(())
                 }
                 .instrument(tracing::trace_span!("parse"))
                 .await?;
@@ -246,7 +247,7 @@ pub async fn handle_connection(
                         .instrument(tracing::trace_span!("resolver"))
                         .await?;
 
-                    Ok::<(), anyhow::Error>(())
+                    Ok::<(), ProboscisError>(())
                 }
                 .instrument(tracing::trace_span!("describe"))
                 .await?;
@@ -258,7 +259,7 @@ pub async fn handle_connection(
                         .instrument(tracing::trace_span!("resolver"))
                         .await?;
 
-                    Ok::<(), anyhow::Error>(())
+                    Ok::<(), ProboscisError>(())
                 }
                 .instrument(tracing::trace_span!("bind"))
                 .await?;
@@ -270,7 +271,7 @@ pub async fn handle_connection(
                         .instrument(tracing::trace_span!("resolver"))
                         .await?;
 
-                    Ok::<(), anyhow::Error>(())
+                    Ok::<(), ProboscisError>(())
                 }
                 .instrument(tracing::trace_span!("execute"))
                 .await?;
@@ -288,7 +289,7 @@ pub async fn handle_connection(
                         }
                     }
 
-                    Ok::<(), anyhow::Error>(())
+                    Ok::<(), ProboscisError>(())
                 }
                 .instrument(tracing::trace_span!("sync"))
                 .await?;
@@ -304,7 +305,7 @@ pub async fn handle_connection(
                         .write_message(BackendMessage::CloseComplete.into())
                         .await?;
 
-                    Ok::<(), anyhow::Error>(())
+                    Ok::<(), ProboscisError>(())
                 }
                 .instrument(tracing::trace_span!("close"))
                 .await?;

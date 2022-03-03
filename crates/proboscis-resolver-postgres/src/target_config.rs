@@ -1,4 +1,3 @@
-use anyhow::Result;
 use url::Url;
 
 #[derive(Clone, Debug)]
@@ -11,13 +10,12 @@ pub struct TargetConfig {
 }
 
 impl TargetConfig {
-    pub fn from_uri(input: &str) -> Result<TargetConfig> {
-        let url = Url::parse(input)?;
+    pub fn from_uri(input: &str) -> Result<TargetConfig, String> {
+        let url = Url::parse(input).map_err(|err| err.to_string())?;
 
-        anyhow::ensure!(
-            url.scheme() == "postgres" || url.scheme() == "postgresql",
-            "uri doesnt't start with 'postgres' or 'postgresql'"
-        );
+        if !(url.scheme() == "postgres" || url.scheme() == "postgresql") {
+            return Err("uri doesnt't start with 'postgres' or 'postgresql'".to_string());
+        }
 
         let host = match url.host() {
             Some(host) => host.to_string(),

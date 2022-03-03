@@ -1,5 +1,4 @@
 use super::{ColumnTransformation, ColumnTransformationOutput};
-use anyhow::Result;
 use arrow::{
     array::{ArrayRef, LargeStringArray, StringArray},
     datatypes::DataType,
@@ -29,13 +28,13 @@ pub fn longest_common_prefix(strings: Vec<&str>) -> &str {
 pub struct AggStringCommonPrefix {}
 
 impl ColumnTransformation for AggStringCommonPrefix {
-    fn transform_data(&self, data: ArrayRef) -> Result<ArrayRef> {
+    fn transform_data(&self, data: ArrayRef) -> super::ColumnTransformationResult<ArrayRef> {
         match data.data_type() {
             DataType::Utf8 => {
                 let longest_common_prefix = longest_common_prefix(
                     data.as_any()
                         .downcast_ref::<StringArray>()
-                        .unwrap()
+                        .ok_or(super::ColumnTransformationError::DowncastFailed)?
                         .iter()
                         .map(|s| s.map_or("", |s| s))
                         .collect(),
@@ -53,7 +52,7 @@ impl ColumnTransformation for AggStringCommonPrefix {
                 let longest_common_prefix = longest_common_prefix(
                     data.as_any()
                         .downcast_ref::<LargeStringArray>()
-                        .unwrap()
+                        .ok_or(super::ColumnTransformationError::DowncastFailed)?
                         .iter()
                         .map(|s| s.map_or("", |s| s))
                         .collect(),
@@ -71,7 +70,10 @@ impl ColumnTransformation for AggStringCommonPrefix {
         }
     }
 
-    fn output_format(&self, _input: &DataType) -> Result<ColumnTransformationOutput> {
+    fn output_format(
+        &self,
+        _input: &DataType,
+    ) -> super::ColumnTransformationResult<ColumnTransformationOutput> {
         Ok(ColumnTransformationOutput {
             data_type: DataType::Utf8,
             nullable: false,

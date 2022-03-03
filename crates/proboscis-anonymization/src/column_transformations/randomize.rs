@@ -1,5 +1,4 @@
-use super::{ColumnTransformation, ColumnTransformationOutput};
-use anyhow::Result;
+use super::{ColumnTransformation, ColumnTransformationOutput, ColumnTransformationResult};
 use arrow::{
     array::{ArrayRef, GenericStringArray, LargeStringArray},
     datatypes::DataType,
@@ -10,12 +9,12 @@ use std::sync::Arc;
 pub struct Randomize {}
 
 impl ColumnTransformation for Randomize {
-    fn transform_data(&self, data: ArrayRef) -> Result<ArrayRef> {
+    fn transform_data(&self, data: ArrayRef) -> ColumnTransformationResult<ArrayRef> {
         match data.data_type() {
             DataType::Utf8 => Ok(Arc::new(
                 data.as_any()
                     .downcast_ref::<GenericStringArray<i32>>()
-                    .unwrap()
+                    .ok_or(super::ColumnTransformationError::DowncastFailed)?
                     .iter()
                     .map(|v| {
                         v.map(|_| {
@@ -31,7 +30,7 @@ impl ColumnTransformation for Randomize {
             DataType::LargeUtf8 => Ok(Arc::new(
                 data.as_any()
                     .downcast_ref::<LargeStringArray>()
-                    .unwrap()
+                    .ok_or(super::ColumnTransformationError::DowncastFailed)?
                     .iter()
                     .map(|v| {
                         v.map(|_| {
@@ -48,7 +47,10 @@ impl ColumnTransformation for Randomize {
         }
     }
 
-    fn output_format(&self, input: &DataType) -> Result<ColumnTransformationOutput> {
+    fn output_format(
+        &self,
+        input: &DataType,
+    ) -> ColumnTransformationResult<ColumnTransformationOutput> {
         Ok(ColumnTransformationOutput {
             data_type: input.clone(),
             nullable: false,

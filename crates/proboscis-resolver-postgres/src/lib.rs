@@ -3,9 +3,10 @@ mod target_config;
 
 use crate::pool::Manager;
 use crate::pool::Pool;
-use anyhow::Result;
 use arrow::{datatypes::Schema, record_batch::RecordBatch};
 use async_trait::async_trait;
+use deadpool::managed::BuildError;
+use proboscis_core::resolver::ResolveError;
 use proboscis_core::{
     data::arrow::{
         protocol_fields_to_schema, serialize_record_batch_schema_to_row_description,
@@ -64,15 +65,12 @@ pub struct PostgresResolver {
 }
 
 impl PostgresResolver {
-    pub async fn new(
+    pub async fn create(
         target_config: TargetConfig,
         max_pool_size: usize,
-    ) -> Result<PostgresResolver> {
+    ) -> Result<PostgresResolver, BuildError<ResolveError>> {
         let manager = Manager::new(target_config);
-        let pool = Pool::builder(manager)
-            .max_size(max_pool_size)
-            .build()
-            .map_err(|err| anyhow::anyhow!(err))?;
+        let pool = Pool::builder(manager).max_size(max_pool_size).build()?;
 
         Ok(PostgresResolver {
             active_connections: HashMap::new(),
@@ -96,7 +94,7 @@ macro_rules! get_connection {
                     .pool
                     .get()
                     .await
-                    .map_err(|err| anyhow::anyhow!(err))?;
+                    .map_err(|err| ResolveError::Other(anyhow::anyhow!(err)))?;
 
                 let value = ActiveConnection::new(connection);
 
@@ -109,7 +107,11 @@ macro_rules! get_connection {
 
 #[async_trait]
 impl Resolver for PostgresResolver {
-    async fn query(&mut self, client_id: ClientId, query: String) -> Result<RecordBatch> {
+    async fn query(
+        &mut self,
+        client_id: ClientId,
+        query: String,
+    ) -> Result<RecordBatch, ResolveError> {
         let connection = get_connection!(self, client_id);
 
         connection
@@ -141,7 +143,7 @@ impl Resolver for PostgresResolver {
         Ok(data)
     }
 
-    async fn parse(&mut self, client_id: ClientId, parse: Parse) -> Result<()> {
+    async fn parse(&mut self, client_id: ClientId, parse: Parse) -> Result<(), ResolveError> {
         let connection = get_connection!(self, client_id);
 
         let statement_name = parse.statement_name.clone();
@@ -159,7 +161,11 @@ impl Resolver for PostgresResolver {
         Ok(())
     }
 
-    async fn describe(&mut self, client_id: ClientId, describe: Describe) -> Result<()> {
+    async fn describe(
+        &mut self,
+        client_id: ClientId,
+        describe: Describe,
+    ) -> Result<(), ResolveError> {
         let connection = get_connection!(self, client_id);
 
         let statement = describe.name.clone();
@@ -176,7 +182,7 @@ impl Resolver for PostgresResolver {
         Ok(())
     }
 
-    async fn bind(&mut self, client_id: ClientId, bind: Bind) -> Result<()> {
+    async fn bind(&mut self, client_id: ClientId, bind: Bind) -> Result<(), ResolveError> {
         let connection = get_connection!(self, client_id);
 
         let statement = bind.statement.clone();
@@ -194,7 +200,7 @@ impl Resolver for PostgresResolver {
         Ok(())
     }
 
-    async fn execute(&mut self, client_id: ClientId, execute: Execute) -> Result<()> {
+    async fn execute(&mut self, client_id: ClientId, execute: Execute) -> Result<(), ResolveError> {
         let connection = get_connection!(self, client_id);
 
         let portal = execute.portal.clone();
@@ -211,7 +217,7 @@ impl Resolver for PostgresResolver {
         Ok(())
     }
 
-    async fn sync(&mut self, client_id: ClientId) -> Result<Vec<SyncResponse>> {
+    async fn sync(&mut self, client_id: ClientId) -> Result<Vec<SyncResponse>, ResolveError> {
         let connection = get_connection!(self, client_id);
 
         connection
@@ -324,7 +330,7 @@ impl Resolver for PostgresResolver {
         Ok(responses)
     }
 
-    async fn close(&mut self, client_id: ClientId, close: Close) -> Result<()> {
+    async fn close(&mut self, client_id: ClientId, close: Close) -> Result<(), ResolveError> {
         let connection = get_connection!(self, client_id);
 
         connection
@@ -338,11 +344,11 @@ impl Resolver for PostgresResolver {
         Ok(())
     }
 
-    async fn initialize(&mut self, _client_id: ClientId) -> Result<()> {
+    async fn initialize(&mut self, _client_id: ClientId) -> Result<(), ResolveError> {
         Ok(())
     }
 
-    async fn terminate(&mut self, client_id: ClientId) -> Result<()> {
+    async fn terminate(&mut self, client_id: ClientId) -> Result<(), ResolveError> {
         self.terminate_connection(client_id);
 
         Ok(())

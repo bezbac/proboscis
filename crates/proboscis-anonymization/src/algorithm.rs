@@ -1,15 +1,33 @@
-use anyhow::Result;
+use crate::column_transformations::{ColumnTransformation, ColumnTransformationError};
 use arrow::array::Array;
 use itertools::Itertools;
-use polars::prelude::NewChunkedArray;
 use polars::prelude::{ChunkCompare, DataFrame, NamedFrom, Series, UInt32Chunked};
+use polars::prelude::{NewChunkedArray, PolarsError};
+use proboscis_resolver_transformer::TransformerError;
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::convert::TryFrom;
 use std::ops::Deref;
+use thiserror::Error;
 
-use crate::column_transformations::ColumnTransformation;
+#[derive(Error, Debug)]
+pub enum AnonymizationError {
+    #[error(transparent)]
+    TransformationError(#[from] ColumnTransformationError),
 
-fn get_span(series: &Series) -> Result<Option<i64>> {
+    #[error(transparent)]
+    Polars(#[from] PolarsError),
+
+    #[error("unsupported data type: {0}")]
+    UnsupportedType(polars::prelude::DataType),
+}
+
+impl From<AnonymizationError> for TransformerError {
+    fn from(error: AnonymizationError) -> Self {
+        TransformerError::Other(anyhow::anyhow!(error))
+    }
+}
+
+fn get_span(series: &Series) -> Result<Option<i64>, PolarsError> {
     match series.dtype() {
         &polars::prelude::DataType::UInt8
         | &polars::prelude::DataType::UInt16
@@ -39,7 +57,7 @@ fn get_span(series: &Series) -> Result<Option<i64>> {
     }
 }
 
-fn get_spans(series: &[&Series], partition: &[u32]) -> Result<Vec<Option<i64>>> {
+fn get_spans(series: &[&Series], partition: &[u32]) -> Result<Vec<Option<i64>>, PolarsError> {
     let mut spans = vec![];
 
     for series in series {
@@ -59,7 +77,11 @@ fn scale_spans(spans: &[Option<i64>], scale: &[i64]) -> Vec<Option<i64>> {
         .collect()
 }
 
-fn split(df: &DataFrame, partition: &[u32], column_index: usize) -> Result<(Vec<u32>, Vec<u32>)> {
+fn split(
+    df: &DataFrame,
+    partition: &[u32],
+    column_index: usize,
+) -> Result<(Vec<u32>, Vec<u32>), PolarsError> {
     let dfp = df[column_index].take(&UInt32Chunked::new_from_slice("idx", partition))?;
 
     match dfp.dtype() {
@@ -69,22 +91,23 @@ fn split(df: &DataFrame, partition: &[u32], column_index: usize) -> Result<(Vec<
         | &polars::prelude::DataType::UInt64
         | &polars::prelude::DataType::Int16
         | &polars::prelude::DataType::Int32
-        | &polars::prelude::DataType::Int64 => {
-            let median = dfp.median().ok_or_else(|| anyhow::anyhow!("No median"))?;
+        | &polars::prelude::DataType::Int64 => match dfp.median() {
+            Some(median) => {
+                let mask = dfp.lt_eq(median);
 
-            let mask = dfp.lt_eq(median);
-
-            let mut dfl = vec![];
-            let mut dfr = vec![];
-            for (index, mask_val) in partition.iter().zip(&mask) {
-                match mask_val.map_or(false, |v| v) {
-                    true => dfl.push(*index),
-                    false => dfr.push(*index),
+                let mut dfl = vec![];
+                let mut dfr = vec![];
+                for (index, mask_val) in partition.iter().zip(&mask) {
+                    match mask_val.map_or(false, |v| v) {
+                        true => dfl.push(*index),
+                        false => dfr.push(*index),
+                    }
                 }
-            }
 
-            Ok((dfl, dfr))
-        }
+                Ok((dfl, dfr))
+            }
+            None => Ok((partition.to_vec(), vec![])),
+        },
         &polars::prelude::DataType::Utf8 => {
             let values: Vec<Option<&str>> = dfp.utf8()?.into_iter().unique().collect();
 
@@ -116,8 +139,8 @@ fn split(df: &DataFrame, partition: &[u32], column_index: usize) -> Result<(Vec<
 pub fn partition_dataset(
     df: &DataFrame,
     quasi_identifiers: &[&str],
-    is_valid: &dyn Fn(&DataFrame, &[u32]) -> Result<bool>,
-) -> Result<Vec<Vec<u32>>> {
+    is_valid: &dyn Fn(&DataFrame, &[u32]) -> Result<bool, PolarsError>,
+) -> Result<Vec<Vec<u32>>, PolarsError> {
     let mut partitions: VecDeque<Vec<u32>> =
         vec![(0..df[0].len()).map(|i| i as u32).collect::<Vec<u32>>()].into();
 
@@ -161,7 +184,7 @@ pub fn partition_dataset(
                 .get_column_names()
                 .into_iter()
                 .position(|name| name == column_name)
-                .ok_or_else(|| anyhow::anyhow!("Column not found {:?}", column_name))?;
+                .unwrap();
 
             let (lp, rp) = split(df, &partition, df_column_index)?;
 
@@ -217,7 +240,7 @@ impl StringAggregation {
 fn apply_column_transformation_to_series(
     series: &Series,
     transformation: &dyn ColumnTransformation,
-) -> Result<Series> {
+) -> Result<Series, AnonymizationError> {
     let array_refs: Vec<&dyn Array> = series.chunks().iter().map(|a| a.deref()).collect();
     let array = arrow::compute::kernels::concat::concat(&array_refs).unwrap();
     let transformed_data = transformation.transform_data(array)?;
@@ -225,7 +248,7 @@ fn apply_column_transformation_to_series(
     Ok(updated)
 }
 
-fn deidentify_column(series: &Series) -> Result<Series> {
+fn deidentify_column(series: &Series) -> Result<Series, AnonymizationError> {
     apply_column_transformation_to_series(series, &crate::column_transformations::Randomize {})
 }
 
@@ -233,7 +256,7 @@ fn agg_column(
     series: &Series,
     numeric_aggregation: &NumericAggregation,
     string_aggregation: &StringAggregation,
-) -> Result<Series> {
+) -> Result<Series, AnonymizationError> {
     match series.dtype() {
         polars::prelude::DataType::UInt8
         | polars::prelude::DataType::Int16
@@ -246,7 +269,7 @@ fn agg_column(
             series,
             string_aggregation.transformation().as_ref(),
         ),
-        _ => todo!("{}", series.dtype()),
+        data_type => Err(AnonymizationError::UnsupportedType(data_type.clone())),
     }
 }
 
@@ -259,7 +282,7 @@ pub fn is_l_diverse(
     partition: &[u32],
     sensitive_column: &str,
     l: usize,
-) -> Result<bool> {
+) -> Result<bool, PolarsError> {
     Ok(df
         .column(sensitive_column)?
         .take(&UInt32Chunked::new_from_slice("idx", partition))?
@@ -275,7 +298,7 @@ pub enum AnonymizationCriteria {
 }
 
 impl AnonymizationCriteria {
-    fn is_anonymous(&self, df: &DataFrame, partition: &[u32]) -> Result<bool> {
+    fn is_anonymous(&self, df: &DataFrame, partition: &[u32]) -> Result<bool, PolarsError> {
         match self {
             Self::KAnonymous { k } => Ok(is_k_anonymous(partition, *k)),
             Self::LDiverse {
@@ -291,7 +314,7 @@ pub fn anonymize(
     identifiers: &[&str],
     quasi_identifiers: &HashMap<String, (NumericAggregation, StringAggregation)>,
     criteria: &[AnonymizationCriteria],
-) -> Result<DataFrame> {
+) -> Result<DataFrame, AnonymizationError> {
     let quasi_identifier_strs: Vec<&str> = quasi_identifiers.keys().map(|k| k.as_str()).collect();
 
     let partitions = partition_dataset(df, &quasi_identifier_strs, &|_, partition| {

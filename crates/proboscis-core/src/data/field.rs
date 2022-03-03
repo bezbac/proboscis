@@ -154,6 +154,7 @@ impl TryFrom<&arrow::datatypes::Field> for Field {
             .ok_or("Missing table_oid")?
             .parse()
             .map_err(|_| "parse error")?;
+
         let column_number = metadata
             .get("column_number")
             .ok_or("Missing column_number")?

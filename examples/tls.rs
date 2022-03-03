@@ -23,7 +23,7 @@ async fn run_proxy(database_connection_url: String) -> String {
             }),
         },
         Box::new(
-            PostgresResolver::new(
+            PostgresResolver::create(
                 TargetConfig::from_uri(&database_connection_url).unwrap(),
                 10,
             )

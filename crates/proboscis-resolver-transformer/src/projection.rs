@@ -20,78 +20,79 @@ pub enum ProjectedOrigin {
 pub fn trace_projection_origin(
     ast: &Statement,
     fields: &[Field],
-) -> anyhow::Result<Vec<ProjectedOrigin>> {
+) -> Result<Vec<ProjectedOrigin>, &'static str> {
     match ast {
         Statement::Query(query) => match &query.body {
             SetExpr::Select(select) => {
                 let mut result = vec![];
                 let mut remaining_fields = fields.iter().collect::<VecDeque<_>>();
 
-                let get_table_column = |identifiers: &[String]| -> anyhow::Result<TableColumn> {
-                    if identifiers.is_empty() {
-                        // Wildcard
-                        anyhow::bail!("")
-                    }
+                let get_table_column =
+                    |identifiers: &[String]| -> Result<TableColumn, &'static str> {
+                        if identifiers.is_empty() {
+                            // Wildcard
+                            return Err("projection tracing error");
+                        }
 
-                    if identifiers.len() == 1 {
-                        let identifier = identifiers[0].clone();
-                        match &select.from.as_slice() {
-                            [TableWithJoins {
-                                relation:
-                                    TableFactor::Table {
+                        if identifiers.len() == 1 {
+                            let identifier = identifiers[0].clone();
+                            match &select.from.as_slice() {
+                                [TableWithJoins {
+                                    relation:
+                                        TableFactor::Table {
+                                            name,
+                                            alias: _,
+                                            args: _,
+                                            with_hints: _,
+                                        },
+                                    joins: _,
+                                }] => {
+                                    return Ok(TableColumn {
+                                        table: name.to_string(),
+                                        column: identifier,
+                                    })
+                                }
+                                _ => return Err("projection tracing error"),
+                            }
+                        }
+
+                        if identifiers.len() == 2 {
+                            let table_identifier = identifiers[0].clone();
+                            let column_identifier = identifiers[1].clone();
+
+                            for table in &select.from {
+                                for factor in vec![
+                                    vec![&table.relation],
+                                    table.joins.iter().map(|join| &join.relation).collect(),
+                                ]
+                                .concat()
+                                {
+                                    if let TableFactor::Table {
                                         name,
-                                        alias: _,
+                                        alias,
                                         args: _,
                                         with_hints: _,
-                                    },
-                                joins: _,
-                            }] => {
-                                return Ok(TableColumn {
-                                    table: name.to_string(),
-                                    column: identifier,
-                                })
-                            }
-                            _ => anyhow::bail!(""),
-                        }
-                    }
-
-                    if identifiers.len() == 2 {
-                        let table_identifier = identifiers[0].clone();
-                        let column_identifier = identifiers[1].clone();
-
-                        for table in &select.from {
-                            for factor in vec![
-                                vec![&table.relation],
-                                table.joins.iter().map(|join| &join.relation).collect(),
-                            ]
-                            .concat()
-                            {
-                                if let TableFactor::Table {
-                                    name,
-                                    alias,
-                                    args: _,
-                                    with_hints: _,
-                                } = factor
-                                {
-                                    let alias_name = alias
-                                        .as_ref()
-                                        .map(|TableAlias { name, columns: _ }| name.to_string());
-
-                                    if name.to_string() == table_identifier
-                                        || alias_name == Some(table_identifier.clone())
+                                    } = factor
                                     {
-                                        return Ok(TableColumn {
-                                            table: name.to_string(),
-                                            column: column_identifier,
-                                        });
-                                    }
-                                };
+                                        let alias_name = alias.as_ref().map(
+                                            |TableAlias { name, columns: _ }| name.to_string(),
+                                        );
+
+                                        if name.to_string() == table_identifier
+                                            || alias_name == Some(table_identifier.clone())
+                                        {
+                                            return Ok(TableColumn {
+                                                table: name.to_string(),
+                                                column: column_identifier,
+                                            });
+                                        }
+                                    };
+                                }
                             }
                         }
-                    }
 
-                    anyhow::bail!("");
-                };
+                        Err("projection tracing error")
+                    };
 
                 for item in &select.projection {
                     match item {
@@ -118,7 +119,7 @@ pub fn trace_projection_origin(
                                             },
                                         joins: _,
                                     }) => name.to_string(),
-                                    _ => anyhow::bail!(""),
+                                    _ => return Err("projection tracing error"),
                                 };
 
                                 result.push(ProjectedOrigin::TableColumn(TableColumn {
@@ -167,7 +168,7 @@ pub fn trace_projection_origin(
                         }
                         SelectItem::UnnamedExpr(Expr::CompoundIdentifier(identifiers)) => {
                             if identifiers.len() > 2 {
-                                anyhow::bail!("unsupported")
+                                return Err("projection tracing error");
                             }
 
                             let identifiers: Vec<String> = identifiers
@@ -186,16 +187,15 @@ pub fn trace_projection_origin(
                             remaining_fields.pop_front();
                             result.push(ProjectedOrigin::Value)
                         }
-
-                        _ => anyhow::bail!("unimplemented {:?}", item),
+                        _ => return Err("projection tracing error"),
                     }
                 }
 
                 Ok(result)
             }
-            _ => anyhow::bail!("unsupported"),
+            _ => Err("projection tracing error"),
         },
-        _ => anyhow::bail!("unsupported"),
+        _ => Err("projection tracing error"),
     }
 }
 

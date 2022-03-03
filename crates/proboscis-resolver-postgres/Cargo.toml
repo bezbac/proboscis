@@ -4,7 +4,8 @@ version = "0.1.0"
 edition = "2018"
 
 [dependencies]
-anyhow = "1.0"
+anyhow = "1.0"#
+thiserror = "1"
 omnom = "3.0.0"
 tokio = { version = "1.4.0", features = ["full"] }
 arrow = "5.5.0"
