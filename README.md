@@ -126,6 +126,13 @@ cargo +nightly run --features analysis --example competetive_latency
 
 ---
 
+# General development tips
+
+To enable the git hooks (_AFTER REVIEWING THEM_), run:
+`git config --local include.path ../.gitconfig`
+
+---
+
 # Acknowledgements
 
 Repos:
